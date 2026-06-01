@@ -171,6 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         closePins.image = NSImage(systemSymbolName: "pin.slash", accessibilityDescription: "Close Pins")
         menu.addItem(closePins)
 
+        let reopen = NSMenuItem(title: "Reopen Last Capture", action: #selector(reopenLast), keyEquivalent: "")
+        reopen.target = self
+        reopen.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Reopen")
+        menu.addItem(reopen)
+
         menu.addItem(.separator())
 
         let settings = NSMenuItem(
@@ -298,6 +303,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func closeAllPins() { PinController.shared.closeAll() }
+
+    @objc private func reopenLast() {
+        guard let item = CaptureHistory.shared.items.first else { HUD.show("No recent capture"); return }
+        CaptureCoordinator.shared.reopenPreview(item)
+    }
 
     @objc private func openProject() {
         let panel = NSOpenPanel()

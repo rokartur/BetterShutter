@@ -31,6 +31,12 @@ final class FloatPreviewController {
             self?.dismiss()
             PinController.shared.pin(image)
         }
+        view.onShare = { [weak self] in
+            guard let host = self?.window?.contentView else { return }
+            self?.cancelTimer()
+            let picker = NSSharingServicePicker(items: [NSImage(cgImage: image.cgImage, size: image.pixelSize)])
+            picker.show(relativeTo: .zero, of: host, preferredEdge: .maxX)
+        }
         view.onHoverChange = { [weak self] hovered in
             if hovered { self?.cancelTimer() } else { self?.startTimer() }
         }

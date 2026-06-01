@@ -99,6 +99,7 @@ final class CaptureBrowserWindowController: NSObject, NSWindowDelegate, NSTableV
             ("Open", #selector(openSelected)),
             ("Reveal in Finder", #selector(revealSelected)),
             ("Copy", #selector(copySelected)),
+            ("Share…", #selector(shareSelected)),
             ("Delete", #selector(deleteSelected)),
         ] {
             let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
@@ -189,6 +190,14 @@ final class CaptureBrowserWindowController: NSObject, NSWindowDelegate, NSTableV
         guard let url = selectedURL, let image = NSImage(contentsOf: url) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects([image])
+    }
+
+    @objc private func shareSelected() {
+        guard let url = selectedURL else { return }
+        let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
+        let anchor = table.rowView(atRow: row, makeIfNecessary: false) ?? table
+        let picker = NSSharingServicePicker(items: [url])
+        picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxX)
     }
 
     @objc private func deleteSelected() {
