@@ -260,11 +260,13 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Aspect-fit the capture inside the fixed 16:9 tile. 16:9 shots fill it; other aspects
-        // center with a thin dark frame (the layer background) on the short axis.
-        let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds)
+        // Fill the card width and center vertically; captures taller than 16:9 crop top/bottom
+        // (the layer's rounded mask clips the overflow). The image always spans the full width.
+        let scale = image.pixelSize.width > 0 ? bounds.width / image.pixelSize.width : 1
+        let h = image.pixelSize.height * scale
+        let dest = CGRect(x: bounds.minX, y: bounds.midY - h / 2, width: bounds.width, height: h)
         NSGraphicsContext.current?.cgContext.interpolationQuality = .high
-        thumbnail.draw(in: fit, from: .zero, operation: .sourceOver, fraction: 1)
+        thumbnail.draw(in: dest, from: .zero, operation: .sourceOver, fraction: 1)
     }
 
     private static func aspectFit(imageSize: CGSize, in rect: CGRect) -> CGRect {
