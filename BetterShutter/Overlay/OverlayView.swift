@@ -16,6 +16,9 @@ final class OverlayView: NSView {
     private let pixelSize: CGSize
     var windowHits: [WindowHighlighter.Hit] = []
     var magnifierEnabled = true
+    /// When true, releasing the drag captures immediately (no adjustable pending state / handles) —
+    /// used by the Quick Screenshot and Screenshot & Markup flows.
+    var instantCapture = false
     /// When non-empty, a confirmed selection shows the action bar with these buttons. When empty
     /// (recording / OCR flows), confirming a selection just reports `.capture`.
     var toolbarActions: [OverlayAction] = []
@@ -224,7 +227,7 @@ final class OverlayView: NSView {
                 return
             }
             selectionRect = r
-            enterPending()
+            if instantCapture { confirm(.capture) } else { enterPending() }
         default:
             break
         }

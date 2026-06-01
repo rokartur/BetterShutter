@@ -93,6 +93,7 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: magnifier,
+                    instantCapture: true,   // release the drag = capture immediately, no extra confirm
                     onRegion: { image, rect, displayID, _ in onRegion(image, rect, displayID) },
                     onWindow: onWindow,
                     onCancel: { [weak self] in self?.isCapturing = false }

@@ -29,6 +29,7 @@ final class OverlayController {
         windows: [WindowInfo],
         magnifierEnabled: Bool,
         toolbarActions: [OverlayAction] = [],
+        instantCapture: Bool = false,
         onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void,
         onWindow: @escaping (CGWindowID) -> Void,
         onCancel: @escaping () -> Void
@@ -68,6 +69,7 @@ final class OverlayController {
             view.autoresizingMask = [.width, .height]
             view.magnifierEnabled = magnifierEnabled
             view.toolbarActions = toolbarActions
+            view.instantCapture = instantCapture
             view.setCursorHidden = { [weak self] hidden in hidden ? self?.hideCursor() : self?.showCursor() }
             view.windowHits = WindowHighlighter.viewRects(
                 windows: windows, primaryHeight: primaryHeight, screenGlobalFrame: frame
