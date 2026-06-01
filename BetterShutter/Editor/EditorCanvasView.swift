@@ -332,9 +332,33 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             deleteSelected()
         case 53: // esc
             if editingField != nil { finishTextEditing() } else { selected = nil; needsDisplay = true }
+        case 123, 124, 125, 126: // arrows nudge the selection
+            if selected != nil {
+                nudgeSelected(keyCode: event.keyCode, large: event.modifierFlags.contains(.shift))
+            } else {
+                super.keyDown(with: event)
+            }
         default:
             super.keyDown(with: event)
         }
+    }
+
+    /// Move the selection by 1px (10px with Shift). Image space is bottom-left, so Up = +y.
+    private func nudgeSelected(keyCode: UInt16, large: Bool) {
+        guard let selected else { return }
+        let step: CGFloat = large ? 10 : 1
+        var delta = CGSize.zero
+        switch keyCode {
+        case 123: delta.width = -step
+        case 124: delta.width = step
+        case 125: delta.height = -step
+        case 126: delta.height = step
+        default: break
+        }
+        let before = snapshot()
+        selected.translate(by: delta)
+        commit(before, "Nudge")
+        needsDisplay = true
     }
 
     func deleteSelected() {
