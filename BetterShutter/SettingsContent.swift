@@ -146,6 +146,13 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: behavior, title: "When a capture is taken",
                subtitle: "Copy to the clipboard and/or show the floating preview.", accessory: popup)
 
+        let downscale = NSSwitch()
+        downscale.state = Preferences.downscaleRetina ? .on : .off
+        downscale.target = self
+        downscale.action = #selector(toggleDownscale(_:))
+        addRow(to: behavior, title: "Downscale Retina to 1×",
+               subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
+
         let overlay = addSection(title: "Overlay", anchor: "capture.overlay")
         let magnifier = NSSwitch()
         magnifier.state = Preferences.magnifierEnabled ? .on : .off
@@ -170,6 +177,7 @@ final class CaptureSettingsTab: SettingsTabViewController {
     }
 
     @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
+    @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
 
     @objc private func changeAfterAction(_ sender: NSPopUpButton) {
         let index = sender.indexOfSelectedItem

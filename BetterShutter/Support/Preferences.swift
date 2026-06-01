@@ -42,6 +42,13 @@ nonisolated enum Preferences {
         static let captureSound = "captureSoundEnabled"
         static let captureCounter = "captureCounter"
         static let recordSystemAudio = "recordSystemAudio"
+        static let downscaleRetina = "downscaleRetina"
+    }
+
+    /// Halve Retina (scale > 1) captures to 1× on output for smaller files.
+    static var downscaleRetina: Bool {
+        get { defaults.object(forKey: Key.downscaleRetina) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.downscaleRetina) }
     }
 
     static var recordSystemAudio: Bool {

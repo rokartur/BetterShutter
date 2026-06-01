@@ -268,16 +268,26 @@ final class CaptureCoordinator {
 
     private func finish(_ image: CapturedImage, mode: CaptureMode) {
         isCapturing = false
-        CaptureHistory.shared.add(image, mode: mode)
+
+        // Optionally halve Retina captures to 1× so every downstream output uses the smaller image.
+        let output: CapturedImage
+        if Preferences.downscaleRetina, image.scale > 1,
+           let scaled = ImageScaler.downscaled(image.cgImage, by: image.scale) {
+            output = CapturedImage(cgImage: scaled, scale: 1, displayID: image.displayID)
+        } else {
+            output = image
+        }
+
+        CaptureHistory.shared.add(output, mode: mode)
         let action = Preferences.afterCaptureAction
-        if action.copies { PasteboardWriter.copy(image.cgImage) }
+        if action.copies { PasteboardWriter.copy(output.cgImage) }
         if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
 
         Task {
             // Always persist a durable file; reveal it from the preview.
-            let url = await Task.detached { try? FileSaver.save(image.cgImage, mode: mode) }.value
+            let url = await Task.detached { try? FileSaver.save(output.cgImage, mode: mode) }.value
             if action.previews {
-                preview.show(image, mode: mode, savedURL: url)
+                preview.show(output, mode: mode, savedURL: url)
             }
         }
     }

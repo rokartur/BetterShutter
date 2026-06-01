@@ -365,6 +365,25 @@ struct AnnotationCloneTests {
     }
 }
 
+@MainActor
+struct ImageScalerTests {
+    @Test
+    func halvesAtFactorTwo() {
+        let base = makeSolidTestImage(width: 100, height: 80)
+        let out = ImageScaler.downscaled(base, by: 2)
+        #expect(out?.width == 50)
+        #expect(out?.height == 40)
+    }
+
+    @Test
+    func factorOneReturnsOriginalSize() {
+        let base = makeSolidTestImage(width: 64, height: 48)
+        let out = ImageScaler.downscaled(base, by: 1)
+        #expect(out?.width == 64)
+        #expect(out?.height == 48)
+    }
+}
+
 struct PinGeometryTests {
     @Test
     func retinaHalvedAndFits() {
