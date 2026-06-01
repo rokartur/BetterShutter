@@ -4,6 +4,21 @@ import BetterUpdater
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Explicit entry point. Wires the delegate ourselves instead of relying on
+    /// AppKit's synthesized @main + NSApplicationMain, which does not reliably
+    /// install the delegate under the Xcode debug-dylib launcher (so
+    /// applicationDidFinishLaunching never fired and no status item appeared).
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        // Menu-bar agent: no Dock icon, no main window.
+        app.setActivationPolicy(.accessory)
+        app.run()
+        // Keep the delegate alive for the (non-returning) run loop.
+        withExtendedLifetime(delegate) {}
+    }
+
     private var statusItem: NSStatusItem?
     private var settingsController: SettingsWindowController?
 
@@ -15,18 +30,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Updater
 
     private func bootstrapUpdater() {
-        // TODO: replace pinnedPublicKeyBase64 with this app's own key
-        //       (`betterupdater keygen`) and flip manifestRequired to true
-        //       once signed release manifests are published.
+        // Security: release builds verify fail-closed (manifestRequired: true) so a
+        // missing/invalid signed manifest refuses the update. Only DEBUG relaxes this
+        // for local testing before the signing infrastructure exists.
+        //
+        // TODO before shipping a release: replace pinnedPublicKeyBase64 with this app's
+        //      own key (`betterupdater keygen`) and publish signed release manifests.
+        //      The placeholder key below cannot verify our releases, so with
+        //      manifestRequired: true the release updater correctly installs nothing.
+        #if DEBUG
+        let manifestRequired = false
+        #else
+        let manifestRequired = true
+        #endif
+
         BetterUpdater.bootstrap(configuration: .init(
             owner: "rokartur",
             repo: "BetterShutter",
             displayName: "BetterShutter",
-            bundleIdentifier: "app.bettershutter.BetterShutter",
+            bundleIdentifier: Bundle.main.bundleIdentifier ?? "app.bettershutter.BetterShutter",
             pinnedPublicKeyBase64: "duIBPTDie9dBTKqijWVxsVHZ89AMuorAz04gF6K+TUQ=",
             expectedTeamIdentifier: "N529W98U62",
             userAgentProduct: "BetterShutter-Updater",
-            manifestRequired: false
+            manifestRequired: manifestRequired
         ))
     }
 
@@ -34,10 +60,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "camera",
-            accessibilityDescription: "BetterShutter"
-        )
+        if let button = item.button {
+            button.image = NSImage(
+                systemSymbolName: "camera",
+                accessibilityDescription: "BetterShutter"
+            )
+            // Fallback so the item is never a zero-width (invisible) button.
+            if button.image == nil { button.title = "BetterShutter" }
+        }
         item.menu = makeMenu()
         statusItem = item
     }
@@ -52,24 +82,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         settings.target = self
         menu.addItem(settings)
-
-        let updates = NSMenuItem(
-            title: "Check for Updates…",
-            action: #selector(checkForUpdates),
-            keyEquivalent: ""
-        )
-        updates.target = self
-        menu.addItem(updates)
-
-        menu.addItem(.separator())
-
-        let about = NSMenuItem(
-            title: "About BetterShutter",
-            action: #selector(showAbout),
-            keyEquivalent: ""
-        )
-        about.target = self
-        menu.addItem(about)
 
         menu.addItem(.separator())
 
@@ -91,18 +103,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsController = controller
         NSApp.activate(ignoringOtherApps: true)
         controller.show()
-    }
-
-    @objc private func checkForUpdates() {
-        UpdateWindowPresenter.shared.show()
-        Task {
-            guard AppTranslocation.guardLaunchLocation() else { return }
-            await BetterUpdater.shared.checkForUpdates(force: true)
-        }
-    }
-
-    @objc private func showAbout() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.orderFrontStandardAboutPanel(nil)
     }
 }

@@ -11,14 +11,30 @@
 		BE570000000000000000001F /* BetterUpdater in Frameworks */ = {isa = PBXBuildFile; productRef = BE570000000000000000001D /* BetterUpdater */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		BE5700000000000000000027 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BE5700000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BE5700000000000000000005;
+			remoteInfo = BetterShutter;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
-		BE5700000000000000000006 /* BetterShutter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BetterShutter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BE5700000000000000000006 /* BetterShutter Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BetterShutter Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		BE5700000000000000000020 /* BetterShutterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BetterShutterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		BE5700000000000000000004 /* BetterShutter */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = BetterShutter;
+			sourceTree = "<group>";
+		};
+		BE5700000000000000000021 /* BetterShutterTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = BetterShutterTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -33,6 +49,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BE5700000000000000000024 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -40,6 +63,7 @@
 			isa = PBXGroup;
 			children = (
 				BE5700000000000000000004 /* BetterShutter */,
+				BE5700000000000000000021 /* BetterShutterTests */,
 				BE5700000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -47,7 +71,8 @@
 		BE5700000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				BE5700000000000000000006 /* BetterShutter.app */,
+				BE5700000000000000000006 /* BetterShutter Debug.app */,
+				BE5700000000000000000020 /* BetterShutterTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -76,8 +101,31 @@
 				BE570000000000000000001D /* BetterUpdater */,
 			);
 			productName = BetterShutter;
-			productReference = BE5700000000000000000006 /* BetterShutter.app */;
+			productReference = BE5700000000000000000006 /* BetterShutter Debug.app */;
 			productType = "com.apple.product-type.application";
+		};
+		BE5700000000000000000022 /* BetterShutterTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BE5700000000000000000028 /* Build configuration list for PBXNativeTarget "BetterShutterTests" */;
+			buildPhases = (
+				BE5700000000000000000023 /* Sources */,
+				BE5700000000000000000024 /* Frameworks */,
+				BE5700000000000000000025 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BE5700000000000000000026 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				BE5700000000000000000021 /* BetterShutterTests */,
+			);
+			name = BetterShutterTests;
+			packageProductDependencies = (
+			);
+			productName = BetterShutterTests;
+			productReference = BE5700000000000000000020 /* BetterShutterTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -91,6 +139,10 @@
 				TargetAttributes = {
 					BE5700000000000000000005 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					BE5700000000000000000022 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = BE5700000000000000000005;
 					};
 				};
 			};
@@ -113,12 +165,20 @@
 			projectRoot = "";
 			targets = (
 				BE5700000000000000000005 /* BetterShutter */,
+				BE5700000000000000000022 /* BetterShutterTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		BE5700000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BE5700000000000000000025 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -135,7 +195,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BE5700000000000000000023 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		BE5700000000000000000026 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BE5700000000000000000005 /* BetterShutter */;
+			targetProxy = BE5700000000000000000027 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		BE570000000000000000000C /* Debug */ = {
@@ -243,20 +318,25 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BetterShutter/BetterShutter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = N529W98U62;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 rokartur. All rights reserved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "BetterShutter records microphone audio when you include it in a screen recording.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.bettershutter.BetterShutter;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				MARKETING_VERSION = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.bettershutter.BetterShutter.debug;
+				PRODUCT_MODULE_NAME = BetterShutter;
+				PRODUCT_NAME = "BetterShutter Debug";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -270,25 +350,76 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_OPTIMIZATION = space;
+				CODE_SIGN_ENTITLEMENTS = BetterShutter/BetterShutter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEPLOYMENT_POSTPROCESSING = YES;
 				DEVELOPMENT_TEAM = N529W98U62;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 rokartur. All rights reserved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "BetterShutter records microphone audio when you include it in a screen recording.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.bettershutter.BetterShutter;
+				PRODUCT_MODULE_NAME = BetterShutter;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
+				STRIP_SWIFT_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		BE5700000000000000000029 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = N529W98U62;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.bettershutter.BetterShutterTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BetterShutter Debug.app/Contents/MacOS/BetterShutter Debug";
+			};
+			name = Debug;
+		};
+		BE570000000000000000002A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = N529W98U62;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.bettershutter.BetterShutterTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BetterShutter.app/Contents/MacOS/BetterShutter";
 			};
 			name = Release;
 		};
@@ -309,6 +440,15 @@
 			buildConfigurations = (
 				BE570000000000000000000E /* Debug */,
 				BE570000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BE5700000000000000000028 /* Build configuration list for PBXNativeTarget "BetterShutterTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BE5700000000000000000029 /* Debug */,
+				BE570000000000000000002A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
