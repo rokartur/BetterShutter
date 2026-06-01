@@ -401,6 +401,56 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    // MARK: Style context menu
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+        let fill = NSMenuItem(title: "Fill", action: nil, keyEquivalent: "")
+        let fillSub = NSMenu()
+        for (title, mode) in [("Outline", FillMode.stroke), ("Outline + Fill", .strokeFill), ("Solid", .fill)] {
+            let item = NSMenuItem(title: title, action: #selector(setFillMode(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = mode.rawValue
+            item.state = style.fillMode == mode ? .on : .off
+            fillSub.addItem(item)
+        }
+        fill.submenu = fillSub
+        menu.addItem(fill)
+
+        let line = NSMenuItem(title: "Line", action: nil, keyEquivalent: "")
+        let lineSub = NSMenu()
+        for (title, dash) in [("Solid", DashStyle.solid), ("Dashed", .dashed), ("Dotted", .dotted)] {
+            let item = NSMenuItem(title: title, action: #selector(setDash(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = dash.rawValue
+            item.state = style.dash == dash ? .on : .off
+            lineSub.addItem(item)
+        }
+        line.submenu = lineSub
+        menu.addItem(line)
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func setFillMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let mode = FillMode(rawValue: raw) else { return }
+        style.fillMode = mode
+        if let selected {
+            let before = snapshot()
+            selected.style.fillMode = mode
+            commit(before, "Fill")
+        }
+        needsDisplay = true
+    }
+
+    @objc private func setDash(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let dash = DashStyle(rawValue: raw) else { return }
+        style.dash = dash
+        if let selected {
+            let before = snapshot()
+            selected.style.dash = dash
+            commit(before, "Line Style")
+        }
+        needsDisplay = true
+    }
+
     private static let stampEmojis = ["⭐️", "❤️", "✅", "❌", "🔥", "👍", "👎", "⚠️", "💡", "🎯", "😀", "🚀", "🔒", "📌", "➡️", "💬"]
 
     private func presentStampMenu(with event: NSEvent, at p: CGPoint) {

@@ -131,10 +131,16 @@ final class RectangleElement: TwoPointElement {
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         cg.setLineWidth(style.strokeWidth)
         cg.setLineJoin(.round)
-        if style.filled {
+        if style.fillMode == .fill {
+            cg.setFillColor(style.color.cgColor)
+            cg.fill(rect)
+            return
+        }
+        if style.fillMode == .strokeFill {
             cg.setFillColor(style.color.withAlphaComponent(0.25).cgColor)
             cg.fill(rect)
         }
+        cg.setLineDash(phase: 0, lengths: style.dashPattern)
         cg.setStrokeColor(style.color.cgColor)
         cg.stroke(rect.insetBy(dx: style.strokeWidth / 2, dy: style.strokeWidth / 2))
     }
@@ -144,10 +150,16 @@ final class EllipseElement: TwoPointElement {
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         cg.setLineWidth(style.strokeWidth)
         let r = rect.insetBy(dx: style.strokeWidth / 2, dy: style.strokeWidth / 2)
-        if style.filled {
+        if style.fillMode == .fill {
+            cg.setFillColor(style.color.cgColor)
+            cg.fillEllipse(in: r)
+            return
+        }
+        if style.fillMode == .strokeFill {
             cg.setFillColor(style.color.withAlphaComponent(0.25).cgColor)
             cg.fillEllipse(in: r)
         }
+        cg.setLineDash(phase: 0, lengths: style.dashPattern)
         cg.setStrokeColor(style.color.cgColor)
         cg.strokeEllipse(in: r)
     }
@@ -162,6 +174,7 @@ final class LineElement: TwoPointElement {
         cg.setStrokeColor(style.color.cgColor)
         cg.setLineWidth(style.strokeWidth)
         cg.setLineCap(.round)
+        cg.setLineDash(phase: 0, lengths: style.dashPattern)
         cg.move(to: start)
         cg.addLine(to: end)
         cg.strokePath()
