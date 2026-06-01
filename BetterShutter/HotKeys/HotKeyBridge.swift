@@ -9,6 +9,12 @@ enum HotKeyBridge {
         BetterShortcuts.onKeyDown(for: .allInOne) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.allInOne() }
         }
+        BetterShortcuts.onKeyDown(for: .quickScreenshot) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.captureQuick() }
+        }
+        BetterShortcuts.onKeyDown(for: .screenshotEdit) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.captureAndEdit() }
+        }
         BetterShortcuts.onKeyDown(for: .captureRegion) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.capture(.region) }
         }
@@ -40,6 +46,8 @@ enum HotKeyBridge {
         // Friendly labels in the recorder's conflict alert.
         BetterShortcuts.displayName = { name in
             if name == .allInOne { return "Capture (All-in-One)" }
+            if name == .quickScreenshot { return "Quick Screenshot" }
+            if name == .screenshotEdit { return "Screenshot & Markup" }
             if name == .captureRegion { return "Capture Region" }
             if name == .captureWindow { return "Capture Window" }
             if name == .captureFullScreen { return "Capture Full Screen" }

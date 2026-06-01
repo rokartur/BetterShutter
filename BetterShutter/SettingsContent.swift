@@ -110,6 +110,12 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: section, title: "Capture (All-in-One)",
                     subtitle: "One chooser for area / window / full screen / record / scrolling.", name: .allInOne,
                     searchItemID: "shortcuts.allinone")
+        addRecorder(to: section, title: "Quick Screenshot",
+                    subtitle: "Select an area; deliver it instantly (no action bar).", name: .quickScreenshot,
+                    searchItemID: "shortcuts.quick")
+        addRecorder(to: section, title: "Screenshot & Markup",
+                    subtitle: "Select an area, then open the editor with every tool.", name: .screenshotEdit,
+                    searchItemID: "shortcuts.markup")
         addRecorder(to: section, title: "Capture Region",
                     subtitle: "Drag out a selection to capture.", name: .captureRegion,
                     searchItemID: "shortcuts.region")

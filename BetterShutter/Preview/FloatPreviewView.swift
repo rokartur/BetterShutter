@@ -11,8 +11,8 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     /// Every quick-access card is a fixed 16:9 tile so the bottom-right stack reads as a clean,
     /// uniform column. The capture is aspect-fit inside (centered, with a thin dark frame for shots
     /// that aren't 16:9).
-    static let cardWidth: CGFloat = 288
-    static let cardHeight: CGFloat = 162   // 288 × 9/16 = exact 16:9
+    static let cardWidth: CGFloat = 240
+    static let cardHeight: CGFloat = 135   // 240 × 9/16 = exact 16:9
     static let cardSize = NSSize(width: cardWidth, height: cardHeight)
 
     /// Fixed 16:9 regardless of the capture's own aspect (kept as a function for call-site clarity).

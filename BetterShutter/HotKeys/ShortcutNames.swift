@@ -4,6 +4,8 @@ import BetterShortcuts
 /// steal the user's existing ⌘⇧3/4/5 — they assign their own in Settings ▸ Shortcuts.
 extension BetterShortcuts.Name {
     nonisolated static let allInOne = Self("allInOne")
+    nonisolated static let quickScreenshot = Self("quickScreenshot")
+    nonisolated static let screenshotEdit = Self("screenshotEdit")
     nonisolated static let captureRegion = Self("captureRegion")
     nonisolated static let captureWindow = Self("captureWindow")
     nonisolated static let captureFullScreen = Self("captureFullScreen")

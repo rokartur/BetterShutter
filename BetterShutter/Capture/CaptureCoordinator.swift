@@ -38,6 +38,87 @@ final class CaptureCoordinator {
         }
     }
 
+    /// Quick screenshot: select a region (or click a window) and deliver it straight to the normal
+    /// output (quick-access card + clipboard per settings) with NO action-bar step — the fastest path.
+    func captureQuick() {
+        guard !isCapturing, !overlay.isPresenting else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        sampleBypass()
+        presentRegion(
+            magnifier: Preferences.magnifierEnabled,
+            onRegion: { [weak self] image, rect, displayID in
+                guard let self else { return }
+                self.isCapturing = false
+                self.sampleBypass()              // Shift may still be held at confirm
+                self.lastRegion = (rect, displayID)
+                self.finish(image, mode: .region)
+            },
+            onWindow: { [weak self] id in self?.captureWindow(id) }
+        )
+    }
+
+    /// Screenshot & markup (macshot-style): select a region (or click a window), then open the full
+    /// editor with every annotation / drawing tool ready, instead of parking a quick-access card.
+    func captureAndEdit() {
+        guard !isCapturing, !overlay.isPresenting else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        sampleBypass()
+        presentRegion(
+            magnifier: Preferences.magnifierEnabled,
+            onRegion: { [weak self] image, rect, displayID in
+                guard let self else { return }
+                self.isCapturing = false
+                self.lastRegion = (rect, displayID)
+                let output = self.outputImage(image)
+                CaptureHistory.shared.add(output, mode: .region)
+                self.edit(output, mode: .region)
+            },
+            onWindow: { [weak self] id in self?.captureWindowAndEdit(id) }
+        )
+    }
+
+    /// Region overlay with a single outcome (no action bar). `onRegion` receives the cropped image
+    /// plus its global rect + display; `onWindow` fires when the user clicks a window instead.
+    private func presentRegion(
+        magnifier: Bool,
+        onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID) -> Void,
+        onWindow: @escaping (CGWindowID) -> Void
+    ) {
+        isCapturing = true
+        Task {
+            do {
+                let frozen = try await engine.freezeAllDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: magnifier,
+                    onRegion: { image, rect, displayID, _ in onRegion(image, rect, displayID) },
+                    onWindow: onWindow,
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
+    private func captureWindowAndEdit(_ id: CGWindowID) {
+        Task {
+            do {
+                let image = try await engine.captureWindow(id)
+                isCapturing = false
+                let output = outputImage(image)
+                CaptureHistory.shared.add(output, mode: .window)
+                edit(output, mode: .window)
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
     /// Show the all-in-one chooser and run whichever capture mode the user picks.
     func allInOne() {
         guard !isCapturing, !overlay.isPresenting else { return }
