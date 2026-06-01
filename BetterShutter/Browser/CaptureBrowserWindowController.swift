@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 /// A persistent, searchable browser over saved captures — the files in the configured save folder.
 /// Liquid-glass window with a thumbnail list, live filename search, and open / reveal / copy /
@@ -10,7 +11,7 @@ final class CaptureBrowserWindowController: NSObject, NSWindowDelegate, NSTableV
     private struct Entry { let url: URL; let date: Date; let size: Int }
 
     private var window: NSWindow?
-    private let table = NSTableView()
+    private let table = QuickLookTableView()
     private let searchField = NSSearchField()
     private let emptyLabel = NSTextField(labelWithString: "No captures yet")
     private var all: [Entry] = []
@@ -67,6 +68,7 @@ final class CaptureBrowserWindowController: NSObject, NSWindowDelegate, NSTableV
         table.target = self
         table.doubleAction = #selector(openSelected)
         table.menu = makeContextMenu()
+        table.urls = { [weak self] in self?.shown.map { $0.url } ?? [] }
         let column = NSTableColumn(identifier: .init("capture"))
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
@@ -269,5 +271,45 @@ private final class BrowserCell: NSTableCellView {
         let sizeText = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
         detail.stringValue = "\(Self.formatter.string(from: date)) · \(sizeText)"
         thumb.image = thumbnail
+    }
+}
+
+/// Table that toggles Quick Look on the spacebar, previewing the rows it's given.
+final class QuickLookTableView: NSTableView, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    var urls: () -> [URL] = { [] }
+    // Snapshotted when the panel opens so the nonisolated data-source reads need no actor hop.
+    nonisolated(unsafe) private var previewURLs: [URL] = []
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 49 { // space
+            if let panel = QLPreviewPanel.shared() {
+                if QLPreviewPanel.sharedPreviewPanelExists() && panel.isVisible {
+                    panel.orderOut(nil)
+                } else {
+                    panel.makeKeyAndOrderFront(nil)
+                }
+            }
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
+    nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            previewURLs = urls()
+            panel.dataSource = self
+            panel.delegate = self
+            panel.currentPreviewItemIndex = max(0, selectedRow)
+        }
+    }
+
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
+
+    nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURLs.count }
+
+    nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        previewURLs.indices.contains(index) ? (previewURLs[index] as NSURL) : nil
     }
 }
