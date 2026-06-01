@@ -13,6 +13,9 @@ final class CaptureCoordinator {
     private var beautifier: BeautifyWindowController?
     private var isCapturing = false
 
+    /// The last region selection (global rect + display), for "Capture Previous Area".
+    private var lastRegion: (rect: CGRect, displayID: CGDirectDisplayID)?
+
     private init() {
         preview.onAnnotate = { [weak self] image, mode in self?.edit(image, mode: mode) }
         preview.onBeautify = { [weak self] image, mode in self?.beautify(image, mode: mode) }
@@ -101,6 +104,32 @@ final class CaptureCoordinator {
         SelfTimer.shared.run(seconds: seconds) { [weak self] in self?.capture(.fullDisplay) }
     }
 
+    /// Re-capture the exact region from the previous selection, with no overlay.
+    func captureLastRegion() {
+        guard !isCapturing, !overlay.isPresenting else { return }
+        guard let last = lastRegion else { HUD.show("No previous area"); return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        guard let screen = NSScreen.screens.first(where: { $0.displayID == last.displayID }) else { return }
+        let frame = screen.frame
+        // Global (bottom-left) rect → display-local top-left points for SCStream.
+        let localTopLeft = CGRect(
+            x: last.rect.minX - frame.minX,
+            y: frame.maxY - last.rect.maxY,
+            width: last.rect.width,
+            height: last.rect.height
+        )
+        isCapturing = true
+        Task {
+            do {
+                let image = try await engine.captureRegion(displayID: last.displayID, sourceRectPoints: localTopLeft)
+                finish(image, mode: .region)
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
     /// Select a region, then start recording just that region to an MP4.
     func recordRegion() {
         guard !isCapturing, !overlay.isPresenting, !RecordingController.shared.isRecording else { return }
@@ -129,6 +158,7 @@ final class CaptureCoordinator {
 
     private func startRegionRecording(globalRect: CGRect, displayID: CGDirectDisplayID) {
         isCapturing = false
+        lastRegion = (globalRect, displayID)
         guard let screen = NSScreen.screens.first(where: { $0.displayID == displayID }) else { return }
         let frame = screen.frame
         // SCStream sourceRect is in display-local points, top-left origin.
@@ -172,6 +202,7 @@ final class CaptureCoordinator {
 
     private func handleRegionAction(_ image: CapturedImage, globalRect: CGRect, displayID: CGDirectDisplayID, action: OverlayAction) {
         isCapturing = false
+        lastRegion = (globalRect, displayID)
         switch action {
         case .capture:
             finish(image, mode: .region)

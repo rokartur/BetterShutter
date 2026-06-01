@@ -109,6 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         delay.submenu = delaySub
         menu.addItem(delay)
 
+        let previous = NSMenuItem(title: "Capture Previous Area",
+                                  action: #selector(capturePreviousArea), keyEquivalent: "")
+        previous.target = self
+        previous.image = NSImage(systemSymbolName: "arrow.counterclockwise.circle", accessibilityDescription: "Previous Area")
+        menu.addItem(previous)
+
         menu.addItem(.separator())
 
         let record = NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: "")
@@ -264,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let seconds = sender.representedObject as? Int else { return }
         CaptureCoordinator.shared.captureFullScreenAfter(seconds)
     }
+    @objc private func capturePreviousArea() { CaptureCoordinator.shared.captureLastRegion() }
     @objc private func openBrowser() { CaptureBrowserWindowController.shared.show() }
 
     @objc private func editFromClipboard() {
