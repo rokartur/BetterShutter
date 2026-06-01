@@ -1,0 +1,33 @@
+{
+  "originHash" : "1a8f1662d901728303f9424b106da968b5b1f14dbda08dbb85b22c5dbdce5e83",
+  "pins" : [
+    {
+      "identity" : "bettersettings",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rokartur/BetterSettings",
+      "state" : {
+        "revision" : "4177c6993eb4402b6cbd808a59285bfc5c0d57c3",
+        "version" : "0.1.2"
+      }
+    },
+    {
+      "identity" : "betterupdater",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rokartur/BetterUpdater",
+      "state" : {
+        "revision" : "f52c1c9ca4f878f7185aa7e341e679d6f706451d",
+        "version" : "0.2.1"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser.git",
+      "state" : {
+        "revision" : "ca37474853a4b5f59a22c74bfdd449b1f6bc4cc2",
+        "version" : "1.8.1"
+      }
+    }
+  ],
+  "version" : 3
+}

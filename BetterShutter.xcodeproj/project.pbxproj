@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BE570000000000000000001E /* BetterSettings in Frameworks */ = {isa = PBXBuildFile; productRef = BE570000000000000000001C /* BetterSettings */; };
+		BE570000000000000000001F /* BetterUpdater in Frameworks */ = {isa = PBXBuildFile; productRef = BE570000000000000000001D /* BetterUpdater */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		BE5700000000000000000006 /* BetterShutter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BetterShutter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +28,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BE570000000000000000001E /* BetterSettings in Frameworks */,
+				BE570000000000000000001F /* BetterUpdater in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +72,8 @@
 			);
 			name = BetterShutter;
 			packageProductDependencies = (
+				BE570000000000000000001C /* BetterSettings */,
+				BE570000000000000000001D /* BetterUpdater */,
 			);
 			productName = BetterShutter;
 			productReference = BE5700000000000000000006 /* BetterShutter.app */;
@@ -94,6 +103,10 @@
 			);
 			mainGroup = BE5700000000000000000002;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BE570000000000000000001A /* XCRemoteSwiftPackageReference "BetterSettings" */,
+				BE570000000000000000001B /* XCRemoteSwiftPackageReference "BetterUpdater" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BE5700000000000000000003 /* Products */;
 			projectDirPath = "";
@@ -248,7 +261,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -275,7 +288,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -301,6 +314,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BE570000000000000000001A /* XCRemoteSwiftPackageReference "BetterSettings" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/rokartur/BetterSettings";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.1.2;
+			};
+		};
+		BE570000000000000000001B /* XCRemoteSwiftPackageReference "BetterUpdater" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/rokartur/BetterUpdater";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.2.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BE570000000000000000001C /* BetterSettings */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BE570000000000000000001A /* XCRemoteSwiftPackageReference "BetterSettings" */;
+			productName = BetterSettings;
+		};
+		BE570000000000000000001D /* BetterUpdater */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BE570000000000000000001B /* XCRemoteSwiftPackageReference "BetterUpdater" */;
+			productName = BetterUpdater;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BE5700000000000000000001 /* Project object */;
 }
