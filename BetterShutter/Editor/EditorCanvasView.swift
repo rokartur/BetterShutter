@@ -385,7 +385,13 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let p = imagePoint(convert(event.locationInWindow, from: nil))
         switch dragMode {
         case .creating:
-            creating?.updateDrag(to: p)
+            var target = p
+            // Shift constrains directional tools to 45° increments.
+            if event.modifierFlags.contains(.shift), [.line, .arrow, .measure].contains(tool),
+               let twoPoint = creating as? TwoPointElement {
+                target = AngleSnap.snap(start: twoPoint.start, end: p)
+            }
+            creating?.updateDrag(to: target)
         case .moving:
             let delta = CGSize(width: p.x - lastImagePoint.x, height: p.y - lastImagePoint.y)
             selected?.translate(by: delta)

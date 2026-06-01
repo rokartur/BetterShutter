@@ -572,6 +572,28 @@ struct GIFEncoderTests {
     }
 }
 
+struct AngleSnapTests {
+    @Test
+    func snapsNearHorizontalToHorizontal() {
+        let snapped = AngleSnap.snap(start: .zero, end: CGPoint(x: 10, y: 1))
+        #expect(abs(snapped.y) < 0.001)               // pinned to 0°
+        #expect(abs(snapped.x - hypot(10, 1)) < 0.001) // length preserved
+    }
+
+    @Test
+    func snapsNearVerticalToVertical() {
+        let snapped = AngleSnap.snap(start: .zero, end: CGPoint(x: 1, y: 10))
+        #expect(abs(snapped.x) < 0.001)               // pinned to 90°
+        #expect(abs(snapped.y - hypot(1, 10)) < 0.001)
+    }
+
+    @Test
+    func diagonalStaysDiagonal() {
+        let snapped = AngleSnap.snap(start: .zero, end: CGPoint(x: 10, y: 9))
+        #expect(abs(snapped.x - snapped.y) < 0.001)   // 45°
+    }
+}
+
 struct MeasureElementTests {
     @Test
     func pixelLengthIsEuclidean() {
