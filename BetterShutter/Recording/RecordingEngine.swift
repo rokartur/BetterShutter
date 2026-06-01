@@ -22,18 +22,23 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
 
     // MARK: Start
 
-    func start(displayID: CGDirectDisplayID, to url: URL) async throws {
+    /// - Parameter sourceRect: optional sub-region in display-local points (top-left origin). When
+    ///   non-nil only that region is recorded.
+    func start(displayID: CGDirectDisplayID, sourceRect: CGRect? = nil, to url: URL) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first(where: { $0.displayID == displayID })
             ?? content.displays.first else { throw CaptureError.noDisplays }
 
         let scale = CaptureEngine.scale(for: display.displayID)
-        let width = even(Int((CGFloat(display.width) * scale).rounded()))
-        let height = even(Int((CGFloat(display.height) * scale).rounded()))
+        let regionPoints = sourceRect ?? CGRect(x: 0, y: 0, width: CGFloat(display.width), height: CGFloat(display.height))
+        let width = even(Int((regionPoints.width * scale).rounded()))
+        let height = even(Int((regionPoints.height * scale).rounded()))
+        guard width > 0, height > 0 else { throw CaptureError.emptyCapture }
 
         let config = SCStreamConfiguration()
         config.width = width
         config.height = height
+        if sourceRect != nil { config.sourceRect = regionPoints }
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         config.queueDepth = 6

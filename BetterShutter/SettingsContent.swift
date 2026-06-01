@@ -115,6 +115,9 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: recording, title: "Start / Stop Recording",
                     subtitle: "Record the display to an MP4.", name: .toggleRecording,
                     searchItemID: nil)
+        addRecorder(to: recording, title: "Record Region",
+                    subtitle: "Select an area and record just that.", name: .recordRegion,
+                    searchItemID: nil)
     }
 
     private func addRecorder(

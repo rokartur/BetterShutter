@@ -98,6 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(record)
         recordingItem = record
 
+        addCaptureItem(to: menu, title: "Record Region", symbol: "rectangle.dashed",
+                       action: #selector(recordRegion), name: .recordRegion)
+
         menu.addItem(.separator())
 
         let settings = NSMenuItem(
@@ -157,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureFullScreen() { CaptureCoordinator.shared.capture(.fullDisplay) }
     @objc private func captureText() { CaptureCoordinator.shared.captureText() }
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
+    @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
 
     @objc private func openSettings() {
         let controller = settingsController ?? SettingsWindowController(

@@ -37,6 +37,46 @@ final class CaptureCoordinator {
         presentOverlay { [weak self] image, _ in self?.recognizeText(image) }
     }
 
+    /// Select a region, then start recording just that region to an MP4.
+    func recordRegion() {
+        guard !isCapturing, !overlay.isPresenting, !RecordingController.shared.isRecording else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        isCapturing = true
+        Task {
+            do {
+                let frozen = try await engine.freezeAllDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: false,
+                    onRegion: { [weak self] _, globalRect, displayID in
+                        self?.startRegionRecording(globalRect: globalRect, displayID: displayID)
+                    },
+                    onWindow: { [weak self] _ in self?.isCapturing = false },
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
+    private func startRegionRecording(globalRect: CGRect, displayID: CGDirectDisplayID) {
+        isCapturing = false
+        guard let screen = NSScreen.screens.first(where: { $0.displayID == displayID }) else { return }
+        let frame = screen.frame
+        // SCStream sourceRect is in display-local points, top-left origin.
+        let localTopLeft = CGRect(
+            x: globalRect.minX - frame.minX,
+            y: frame.maxY - globalRect.maxY,
+            width: globalRect.width,
+            height: globalRect.height
+        )
+        RecordingController.shared.startRegion(displayID: displayID, sourceRectPoints: localTopLeft)
+    }
+
     // MARK: Flows
 
     private func presentOverlay(completion: @escaping (CapturedImage, CaptureMode) -> Void) {
@@ -49,7 +89,7 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: Preferences.magnifierEnabled,
-                    onRegion: { image in completion(image, .region) },
+                    onRegion: { image, _, _ in completion(image, .region) },
                     onWindow: { [weak self] id in self?.captureWindow(id, completion: completion) },
                     onCancel: { [weak self] in self?.isCapturing = false }
                 )

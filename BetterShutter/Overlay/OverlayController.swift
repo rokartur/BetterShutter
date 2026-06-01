@@ -16,7 +16,7 @@ final class OverlayController {
     private var cursorHidden = false
     private var screenObserver: NSObjectProtocol?
 
-    private var onRegion: ((CapturedImage) -> Void)?
+    private var onRegion: ((CapturedImage, CGRect, CGDirectDisplayID) -> Void)?
     private var onWindow: ((CGWindowID) -> Void)?
     private var onCancel: (() -> Void)?
 
@@ -28,7 +28,7 @@ final class OverlayController {
         frozen: [CapturedImage],
         windows: [WindowInfo],
         magnifierEnabled: Bool,
-        onRegion: @escaping (CapturedImage) -> Void,
+        onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID) -> Void,
         onWindow: @escaping (CGWindowID) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -121,10 +121,12 @@ final class OverlayController {
             pixelSize: pane.image.pixelSize
         )
         let onRegion = self.onRegion
+        let displayID = pane.image.displayID ?? CGMainDisplayID()
         dismiss()
         guard cropPx.width >= 1, cropPx.height >= 1,
               let cropped = pane.image.cgImage.cropping(to: cropPx) else { return }
-        onRegion?(CapturedImage(cgImage: cropped, scale: pane.image.scale, displayID: pane.image.displayID))
+        onRegion?(CapturedImage(cgImage: cropped, scale: pane.image.scale, displayID: pane.image.displayID),
+                  globalRect, displayID)
     }
 
     private func handleWindow(_ id: CGWindowID) {

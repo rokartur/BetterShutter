@@ -18,8 +18,16 @@ final class RecordingController {
     func toggle() { isRecording ? stop() : start() }
 
     func start() {
-        guard !isRecording, PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
-        let displayID = displayUnderMouse()
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        beginRecording(displayID: displayUnderMouse(), sourceRect: nil)
+    }
+
+    func startRegion(displayID: CGDirectDisplayID, sourceRectPoints: CGRect) {
+        beginRecording(displayID: displayID, sourceRect: sourceRectPoints)
+    }
+
+    private func beginRecording(displayID: CGDirectDisplayID, sourceRect: CGRect?) {
+        guard !isRecording else { return }
         let url = Self.recordingURL()
         let engine = RecordingEngine()
         engine.captureSystemAudio = Preferences.recordSystemAudio
@@ -30,7 +38,7 @@ final class RecordingController {
 
         Task {
             do {
-                try await engine.start(displayID: displayID, to: url)
+                try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
             } catch {
                 isRecording = false
                 controlBar.hide()
