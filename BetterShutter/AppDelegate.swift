@@ -34,6 +34,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupStatusItem()
     }
 
+    /// Incoming `bettershutter://` automation URLs (once the scheme is registered for the target).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let command = URLCommand.parse(url) else { continue }
+            dispatch(command)
+        }
+    }
+
+    private func dispatch(_ command: URLCommand) {
+        switch command {
+        case .captureRegion:        CaptureCoordinator.shared.capture(.region)
+        case .captureWindow:        CaptureCoordinator.shared.capture(.window)
+        case .captureFullScreen:    CaptureCoordinator.shared.capture(.fullDisplay)
+        case .captureText:          CaptureCoordinator.shared.captureText()
+        case .captureScrolling:     CaptureCoordinator.shared.captureScrolling()
+        case .captureCutout:        CaptureCoordinator.shared.captureCutout()
+        case .record:               RecordingController.shared.toggle()
+        case .recordGIF:            RecordingController.shared.toggleGIF()
+        case .recordRegion:         CaptureCoordinator.shared.recordRegion()
+        case .capturePreviousArea:  CaptureCoordinator.shared.captureLastRegion()
+        case .openBrowser:          CaptureBrowserWindowController.shared.show()
+        case .openSettings:         openSettings()
+        case .pinLast:              pinLastCapture()
+        case .unknown(let raw):     HUD.show("Unknown command: \(raw)")
+        }
+    }
+
     // MARK: - Updater
 
     private func bootstrapUpdater() {
