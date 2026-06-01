@@ -81,6 +81,9 @@ struct BeautifyStyle {
     var shadow: Bool
     var shadowFraction: CGFloat
     var windowFrame: WindowFrame
+    /// Output aspect ratio (width / height). Nil keeps the natural padded size; otherwise the canvas
+    /// is enlarged on one axis and the card centered ("auto-balanced" composition).
+    var targetAspect: CGFloat?
 
     static func makeDefault() -> BeautifyStyle {
         BeautifyStyle(
@@ -89,7 +92,8 @@ struct BeautifyStyle {
             cornerFraction: 0.03,
             shadow: true,
             shadowFraction: 0.05,
-            windowFrame: .none
+            windowFrame: .none,
+            targetAspect: nil
         )
     }
 }

@@ -76,8 +76,14 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
 
         let imageButton = makeButton("Image…", "photo", #selector(chooseBackgroundImage))
 
+        let aspectPopup = NSPopUpButton()
+        aspectPopup.addItems(withTitles: ["Original", "Square", "4:3", "16:9"])
+        aspectPopup.target = self
+        aspectPopup.action = #selector(aspectChanged(_:))
+
         let left = NSStackView(views: [
             label("Background"), presetPopup, colorWell, imageButton,
+            label("Aspect"), aspectPopup,
             label("Frame"), framePopup,
             label("Padding"), padding,
             label("Corner"), corner,
@@ -177,6 +183,16 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
         var rect = CGRect(origin: .zero, size: nsImage.size)
         guard let cg = nsImage.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return }
         style.background = .image(cg)
+        renderPreview()
+    }
+
+    @objc private func aspectChanged(_ sender: NSPopUpButton) {
+        switch sender.indexOfSelectedItem {
+        case 1: style.targetAspect = 1
+        case 2: style.targetAspect = 4.0 / 3.0
+        case 3: style.targetAspect = 16.0 / 9.0
+        default: style.targetAspect = nil
+        }
         renderPreview()
     }
 

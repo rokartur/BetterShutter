@@ -10,9 +10,22 @@ enum BeautifyRenderer {
         let minDim = min(w, h)
         let pad = (minDim * style.paddingFraction).rounded()
         let barHeight = style.windowFrame == .none ? 0 : max(24, (minDim * 0.05).rounded())
-        let outW = Int(w + 2 * pad)
-        let outH = Int(h + barHeight + 2 * pad)
-        guard outW > 0, outH > 0 else { return nil }
+        let baseW = Int(w + 2 * pad)
+        let baseH = Int(h + barHeight + 2 * pad)
+        guard baseW > 0, baseH > 0 else { return nil }
+
+        // Optionally enlarge the canvas to hit a target aspect ratio, centering the card.
+        var outW = baseW, outH = baseH
+        if let aspect = style.targetAspect, aspect > 0 {
+            let current = CGFloat(baseW) / CGFloat(baseH)
+            if current < aspect {
+                outW = Int((CGFloat(baseH) * aspect).rounded())
+            } else if current > aspect {
+                outH = Int((CGFloat(baseW) / aspect).rounded())
+            }
+        }
+        let offsetX = CGFloat((outW - baseW) / 2)
+        let offsetY = CGFloat((outH - baseH) / 2)
 
         let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(
@@ -24,8 +37,8 @@ enum BeautifyRenderer {
         drawBackground(style.background, in: ctx, rect: full)
 
         // Bottom-left coords: image sits at the bottom of the card, chrome bar above it.
-        let cardRect = CGRect(x: pad, y: pad, width: w, height: h + barHeight)
-        let imageRect = CGRect(x: pad, y: pad, width: w, height: h)
+        let cardRect = CGRect(x: pad + offsetX, y: pad + offsetY, width: w, height: h + barHeight)
+        let imageRect = CGRect(x: pad + offsetX, y: pad + offsetY, width: w, height: h)
         let radius = minDim * style.cornerFraction
         let rounded = CGPath(roundedRect: cardRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
@@ -49,7 +62,7 @@ enum BeautifyRenderer {
                 : NSColor(calibratedWhite: 0.93, alpha: 1)
             ctx.setFillColor(barColor.cgColor)
             ctx.fill(cardRect)
-            let barRect = CGRect(x: pad, y: pad + h, width: w, height: barHeight)
+            let barRect = CGRect(x: pad + offsetX, y: pad + offsetY + h, width: w, height: barHeight)
             drawTrafficLights(in: ctx, barRect: barRect)
         }
         ctx.draw(base, in: imageRect)

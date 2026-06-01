@@ -179,6 +179,16 @@ struct BeautifyRendererTests {
     }
 
     @Test
+    func squareTargetAspectProducesSquareOutput() {
+        let base = makeSolidTestImage(width: 200, height: 100)
+        var style = BeautifyStyle.makeDefault()
+        style.targetAspect = 1
+        let out = BeautifyRenderer.render(base: base, style: style)
+        #expect(out != nil)
+        #expect(abs((out?.width ?? 0) - (out?.height ?? 0)) <= 1)
+    }
+
+    @Test
     func zeroPaddingMatchesImageSize() {
         let base = makeSolidTestImage(width: 64, height: 64)
         var style = BeautifyStyle.makeDefault()
