@@ -470,6 +470,28 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         line.submenu = lineSub
         menu.addItem(line)
 
+        let arrow = NSMenuItem(title: "Arrow", action: nil, keyEquivalent: "")
+        let arrowSub = NSMenu()
+        for (title, kind) in [("Straight", ArrowStyle.straight), ("Curved", .curved), ("Elbow", .elbow)] {
+            let item = NSMenuItem(title: title, action: #selector(setArrowStyle(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = kind.rawValue
+            item.state = style.arrowStyle == kind ? .on : .off
+            arrowSub.addItem(item)
+        }
+        arrow.submenu = arrowSub
+        menu.addItem(arrow)
+
+        let corners = NSMenuItem(title: "Corners", action: nil, keyEquivalent: "")
+        let cornersSub = NSMenu()
+        for (title, value) in [("Square", CGFloat(0)), ("Small", 8), ("Medium", 16), ("Large", 28)] {
+            let item = NSMenuItem(title: title, action: #selector(setCornerRadius(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = value
+            item.state = abs(style.cornerRadius - value) < 0.5 ? .on : .off
+            cornersSub.addItem(item)
+        }
+        corners.submenu = cornersSub
+        menu.addItem(corners)
+
         if elements.contains(where: { $0 is StepElement }) {
             let number = NSMenuItem(title: "Step Numbers", action: nil, keyEquivalent: "")
             let numberSub = NSMenu()
@@ -485,6 +507,28 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         }
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func setArrowStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let kind = ArrowStyle(rawValue: raw) else { return }
+        style.arrowStyle = kind
+        if let selected {
+            let before = snapshot()
+            selected.style.arrowStyle = kind
+            commit(before, "Arrow Style")
+        }
+        needsDisplay = true
+    }
+
+    @objc private func setCornerRadius(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? CGFloat else { return }
+        style.cornerRadius = value
+        if let selected {
+            let before = snapshot()
+            selected.style.cornerRadius = value
+            commit(before, "Corner Radius")
+        }
+        needsDisplay = true
     }
 
     @objc private func setStepFormat(_ sender: NSMenuItem) {

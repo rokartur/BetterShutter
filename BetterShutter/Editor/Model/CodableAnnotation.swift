@@ -28,6 +28,8 @@ nonisolated struct CodableStyle: Codable, Sendable {
     var fontSize: Double
     var fillMode: String?
     var dash: String?
+    var arrowStyle: String?
+    var cornerRadius: Double?
 }
 
 /// One annotation, flattened to a tagged record. Only the fields relevant to `kind` are populated.
@@ -88,7 +90,9 @@ enum AnnotationProjectIO {
                                  strokeWidth: Double(e.style.strokeWidth),
                                  fontSize: Double(e.style.fontSize),
                                  fillMode: e.style.fillMode.rawValue,
-                                 dash: e.style.dash.rawValue)
+                                 dash: e.style.dash.rawValue,
+                                 arrowStyle: e.style.arrowStyle.rawValue,
+                                 cornerRadius: Double(e.style.cornerRadius))
         func twoPoint(_ kind: String, _ t: TwoPointElement) -> CodableAnnotation {
             CodableAnnotation(kind: kind, style: style, start: t.start, end: t.end)
         }
@@ -121,11 +125,13 @@ enum AnnotationProjectIO {
     }
 
     static func decode(_ c: CodableAnnotation) -> AnnotationElement? {
-        let style = AnnotationStyle(color: c.style.color.nsColor,
+        var style = AnnotationStyle(color: c.style.color.nsColor,
                                     strokeWidth: CGFloat(c.style.strokeWidth),
                                     fontSize: CGFloat(c.style.fontSize),
                                     fillMode: FillMode(rawValue: c.style.fillMode ?? "stroke") ?? .stroke,
                                     dash: DashStyle(rawValue: c.style.dash ?? "solid") ?? .solid)
+        style.arrowStyle = ArrowStyle(rawValue: c.style.arrowStyle ?? "straight") ?? .straight
+        style.cornerRadius = CGFloat(c.style.cornerRadius ?? 0)
         func twoPoint<T: TwoPointElement>(_ type: T.Type) -> T {
             let e = T(start: c.start ?? .zero, style: style)
             e.end = c.end ?? c.start ?? .zero

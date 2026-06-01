@@ -4,6 +4,7 @@ import AppKit
 /// so annotations stay proportional to the captured bitmap regardless of editor zoom.
 nonisolated enum FillMode: String, Sendable { case stroke, strokeFill, fill }
 nonisolated enum DashStyle: String, Sendable { case solid, dashed, dotted }
+nonisolated enum ArrowStyle: String, Sendable, CaseIterable { case straight, curved, elbow }
 
 @MainActor
 struct AnnotationStyle {
@@ -12,6 +13,9 @@ struct AnnotationStyle {
     var fontSize: CGFloat
     var fillMode: FillMode
     var dash: DashStyle
+    var arrowStyle: ArrowStyle = .straight
+    /// Rounded-corner radius for rectangles, in image pixels (0 = square corners).
+    var cornerRadius: CGFloat = 0
 
     /// Dash pattern for the current style (empty = solid line).
     var dashPattern: [CGFloat] {

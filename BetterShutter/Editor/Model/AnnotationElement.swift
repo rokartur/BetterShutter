@@ -131,18 +131,36 @@ final class RectangleElement: TwoPointElement {
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         cg.setLineWidth(style.strokeWidth)
         cg.setLineJoin(.round)
+        let radius = min(style.cornerRadius, min(rect.width, rect.height) / 2)
+
+        func fillPath(_ r: CGRect) {
+            if radius > 0 {
+                cg.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                cg.fillPath()
+            } else {
+                cg.fill(r)
+            }
+        }
+
         if style.fillMode == .fill {
             cg.setFillColor(style.color.cgColor)
-            cg.fill(rect)
+            fillPath(rect)
             return
         }
         if style.fillMode == .strokeFill {
             cg.setFillColor(style.color.withAlphaComponent(0.25).cgColor)
-            cg.fill(rect)
+            fillPath(rect)
         }
         cg.setLineDash(phase: 0, lengths: style.dashPattern)
         cg.setStrokeColor(style.color.cgColor)
-        cg.stroke(rect.insetBy(dx: style.strokeWidth / 2, dy: style.strokeWidth / 2))
+        let stroked = rect.insetBy(dx: style.strokeWidth / 2, dy: style.strokeWidth / 2)
+        if radius > 0 {
+            let r = max(0, radius - style.strokeWidth / 2)
+            cg.addPath(CGPath(roundedRect: stroked, cornerWidth: r, cornerHeight: r, transform: nil))
+            cg.strokePath()
+        } else {
+            cg.stroke(stroked)
+        }
     }
 }
 
@@ -194,23 +212,47 @@ final class ArrowElement: TwoPointElement {
         cg.setLineCap(.round)
         cg.setLineJoin(.round)
 
-        let angle = atan2(end.y - start.y, end.x - start.x)
         let headLength = max(style.strokeWidth * 3.5, 14)
         let headAngle = CGFloat.pi / 7
+        // `incoming` is the direction the head points along (tangent at the tip).
+        let incoming: CGFloat
 
-        // Shaft stops short of the tip so the head looks solid.
-        let shaftEnd = CGPoint(
-            x: end.x - cos(angle) * headLength * 0.6,
-            y: end.y - sin(angle) * headLength * 0.6
-        )
-        cg.move(to: start)
-        cg.addLine(to: shaftEnd)
-        cg.strokePath()
+        switch style.arrowStyle {
+        case .straight:
+            incoming = atan2(end.y - start.y, end.x - start.x)
+            let shaftEnd = CGPoint(x: end.x - cos(incoming) * headLength * 0.6,
+                                   y: end.y - sin(incoming) * headLength * 0.6)
+            cg.move(to: start); cg.addLine(to: shaftEnd); cg.strokePath()
 
-        let left = CGPoint(x: end.x - cos(angle - headAngle) * headLength,
-                           y: end.y - sin(angle - headAngle) * headLength)
-        let right = CGPoint(x: end.x - cos(angle + headAngle) * headLength,
-                            y: end.y - sin(angle + headAngle) * headLength)
+        case .curved:
+            // Quadratic bow: control point offset perpendicular to the chord at its midpoint.
+            let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+            let chord = atan2(end.y - start.y, end.x - start.x)
+            let bow = hypot(end.x - start.x, end.y - start.y) * 0.2
+            let control = CGPoint(x: mid.x - sin(chord) * bow, y: mid.y + cos(chord) * bow)
+            incoming = atan2(end.y - control.y, end.x - control.x)
+            cg.move(to: start)
+            cg.addQuadCurve(to: CGPoint(x: end.x - cos(incoming) * headLength * 0.6,
+                                        y: end.y - sin(incoming) * headLength * 0.6),
+                            control: control)
+            cg.strokePath()
+
+        case .elbow:
+            // Right-angle path: travel along the longer axis first, then turn to the tip.
+            let horizontalFirst = abs(end.x - start.x) >= abs(end.y - start.y)
+            let corner = horizontalFirst ? CGPoint(x: end.x, y: start.y) : CGPoint(x: start.x, y: end.y)
+            incoming = horizontalFirst
+                ? (end.y >= start.y ? .pi / 2 : -.pi / 2)
+                : (end.x >= start.x ? 0 : .pi)
+            let shaftEnd = CGPoint(x: end.x - cos(incoming) * headLength * 0.6,
+                                   y: end.y - sin(incoming) * headLength * 0.6)
+            cg.move(to: start); cg.addLine(to: corner); cg.addLine(to: shaftEnd); cg.strokePath()
+        }
+
+        let left = CGPoint(x: end.x - cos(incoming - headAngle) * headLength,
+                           y: end.y - sin(incoming - headAngle) * headLength)
+        let right = CGPoint(x: end.x - cos(incoming + headAngle) * headLength,
+                            y: end.y - sin(incoming + headAngle) * headLength)
         cg.move(to: end)
         cg.addLine(to: left)
         cg.addLine(to: right)
