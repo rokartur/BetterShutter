@@ -40,6 +40,8 @@ nonisolated struct CodableAnnotation: Codable, Sendable {
     var text: String?
     var center: CGPoint?    // step
     var number: Int?
+    var stepFormat: String? // step numbering format
+    var stepStart: Int?     // step first-label value
     var imagePNG: Data?     // composed image (base64 in JSON)
 }
 
@@ -103,7 +105,8 @@ enum AnnotationProjectIO {
         case let x as TextElement:
             return CodableAnnotation(kind: "text", style: style, origin: x.origin, text: x.text)
         case let x as StepElement:
-            return CodableAnnotation(kind: "step", style: style, center: x.center, number: x.number)
+            return CodableAnnotation(kind: "step", style: style, center: x.center, number: x.number,
+                                     stepFormat: x.format.rawValue, stepStart: x.start)
         case let x as StampElement:
             return CodableAnnotation(kind: "stamp", style: style, text: x.emoji, center: x.center)
         case let x as ImageElement:
@@ -138,7 +141,10 @@ enum AnnotationProjectIO {
         case "blackout":  return twoPoint(BlackoutElement.self)
         case "spotlight": return twoPoint(SpotlightElement.self)
         case "text":      return TextElement(origin: c.origin ?? .zero, text: c.text ?? "", style: style)
-        case "step":      return StepElement(center: c.center ?? .zero, number: c.number ?? 1, style: style)
+        case "step":
+            return StepElement(center: c.center ?? .zero, number: c.number ?? 1, style: style,
+                               format: StepFormat(rawValue: c.stepFormat ?? "decimal") ?? .decimal,
+                               start: c.stepStart ?? 1)
         case "stamp":     return StampElement(center: c.center ?? .zero, emoji: c.text ?? "⭐️", style: style)
         case "image":
             guard let data = c.imagePNG, let source = CGImageSourceCreateWithData(data as CFData, nil),

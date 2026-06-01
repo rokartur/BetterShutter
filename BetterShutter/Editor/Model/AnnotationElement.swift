@@ -344,15 +344,24 @@ final class TextElement: AnnotationElement {
 
 final class StepElement: AnnotationElement {
     var center: CGPoint
+    /// 1-based position in the step sequence (maintained by the editor on add/delete).
     var number: Int
+    var format: StepFormat
+    /// The label value the first badge shows; later badges count up from here.
+    var start: Int
 
-    init(center: CGPoint, number: Int, style: AnnotationStyle) {
+    init(center: CGPoint, number: Int, style: AnnotationStyle, format: StepFormat = .decimal, start: Int = 1) {
         self.center = center
         self.number = number
+        self.format = format
+        self.start = start
         super.init(style: style)
     }
 
     private var radius: CGFloat { max(16, style.fontSize) }
+
+    /// The rendered badge text for this step's sequence position.
+    var label: String { format.string(for: start + number - 1) }
 
     override var boundingBox: CGRect {
         CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
@@ -363,7 +372,7 @@ final class StepElement: AnnotationElement {
     }
 
     override func clone() -> AnnotationElement {
-        StepElement(center: center, number: number, style: style)
+        StepElement(center: center, number: number, style: style, format: format, start: start)
     }
 
     override func transform(_ t: CGAffineTransform) { center = center.applying(t) }
@@ -372,11 +381,22 @@ final class StepElement: AnnotationElement {
         cg.setFillColor(style.color.cgColor)
         cg.fillEllipse(in: boundingBox)
 
-        let font = NSFont.systemFont(ofSize: radius * 1.1, weight: .bold)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(number)", attributes: attrs))
-        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
-        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        // Fit multi-character labels (AA, VIII) inside the badge by shrinking the font to taste.
+        var fontSize = radius * 1.1
+        let maxWidth = radius * 1.7
+        func measure(_ size: CGFloat) -> (CTLine, CGFloat, CGFloat, CGFloat) {
+            let font = NSFont.systemFont(ofSize: size, weight: .bold)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: attrs))
+            var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+            let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+            return (line, width, ascent, descent)
+        }
+        var (line, width, ascent, descent) = measure(fontSize)
+        if width > maxWidth, width > 0 {
+            fontSize *= maxWidth / width
+            (line, width, ascent, descent) = measure(fontSize)
+        }
         cg.textMatrix = .identity
         cg.textPosition = CGPoint(x: center.x - width / 2, y: center.y - (ascent - descent) / 2)
         CTLineDraw(line, cg)

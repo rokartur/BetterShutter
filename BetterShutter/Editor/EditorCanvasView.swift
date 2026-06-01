@@ -321,7 +321,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case .text:
             beginText(at: p)
         case .step:
-            let element = StepElement(center: p, number: stepCounter, style: style)
+            let element = StepElement(center: p, number: stepCounter, style: style,
+                                      format: Preferences.stepFormat, start: Preferences.stepStart)
             stepCounter += 1
             elements.append(element)
             selected = element
@@ -426,7 +427,33 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         }
         line.submenu = lineSub
         menu.addItem(line)
+
+        if elements.contains(where: { $0 is StepElement }) {
+            let number = NSMenuItem(title: "Step Numbers", action: nil, keyEquivalent: "")
+            let numberSub = NSMenu()
+            for format in StepFormat.allCases {
+                let item = NSMenuItem(title: format.presentableName, action: #selector(setStepFormat(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = format.rawValue
+                item.state = Preferences.stepFormat == format ? .on : .off
+                numberSub.addItem(item)
+            }
+            number.submenu = numberSub
+            menu.addItem(number)
+        }
+
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func setStepFormat(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let format = StepFormat(rawValue: raw) else { return }
+        Preferences.stepFormat = format
+        let steps = elements.compactMap { $0 as? StepElement }
+        guard !steps.isEmpty else { return }
+        let before = snapshot()
+        for step in steps { step.format = format }
+        commit(before, "Step Numbers")
+        needsDisplay = true
     }
 
     @objc private func setFillMode(_ sender: NSMenuItem) {

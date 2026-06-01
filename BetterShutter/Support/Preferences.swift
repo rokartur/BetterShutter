@@ -91,6 +91,20 @@ nonisolated enum Preferences {
         static let editorToolKeys = "editorToolKeys"
         static let beautifyPresets = "beautifyPresets"
         static let lastRegion = "lastRegion"
+        static let stepFormat = "stepFormat"
+        static let stepStart = "stepStart"
+    }
+
+    /// Numbering format for new step badges.
+    static var stepFormat: StepFormat {
+        get { StepFormat(rawValue: defaults.string(forKey: Key.stepFormat) ?? "") ?? .decimal }
+        set { defaults.set(newValue.rawValue, forKey: Key.stepFormat) }
+    }
+
+    /// First label value for step badges (1 unless the user changed it).
+    static var stepStart: Int {
+        get { let v = defaults.integer(forKey: Key.stepStart); return v == 0 ? 1 : v }
+        set { defaults.set(newValue, forKey: Key.stepStart) }
     }
 
     /// The last region selection (global rect + display), persisted for "Capture Previous Area".

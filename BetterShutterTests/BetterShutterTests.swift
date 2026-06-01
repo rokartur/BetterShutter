@@ -572,6 +572,42 @@ struct GIFEncoderTests {
     }
 }
 
+struct StepFormatTests {
+    @Test
+    func decimalIsPlain() {
+        #expect(StepFormat.decimal.string(for: 1) == "1")
+        #expect(StepFormat.decimal.string(for: 42) == "42")
+    }
+
+    @Test
+    func alphabeticWrapsPastZ() {
+        #expect(StepFormat.alphabetic.string(for: 1) == "A")
+        #expect(StepFormat.alphabetic.string(for: 26) == "Z")
+        #expect(StepFormat.alphabetic.string(for: 27) == "AA")
+        #expect(StepFormat.alphabetic.string(for: 28) == "AB")
+        #expect(StepFormat.alphabetic.string(for: 52) == "AZ")
+        #expect(StepFormat.alphabetic.string(for: 53) == "BA")
+    }
+
+    @Test
+    func romanNumerals() {
+        #expect(StepFormat.roman.string(for: 1) == "I")
+        #expect(StepFormat.roman.string(for: 4) == "IV")
+        #expect(StepFormat.roman.string(for: 9) == "IX")
+        #expect(StepFormat.roman.string(for: 40) == "XL")
+        #expect(StepFormat.roman.string(for: 1990) == "MCMXC")
+    }
+
+    @Test @MainActor
+    func badgeLabelHonorsFormatAndStart() {
+        let style = AnnotationStyle.makeDefault(imageWidth: 100)
+        let step = StepElement(center: .zero, number: 3, style: style, format: .alphabetic, start: 1)
+        #expect(step.label == "C")        // start 1, sequence 3 -> 3rd letter
+        let offset = StepElement(center: .zero, number: 1, style: style, format: .decimal, start: 5)
+        #expect(offset.label == "5")      // custom start
+    }
+}
+
 struct StoredRegionTests {
     @Test
     func roundTripsRectAndDisplay() throws {
