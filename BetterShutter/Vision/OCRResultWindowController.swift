@@ -117,7 +117,7 @@ final class OCRResultWindowController: NSObject, NSWindowDelegate {
             copyButton.bezelStyle = .accessoryBarAction
             copyButton.tag = barcodes.firstIndex(of: payload) ?? 0
             row.addArrangedSubview(copyButton)
-            if let url = URL(string: payload), url.scheme != nil {
+            if Self.webURL(payload) != nil {
                 let open = NSButton(title: "Open", target: self, action: #selector(openBarcode(_:)))
                 open.controlSize = .small
                 open.bezelStyle = .accessoryBarAction
@@ -146,7 +146,16 @@ final class OCRResultWindowController: NSObject, NSWindowDelegate {
     }
 
     @objc private func openBarcode(_ sender: NSButton) {
-        guard barcodes.indices.contains(sender.tag), let url = URL(string: barcodes[sender.tag]) else { return }
+        // Only ever open http/https from a QR payload — never file:// or custom app schemes that a
+        // malicious code could use to trigger actions.
+        guard barcodes.indices.contains(sender.tag), let url = Self.webURL(barcodes[sender.tag]) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    /// A URL only if `payload` is an http/https web address; nil otherwise.
+    private static func webURL(_ payload: String) -> URL? {
+        guard let url = URL(string: payload), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
     }
 }
