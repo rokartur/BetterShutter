@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         HotKeyBridge.install()
         setupStatusItem()
         RecordingController.shared.onStateChange = { [weak self] in self?.recordingStateChanged() }
+        OnboardingWindowController.showIfNeeded()
     }
 
     // MARK: - Menubar recording timer

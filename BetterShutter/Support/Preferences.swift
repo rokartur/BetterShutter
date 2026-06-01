@@ -63,6 +63,13 @@ nonisolated enum Preferences {
         static let highlightClicks = "highlightClicks"
         static let showCursorInRecording = "showCursorInRecording"
         static let includeWindowShadow = "includeWindowShadow"
+        static let hasOnboarded = "hasOnboarded"
+    }
+
+    /// Whether the first-run onboarding has been shown.
+    static var hasOnboarded: Bool {
+        get { defaults.bool(forKey: Key.hasOnboarded) }
+        set { defaults.set(newValue, forKey: Key.hasOnboarded) }
     }
 
     /// Include the macOS drop shadow when capturing a single window.
