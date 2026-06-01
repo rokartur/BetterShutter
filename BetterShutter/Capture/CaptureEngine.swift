@@ -24,7 +24,7 @@ actor CaptureEngine {
     /// Snapshot of displays and capturable windows, as `Sendable` value types.
     func shareableContent() async throws -> (displays: [DisplayInfo], windows: [WindowInfo]) {
         let content = try await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: true
+            true, onScreenWindowsOnly: true
         )
         let ownBundleID = Bundle.main.bundleIdentifier
 
@@ -32,10 +32,17 @@ actor CaptureEngine {
             DisplayInfo(id: d.displayID, cgFrame: d.frame, scale: Self.scale(for: d.displayID))
         }
 
-        let windows: [WindowInfo] = content.windows.compactMap { w in
+        // SCShareableContent.windows is NOT z-ordered, so hit-testing "front window under the
+        // cursor" against it picks an arbitrary overlapping window. Pull the true front-to-back
+        // order (and per-window alpha) from CGWindowList and use it to order + filter the result.
+        let zOrder = Self.onScreenWindowOrder()
+
+        let windows: [WindowInfo] = content.windows.compactMap { w -> WindowInfo? in
             guard w.isOnScreen, w.windowLayer == 0 else { return nil }
             guard w.frame.width >= 40, w.frame.height >= 40 else { return nil }
             if let app = w.owningApplication, app.bundleIdentifier == ownBundleID { return nil }
+            // Drop windows that are effectively invisible (alpha ~0) so they can't grab the hover.
+            if let alpha = zOrder[w.windowID]?.alpha, alpha < 0.05 { return nil }
             return WindowInfo(
                 id: w.windowID,
                 cgFrame: w.frame,
@@ -43,7 +50,26 @@ actor CaptureEngine {
                 appName: w.owningApplication?.applicationName
             )
         }
-        return (displays, windows)
+        // Front-to-back: known z-indices ascend (0 = frontmost); unknown windows sort to the back.
+        let sorted = windows.sorted {
+            (zOrder[$0.id]?.index ?? Int.max) < (zOrder[$1.id]?.index ?? Int.max)
+        }
+        return (displays, sorted)
+    }
+
+    /// Front-to-back on-screen window order + alpha, keyed by window id, from CGWindowList
+    /// (the authoritative z-order source SCK doesn't expose).
+    private static func onScreenWindowOrder() -> [CGWindowID: (index: Int, alpha: CGFloat)] {
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return [:] }
+        var map: [CGWindowID: (index: Int, alpha: CGFloat)] = [:]
+        for (index, info) in list.enumerated() {
+            guard let number = info[kCGWindowNumber as String] as? CGWindowID else { continue }
+            let alpha = (info[kCGWindowAlpha as String] as? CGFloat) ?? 1
+            map[number] = (index, alpha)
+        }
+        return map
     }
 
     // MARK: Freeze (all displays)

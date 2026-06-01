@@ -8,8 +8,26 @@ import UniformTypeIdentifiers
 @MainActor
 final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
-    static let cardSize = NSSize(width: 256, height: 196)
-    private let corner: CGFloat = 16
+    /// Fixed card width keeps the bottom-right column cleanly aligned; height tracks the capture's
+    /// aspect (clamped) so landscape shots fill edge-to-edge with no letterbox bars.
+    static let cardWidth: CGFloat = 264
+    static let minCardHeight: CGFloat = 132
+    static let maxCardHeight: CGFloat = 188
+
+    /// The aspect-correct card size for a capture of `pixelSize`, bounded by BOTH the max width and
+    /// the height clamp. Landscape shots keep the full width; portrait/tall shots shrink their width
+    /// to match the image so they fill the card instead of sitting in wide dark side-bars.
+    static func cardSize(for pixelSize: CGSize) -> NSSize {
+        guard pixelSize.width > 0, pixelSize.height > 0 else {
+            return NSSize(width: cardWidth, height: 168)
+        }
+        let aspect = pixelSize.width / pixelSize.height
+        let h = min(max(cardWidth / aspect, minCardHeight), maxCardHeight)
+        let w = min(cardWidth, h * aspect)
+        return NSSize(width: w, height: h)
+    }
+
+    private let corner: CGFloat = 14
 
     private let image: CapturedImage
     private let mode: CaptureMode
@@ -39,11 +57,16 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         self.mode = mode
         self.savedURL = savedURL
         self.thumbnail = NSImage(cgImage: image.cgImage, size: image.pixelSize)
-        super.init(frame: NSRect(origin: .zero, size: Self.cardSize))
+        super.init(frame: NSRect(origin: .zero, size: Self.cardSize(for: image.pixelSize)))
         wantsLayer = true
         layer?.cornerRadius = corner
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
+        // The card is the screenshot itself: a dark backing (shows only as a thin frame / on the
+        // rare portrait letterbox) plus a hairline border so it separates from the desktop behind.
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
         setupScrim()
         setupControls()
         setControls(visible: false, animated: false)
@@ -246,19 +269,12 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Thumbnail aspect-fit on a dark mat so any letterboxing reads as part of the image well
-        // rather than bare glass. The glass backdrop shows through the mat's translucency.
-        let inset = bounds.insetBy(dx: 6, dy: 6)
-        let fit = Self.aspectFit(imageSize: image.pixelSize, in: inset)
-        let mat = NSBezierPath(roundedRect: fit.insetBy(dx: -1, dy: -1), xRadius: 8, yRadius: 8)
-        NSColor.black.withAlphaComponent(0.25).setFill()
-        mat.fill()
+        // The screenshot fills the card edge-to-edge. Because the card height tracks the capture's
+        // aspect, landscape shots fit exactly (no bars); only clamped portrait shots show a thin
+        // dark margin (the layer background), which reads as an intentional frame.
+        let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds)
         NSGraphicsContext.current?.cgContext.interpolationQuality = .high
-        let clip = NSBezierPath(roundedRect: fit, xRadius: 8, yRadius: 8)
-        NSGraphicsContext.current?.saveGraphicsState()
-        clip.addClip()
         thumbnail.draw(in: fit, from: .zero, operation: .sourceOver, fraction: 1)
-        NSGraphicsContext.current?.restoreGraphicsState()
     }
 
     private static func aspectFit(imageSize: CGSize, in rect: CGRect) -> CGRect {
@@ -332,7 +348,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
 
         let provider = NSFilePromiseProvider(fileType: UTType.png.identifier, delegate: delegate)
         let item = NSDraggingItem(pasteboardWriter: provider)
-        let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds.insetBy(dx: 6, dy: 6))
+        let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds)
         item.setDraggingFrame(fit, contents: thumbnail)
         beginDraggingSession(with: [item], event: event, source: self)
     }

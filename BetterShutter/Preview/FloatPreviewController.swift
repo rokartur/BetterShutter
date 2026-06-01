@@ -26,22 +26,20 @@ final class FloatPreviewController {
 
     private let autoDismissDelay: TimeInterval = 8
     private let hardCardCap = 5
-    private let cardSize = FloatPreviewView.cardSize
     private let spacing: CGFloat = 12
     private let margin: CGFloat = 20
 
     func show(_ image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
         if panels.isEmpty { anchorScreen = Self.screen(for: image) }
 
+        let cardSize = FloatPreviewView.cardSize(for: image.pixelSize)
         let view = FloatPreviewView(image: image, mode: mode, savedURL: savedURL)
-        let glass = GlassPanelView(cornerRadius: 16)
-        glass.frame = NSRect(origin: .zero, size: cardSize)
-        view.frame = glass.bounds
         view.autoresizingMask = [.width, .height]
-        glass.contentView.addSubview(view)
 
+        // The card is the screenshot itself (full-bleed); no glass chrome behind it.
         let panel = FloatPreviewWindow(size: cardSize)
-        panel.contentView = glass
+        view.frame = NSRect(origin: .zero, size: cardSize)
+        panel.contentView = view
         let id = ObjectIdentifier(panel)
 
         view.onCopy = { PasteboardWriter.copy(image.cgImage) }
@@ -75,14 +73,14 @@ final class FloatPreviewController {
         cardInfo[id] = (image, mode, savedURL)
 
         // Evict the oldest cards that no longer fit (height-bounded), before positioning the new one.
-        let cap = cardCapacity()
-        while panels.count > cap, let oldest = panels.first {
+        let available = anchorVisibleFrame().height - 2 * margin
+        while panels.count > 1, panels.count > hardCardCap || stackedHeight() > available,
+              let oldest = panels.first {
             evict(oldest)
         }
 
-        if let index = panels.firstIndex(of: panel) {
-            panel.setFrameOrigin(origin(forIndex: index, count: panels.count))
-        }
+        let origins = layout()
+        if let target = origins[id] { panel.setFrameOrigin(target) }
         panel.alphaValue = 0
         panel.orderFront(nil)
         repositionAll(animated: true)
@@ -108,31 +106,39 @@ final class FloatPreviewController {
 
     // MARK: Stacking
 
-    private func cardCapacity() -> Int {
-        let visible = anchorVisibleFrame()
-        let per = cardSize.height + spacing
-        let fit = Int(((visible.height - 2 * margin + spacing) / per).rounded(.down))
-        return max(1, min(hardCardCap, fit))
-    }
-
     private func anchorVisibleFrame() -> CGRect {
         (anchorScreen ?? NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? .zero
     }
 
-    private func origin(forIndex index: Int, count: Int) -> CGPoint {
+    /// Total height the current column of (variable-height) cards occupies, including gaps.
+    private func stackedHeight() -> CGFloat {
+        guard !panels.isEmpty else { return 0 }
+        let heights = panels.reduce(0) { $0 + $1.frame.height }
+        return heights + CGFloat(panels.count - 1) * spacing
+    }
+
+    /// Target origin for each card: newest pinned to the bottom-right corner, older cards stacked
+    /// upward. Heights vary per card, so positions are summed bottom-up rather than indexed.
+    private func layout() -> [ObjectIdentifier: CGPoint] {
         let visible = anchorVisibleFrame()
-        let reversed = count - 1 - index            // 0 = newest, sits at the corner
-        let x = visible.maxX - margin - cardSize.width
-        let y = visible.minY + margin + CGFloat(reversed) * (cardSize.height + spacing)
-        return CGPoint(x: x, y: y)
+        var y = visible.minY + margin
+        var result: [ObjectIdentifier: CGPoint] = [:]
+        for panel in panels.reversed() {               // newest (last) first → sits at the corner
+            // Right-anchor per card: portrait cards are narrower, so anchor by each card's own width.
+            let x = visible.maxX - margin - panel.frame.width
+            result[ObjectIdentifier(panel)] = CGPoint(x: x, y: y)
+            y += panel.frame.height + spacing
+        }
+        return result
     }
 
     private func repositionAll(animated: Bool) {
+        let origins = layout()
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = animated ? 0.22 : 0
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            for (index, panel) in panels.enumerated() {
-                let target = origin(forIndex: index, count: panels.count)
+            for panel in panels {
+                guard let target = origins[ObjectIdentifier(panel)] else { continue }
                 if animated { panel.animator().setFrameOrigin(target) } else { panel.setFrameOrigin(target) }
             }
         }

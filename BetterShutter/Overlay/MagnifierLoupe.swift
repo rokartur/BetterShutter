@@ -1,20 +1,19 @@
 import AppKit
 
-/// Draws a pixel-perfect magnifier loupe sampled from the frozen capture: a zoomed N×N pixel
-/// grid centered on the cursor, a highlighted center cell, crosshair, and the center-pixel
-/// color in hex + RGB. Pure drawing — no per-frame screen capture.
+/// Draws a clean, circular magnifier loupe sampled from the frozen capture: a zoomed pixel grid
+/// centered on the cursor under a soft drop shadow, a crisp center-pixel marker, and the
+/// center-pixel color in hex + RGB below. Pure drawing — no per-frame screen capture.
 @MainActor
 enum MagnifierLoupe {
     /// Odd source-pixel count so there is an exact center pixel.
-    static let sourcePixels = 17
+    static let sourcePixels = 15
     /// On-screen magnification of each source pixel.
-    static let cell: CGFloat = 8
+    static let cell: CGFloat = 9
     static var diameter: CGFloat { CGFloat(sourcePixels) * cell }
 
     /// - Parameters:
     ///   - anchor: cursor location in the view's coordinates.
     ///   - image: the frozen display bitmap (top-left origin, device pixels).
-    ///   - bitmap: an `NSBitmapImageRep` over `image`, for color sampling.
     ///   - pixelPoint: cursor location in `image` pixel coordinates (top-left origin).
     ///   - viewBounds: the overlay view's bounds, used to keep the loupe on screen.
     static func draw(
@@ -27,42 +26,59 @@ enum MagnifierLoupe {
         let d = diameter
 
         // Position the loupe offset from the cursor, flipping near edges to stay visible.
-        let gap: CGFloat = 24
+        let gap: CGFloat = 22
         var originX = anchor.x + gap
         var originY = anchor.y - gap - d
         if originX + d > viewBounds.maxX { originX = anchor.x - gap - d }
         if originY < viewBounds.minY { originY = anchor.y + gap }
+        originX = min(max(viewBounds.minX + 4, originX), viewBounds.maxX - d - 4)
+        originY = min(max(viewBounds.minY + 4, originY), viewBounds.maxY - d - 4)
         let frame = CGRect(x: originX, y: originY, width: d, height: d)
+        let circle = CGPath(ellipseIn: frame, transform: nil)
 
+        // Soft drop shadow so the loupe lifts off the screenshot.
         ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -3), blur: 12,
+                      color: NSColor.black.withAlphaComponent(0.45).cgColor)
+        ctx.setFillColor(NSColor.black.cgColor)
+        ctx.addPath(circle)
+        ctx.fillPath()
+        ctx.restoreGState()
 
-        // Clip to a rounded square and fill the magnified crop.
-        let clip = NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10)
-        clip.addClip()
+        // Clip to the circle and fill the magnified crop.
+        ctx.saveGState()
+        ctx.addPath(circle)
+        ctx.clip()
 
         let px = Int(pixelPoint.x.rounded())
         let py = Int(pixelPoint.y.rounded())
         let half = sourcePixels / 2
-        let sourceRect = CGRect(
-            x: px - half, y: py - half,
-            width: sourcePixels, height: sourcePixels
-        )
+        let sourceRect = CGRect(x: px - half, y: py - half, width: sourcePixels, height: sourcePixels)
 
         ctx.setFillColor(NSColor.black.cgColor)
         ctx.fill(frame)
 
-        if let crop = image.cropping(to: sourceRect) {
+        // Clamp the sample window to the image. `cropping(to:)` returns only the intersection, so near
+        // any edge the crop is smaller than the window — drawing it into the full loupe would stretch
+        // it (wrong zoom) and slide the sampled pixel off the marker. Instead draw the partial crop at
+        // its matching cell offset; the black fill backs the out-of-image margin. Because the window
+        // stays centered on (px,py), the center cell and grid keep aligning with no further changes.
+        let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let clamped = sourceRect.intersection(imageRect)
+        if !clamped.isNull, !clamped.isEmpty, let crop = image.cropping(to: clamped) {
             ctx.interpolationQuality = .none
             // CGImage is top-left origin; flip vertically into the bottom-left view space.
             ctx.saveGState()
             ctx.translateBy(x: frame.minX, y: frame.maxY)
             ctx.scaleBy(x: 1, y: -1)
-            ctx.draw(crop, in: CGRect(x: 0, y: 0, width: d, height: d))
+            let dx = (clamped.minX - sourceRect.minX) * cell
+            let dy = (clamped.minY - sourceRect.minY) * cell
+            ctx.draw(crop, in: CGRect(x: dx, y: dy, width: clamped.width * cell, height: clamped.height * cell))
             ctx.restoreGState()
         }
 
-        // Pixel grid.
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.12).cgColor)
+        // Faint pixel grid — subtle, so it reads as precision rather than a checkerboard.
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.06).cgColor)
         ctx.setLineWidth(1)
         for i in 0...sourcePixels {
             let o = CGFloat(i) * cell
@@ -73,23 +89,32 @@ enum MagnifierLoupe {
         }
         ctx.strokePath()
 
-        // Center cell highlight.
+        // Center-pixel marker: a white box with a dark outline so it shows on any color.
         let centerCell = CGRect(
             x: frame.minX + CGFloat(half) * cell,
             y: frame.minY + CGFloat(half) * cell,
             width: cell, height: cell
         )
+        ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.6).cgColor)
+        ctx.setLineWidth(3)
+        ctx.stroke(centerCell)
         ctx.setStrokeColor(NSColor.white.cgColor)
         ctx.setLineWidth(1.5)
         ctx.stroke(centerCell)
 
         ctx.restoreGState()
 
-        // Border.
-        NSColor.white.withAlphaComponent(0.85).setStroke()
-        let border = NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10)
-        border.lineWidth = 1.5
-        border.stroke()
+        // Ring border: a dark halo under a bright ring, for contrast on light and dark screens.
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.28).cgColor)
+        ctx.setLineWidth(3)
+        ctx.addPath(circle)
+        ctx.strokePath()
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.92).cgColor)
+        ctx.setLineWidth(1.5)
+        ctx.addPath(circle)
+        ctx.strokePath()
+        ctx.restoreGState()
 
         // Color readout below the loupe — reliable pixel read, not NSBitmapImageRep.colorAt
         // (which misreads ScreenCaptureKit's BGRA output and would show black/wrong colors).
@@ -109,23 +134,23 @@ enum MagnifierLoupe {
             .foregroundColor: NSColor.white,
         ]
         let size = (text as NSString).size(withAttributes: attrs)
-        let padding: CGFloat = 6
+        let padding: CGFloat = 7
         let boxW = size.width + padding * 2 + 18
         let boxH = size.height + padding
-        var boxOrigin = CGPoint(x: frame.midX - boxW / 2, y: frame.minY - boxH - 6)
+        var boxOrigin = CGPoint(x: frame.midX - boxW / 2, y: frame.minY - boxH - 7)
         boxOrigin.x = min(max(viewBounds.minX + 2, boxOrigin.x), viewBounds.maxX - boxW - 2)
-        if boxOrigin.y < viewBounds.minY { boxOrigin.y = frame.maxY + 6 }
+        if boxOrigin.y < viewBounds.minY { boxOrigin.y = frame.maxY + 7 }
         let box = CGRect(origin: boxOrigin, size: CGSize(width: boxW, height: boxH))
 
-        NSColor.black.withAlphaComponent(0.75).setFill()
-        NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
+        NSColor.black.withAlphaComponent(0.78).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 7, yRadius: 7).fill()
 
         // Color swatch.
         let swatch = CGRect(x: box.minX + padding, y: box.midY - 6, width: 12, height: 12)
         NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1).setFill()
-        NSBezierPath(roundedRect: swatch, xRadius: 2, yRadius: 2).fill()
+        NSBezierPath(roundedRect: swatch, xRadius: 3, yRadius: 3).fill()
         NSColor.white.withAlphaComponent(0.4).setStroke()
-        NSBezierPath(roundedRect: swatch, xRadius: 2, yRadius: 2).stroke()
+        NSBezierPath(roundedRect: swatch, xRadius: 3, yRadius: 3).stroke()
 
         (text as NSString).draw(
             at: CGPoint(x: swatch.maxX + 6, y: box.midY - size.height / 2),

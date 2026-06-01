@@ -814,3 +814,38 @@ struct BeautifyPresetTests {
         }
     }
 }
+
+@MainActor
+struct FloatPreviewCardSizeTests {
+    @Test
+    func landscapeFitsExactlyNoLetterbox() {
+        // A 16:9 capture: height = width / aspect, within clamp range -> exact aspect, no bars.
+        let size = FloatPreviewView.cardSize(for: CGSize(width: 1920, height: 1080))
+        #expect(size.width == FloatPreviewView.cardWidth)
+        let expected = FloatPreviewView.cardWidth * (1080.0 / 1920.0)
+        #expect(abs(size.height - expected) < 0.01)
+        #expect(size.height >= FloatPreviewView.minCardHeight)
+        #expect(size.height <= FloatPreviewView.maxCardHeight)
+    }
+
+    @Test
+    func portraitClampsToMaxHeight() {
+        // Tall capture would exceed maxCardHeight at fixed width -> clamped.
+        let size = FloatPreviewView.cardSize(for: CGSize(width: 800, height: 2000))
+        #expect(size.height == FloatPreviewView.maxCardHeight)
+    }
+
+    @Test
+    func ultrawideClampsToMinHeight() {
+        // Very wide capture would collapse below minCardHeight -> clamped up.
+        let size = FloatPreviewView.cardSize(for: CGSize(width: 4000, height: 400))
+        #expect(size.height == FloatPreviewView.minCardHeight)
+    }
+
+    @Test
+    func degenerateSizeFallsBackNoCrash() {
+        let size = FloatPreviewView.cardSize(for: .zero)
+        #expect(size.width == FloatPreviewView.cardWidth)
+        #expect(size.height > 0)
+    }
+}
