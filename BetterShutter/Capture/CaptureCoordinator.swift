@@ -96,6 +96,11 @@ final class CaptureCoordinator {
         ScrollingCaptureController.shared.begin()
     }
 
+    /// Count down, then capture the full screen — lets the user open menus / hover states first.
+    func captureFullScreenAfter(_ seconds: Int) {
+        SelfTimer.shared.run(seconds: seconds) { [weak self] in self?.capture(.fullDisplay) }
+    }
+
     /// Select a region, then start recording just that region to an MP4.
     func recordRegion() {
         guard !isCapturing, !overlay.isPresenting, !RecordingController.shared.isRecording else { return }
