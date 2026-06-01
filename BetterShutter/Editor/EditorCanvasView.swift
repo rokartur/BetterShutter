@@ -16,8 +16,18 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     private var creating: AnnotationElement?
     private var stepCounter = 1
 
-    var tool: ToolKind = .arrow { didSet { if tool != .select { selected = nil; needsDisplay = true } } }
+    var tool: ToolKind = .arrow {
+        didSet {
+            if tool != .select { selected = nil; needsDisplay = true }
+            if tool == .highlighter { ensureTextLines() }
+        }
+    }
     var style: AnnotationStyle
+
+    /// OCR text-line boxes in image-pixel space (bottom-left), for the smart highlighter. Populated
+    /// lazily the first time the highlighter is used; empty until then (highlight stays freehand).
+    private var textLines: [CGRect] = []
+    private var ocrStarted = false
 
     /// Fired when a single-key shortcut changes the tool, so the toolbar selection can follow.
     var onToolPicked: ((ToolKind) -> Void)?
@@ -158,6 +168,23 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         baseImage = cg
         commit(before, "Filter")
         needsDisplay = true
+    }
+
+    /// Run OCR once over the current base image and cache line boxes (converted from Vision's
+    /// normalized bottom-left space to image pixels) for the smart highlighter. Non-blocking.
+    private func ensureTextLines() {
+        guard !ocrStarted else { return }
+        ocrStarted = true
+        let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
+        let size = imageSize
+        Task { [weak self] in
+            let observations = await TextRecognizer.observations(image)
+            guard let self else { return }
+            self.textLines = observations.map { o in
+                CGRect(x: o.box.minX * size.width, y: o.box.minY * size.height,
+                       width: o.box.width * size.width, height: o.box.height * size.height)
+            }
+        }
     }
 
     init(image: CapturedImage, elements: [AnnotationElement] = []) {
@@ -375,12 +402,21 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    /// If a freehand highlight overlaps OCR'd text lines, snap it to cover them (smart highlighter).
+    private func snapHighlightToText(_ element: AnnotationElement) {
+        guard let highlight = element as? HighlightElement, !textLines.isEmpty,
+              let snapped = HighlightSnap.snap(drawn: highlight.boundingBox, lines: textLines) else { return }
+        highlight.start = CGPoint(x: snapped.minX, y: snapped.minY)
+        highlight.end = CGPoint(x: snapped.maxX, y: snapped.maxY)
+    }
+
     override func mouseUp(with event: NSEvent) {
         if dragMode == .creating, let creating {
             if creating.isDegenerate, let index = elements.firstIndex(where: { $0 === creating }) {
                 elements.remove(at: index)
                 selected = nil
             } else {
+                snapHighlightToText(creating)
                 selected = creating
                 commit(pending, "Add \(tool.label)")
             }

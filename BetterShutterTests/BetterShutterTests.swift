@@ -572,6 +572,39 @@ struct GIFEncoderTests {
     }
 }
 
+struct HighlightSnapTests {
+    // Three text lines stacked vertically (image-pixel, bottom-left), each 80 wide × 10 tall.
+    private let lines = [
+        CGRect(x: 10, y: 80, width: 80, height: 10),   // top line
+        CGRect(x: 10, y: 60, width: 80, height: 10),   // middle
+        CGRect(x: 10, y: 40, width: 80, height: 10),   // bottom
+    ]
+
+    @Test
+    func snapsToOverlappedLinesClampedHorizontally() throws {
+        // Drag covers the top two lines, x 20…70.
+        let drawn = CGRect(x: 20, y: 55, width: 50, height: 37)   // y 55…92
+        let snapped = try #require(HighlightSnap.snap(drawn: drawn, lines: lines))
+        #expect(snapped.minX == 20)
+        #expect(snapped.maxX == 70)
+        #expect(snapped.minY == 60)   // bottom of middle line
+        #expect(snapped.maxY == 90)   // top of top line
+    }
+
+    @Test
+    func barelyClippedLineIsExcluded() {
+        // Drag only nicks the top 2px of the top line (<30% of its 10px height).
+        let drawn = CGRect(x: 20, y: 88, width: 50, height: 8)    // y 88…96
+        #expect(HighlightSnap.snap(drawn: drawn, lines: lines) == nil)
+    }
+
+    @Test
+    func noTextReturnsNil() {
+        let drawn = CGRect(x: 200, y: 200, width: 30, height: 30)
+        #expect(HighlightSnap.snap(drawn: drawn, lines: lines) == nil)
+    }
+}
+
 struct StepFormatTests {
     @Test
     func decimalIsPlain() {
