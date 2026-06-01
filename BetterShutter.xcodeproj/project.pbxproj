@@ -333,6 +333,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "BetterShutter shows your webcam as an overlay in screen recordings.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 rokartur. All rights reserved.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "BetterShutter records microphone audio when you include it in a screen recording.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
@@ -369,6 +370,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "BetterShutter shows your webcam as an overlay in screen recordings.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 rokartur. All rights reserved.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "BetterShutter records microphone audio when you include it in a screen recording.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;

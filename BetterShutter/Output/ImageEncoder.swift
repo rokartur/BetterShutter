@@ -10,8 +10,11 @@ nonisolated enum ImageEncoder {
         case .png: type = .png
         case .jpeg: type = .jpeg
         case .heic: type = .heic
+        case .webp: type = .webP
         }
         let data = NSMutableData()
+        // WebP encoding requires ImageIO to advertise the writer; if the OS can't encode it,
+        // destination creation fails and we return nil (callers fall back).
         guard let destination = CGImageDestinationCreateWithData(
             data, type.identifier as CFString, 1, nil
         ) else { return nil }

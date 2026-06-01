@@ -45,12 +45,14 @@ nonisolated enum ImageFileFormat: String, CaseIterable, Sendable {
     case png
     case jpeg
     case heic
+    case webp
 
     var fileExtension: String {
         switch self {
         case .png: return "png"
         case .jpeg: return "jpg"
         case .heic: return "heic"
+        case .webp: return "webp"
         }
     }
 
@@ -59,10 +61,11 @@ nonisolated enum ImageFileFormat: String, CaseIterable, Sendable {
         case .png: return "PNG"
         case .jpeg: return "JPEG"
         case .heic: return "HEIC"
+        case .webp: return "WebP"
         }
     }
 
-    /// PNG is lossless; JPEG/HEIC honor the quality slider.
+    /// PNG is lossless; JPEG/HEIC/WebP honor the quality slider.
     var isLossy: Bool { self != .png }
 }
 
@@ -81,6 +84,9 @@ nonisolated enum Preferences {
         static let captureSound = "captureSoundEnabled"
         static let captureCounter = "captureCounter"
         static let recordSystemAudio = "recordSystemAudio"
+        static let recordMicrophone = "recordMicrophone"
+        static let showWebcam = "showWebcam"
+        static let showKeystrokes = "showKeystrokes"
         static let downscaleRetina = "downscaleRetina"
         static let highlightClicks = "highlightClicks"
         static let showCursorInRecording = "showCursorInRecording"
@@ -204,6 +210,24 @@ nonisolated enum Preferences {
     static var recordSystemAudio: Bool {
         get { defaults.object(forKey: Key.recordSystemAudio) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.recordSystemAudio) }
+    }
+
+    /// Record the microphone as a second audio track.
+    static var recordMicrophone: Bool {
+        get { defaults.object(forKey: Key.recordMicrophone) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.recordMicrophone) }
+    }
+
+    /// Show the webcam bubble overlay during recordings.
+    static var showWebcam: Bool {
+        get { defaults.object(forKey: Key.showWebcam) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.showWebcam) }
+    }
+
+    /// Show pressed-key badges during recordings (needs Input Monitoring permission).
+    static var showKeystrokes: Bool {
+        get { defaults.object(forKey: Key.showKeystrokes) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.showKeystrokes) }
     }
 
     /// Directory screenshots are saved to. Defaults to the Desktop.

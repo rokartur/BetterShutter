@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 
 /// Starts/stops a screen recording and shows the floating control bar. Records the display under
 /// the cursor to an MP4 in the save directory.
@@ -10,14 +11,23 @@ final class RecordingController {
     private var startTask: Task<Void, Never>?
     private let controlBar = RecordingControlBar()
     private(set) var isRecording = false
+    private(set) var isPaused = false
     private(set) var startDate: Date?
     var onStateChange: (() -> Void)?
 
     private init() {
         controlBar.onStop = { [weak self] in self?.stop() }
+        controlBar.onTogglePause = { [weak self] in self?.togglePause() }
     }
 
     func toggle() { isRecording ? stop() : start() }
+
+    func togglePause() {
+        guard isRecording, let engine else { return }
+        isPaused.toggle()
+        if isPaused { engine.pause() } else { engine.resume() }
+        controlBar.setPaused(isPaused)
+    }
 
     func start() {
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
@@ -42,14 +52,20 @@ final class RecordingController {
         if !gif { Preferences.recordingInProgressPath = url.path } // for crash recovery
         let engine = RecordingEngine()
         engine.captureSystemAudio = Preferences.recordSystemAudio
+        engine.captureMicrophone = Preferences.recordMicrophone && !gif
         engine.showsCursor = Preferences.showCursorInRecording
         engine.fps = Preferences.recordingFPS
         engine.gifMode = gif
         self.engine = engine
         isRecording = true
+        isPaused = false
         startDate = Date()
-        controlBar.show()
+        controlBar.show(canPause: !gif)
+        // Trigger the mic permission prompt up front so the next recording captures audio.
+        if engine.captureMicrophone { AVCaptureDevice.requestAccess(for: .audio) { _ in } }
         if Preferences.highlightClicks { ClickHighlighter.shared.start(displayID: displayID) }
+        if !gif, Preferences.showWebcam { WebcamOverlay.shared.start(displayID: displayID) }
+        if !gif, Preferences.showKeystrokes { KeystrokeOverlay.shared.start(displayID: displayID) }
         onStateChange?()
 
         startTask = Task {
@@ -57,10 +73,13 @@ final class RecordingController {
                 try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
             } catch {
                 isRecording = false
+                isPaused = false
                 startDate = nil
                 Preferences.recordingInProgressPath = nil
                 controlBar.hide()
                 ClickHighlighter.shared.stop()
+                WebcamOverlay.shared.stop()
+                KeystrokeOverlay.shared.stop()
                 self.engine = nil
                 onStateChange?()
                 showError(error)
@@ -71,9 +90,12 @@ final class RecordingController {
     func stop() {
         guard isRecording, let engine else { return }
         isRecording = false
+        isPaused = false
         startDate = nil
         controlBar.hide()
         ClickHighlighter.shared.stop()
+        WebcamOverlay.shared.stop()
+        KeystrokeOverlay.shared.stop()
         self.engine = nil
         onStateChange?()
 

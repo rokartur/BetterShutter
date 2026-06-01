@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settingsController: SettingsWindowController?
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
     private var recordingItem: NSMenuItem?
+    private var pauseItem: NSMenuItem?
     private var recentMenuItem: NSMenuItem?
     private var recordingTimer: Timer?
     private var trimController: VideoTrimWindowController?
@@ -194,6 +195,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(record)
         recordingItem = record
 
+        let pause = NSMenuItem(title: "Pause Recording", action: #selector(togglePauseRecording), keyEquivalent: "")
+        pause.target = self
+        pause.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "Pause")
+        pause.isHidden = true
+        menu.addItem(pause)
+        pauseItem = pause
+
         addCaptureItem(to: menu, title: "Record Region", symbol: "rectangle.dashed",
                        action: #selector(recordRegion), name: .recordRegion)
         addCaptureItem(to: menu, title: "Record GIF", symbol: "square.stack.3d.forward.dottedline",
@@ -291,6 +299,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let recordingItem {
             recordingItem.title = RecordingController.shared.isRecording ? "Stop Recording" : "Start Recording"
             applyShortcut(.toggleRecording, to: recordingItem)
+        }
+        if let pauseItem {
+            pauseItem.isHidden = !RecordingController.shared.isRecording
+            pauseItem.title = RecordingController.shared.isPaused ? "Resume Recording" : "Pause Recording"
         }
         rebuildRecentSubmenu()
     }
@@ -418,6 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
+    @objc private func togglePauseRecording() { RecordingController.shared.togglePause() }
     @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
     @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
 

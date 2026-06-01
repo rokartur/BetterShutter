@@ -221,6 +221,27 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: recording, title: "Show cursor",
                subtitle: "Include the mouse pointer in recordings.", accessory: cursor)
 
+        let mic = NSSwitch()
+        mic.state = Preferences.recordMicrophone ? .on : .off
+        mic.target = self
+        mic.action = #selector(toggleRecordMic(_:))
+        addRow(to: recording, title: "Record microphone",
+               subtitle: "Add narration from the mic as a second audio track.", accessory: mic)
+
+        let webcam = NSSwitch()
+        webcam.state = Preferences.showWebcam ? .on : .off
+        webcam.target = self
+        webcam.action = #selector(toggleWebcam(_:))
+        addRow(to: recording, title: "Webcam overlay",
+               subtitle: "Float a round webcam bubble into the recording.", accessory: webcam)
+
+        let keys = NSSwitch()
+        keys.state = Preferences.showKeystrokes ? .on : .off
+        keys.target = self
+        keys.action = #selector(toggleKeystrokes(_:))
+        addRow(to: recording, title: "Show keystrokes",
+               subtitle: "Display pressed keys (needs Input Monitoring permission).", accessory: keys)
+
         let fps = NSPopUpButton()
         fps.addItems(withTitles: ["30 fps", "60 fps"])
         fps.selectItem(withTitle: Preferences.recordingFPS == 30 ? "30 fps" : "60 fps")
@@ -235,6 +256,9 @@ final class CaptureSettingsTab: SettingsTabViewController {
     }
 
     @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
+    @objc private func toggleRecordMic(_ sender: NSSwitch) { Preferences.recordMicrophone = (sender.state == .on) }
+    @objc private func toggleWebcam(_ sender: NSSwitch) { Preferences.showWebcam = (sender.state == .on) }
+    @objc private func toggleKeystrokes(_ sender: NSSwitch) { Preferences.showKeystrokes = (sender.state == .on) }
     @objc private func toggleHighlightClicks(_ sender: NSSwitch) { Preferences.highlightClicks = (sender.state == .on) }
     @objc private func toggleShowCursor(_ sender: NSSwitch) { Preferences.showCursorInRecording = (sender.state == .on) }
     @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }

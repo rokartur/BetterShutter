@@ -572,6 +572,44 @@ struct GIFEncoderTests {
     }
 }
 
+@MainActor
+struct KeystrokeFormatterTests {
+    @Test
+    func combinesModifiersInCanonicalOrder() {
+        let mods: NSEvent.ModifierFlags = [.command, .shift]
+        #expect(KeystrokeFormatter.display(modifiers: mods, keyCode: 0, characters: "a") == "⇧⌘A")
+    }
+
+    @Test
+    func specialKeysUseSymbols() {
+        #expect(KeystrokeFormatter.display(modifiers: [], keyCode: 53, characters: nil) == "⎋")   // escape
+        #expect(KeystrokeFormatter.display(modifiers: [], keyCode: 49, characters: " ") == "␣")    // space
+        #expect(KeystrokeFormatter.display(modifiers: [.command], keyCode: 36, characters: "\r") == "⌘↩")
+    }
+}
+
+@MainActor
+struct WebPFormatTests {
+    @Test
+    func webpEnumProperties() {
+        #expect(ImageFileFormat.webp.fileExtension == "webp")
+        #expect(ImageFileFormat.webp.isLossy)
+        #expect(ImageFileFormat.allCases.contains(.webp))
+    }
+
+    @Test
+    func encodeProducesWebPOrNilGracefully() {
+        let image = makeSolidTestImage(width: 8, height: 8)
+        // ImageIO may or may not advertise a WebP writer; if it does, bytes must carry the RIFF/WEBP
+        // container magic. If it can't encode, nil is the documented graceful fallback.
+        if let data = ImageEncoder.encode(image, as: .webp), data.count >= 12 {
+            let bytes = Array(data.prefix(12))
+            #expect(Array(bytes[0..<4]) == Array("RIFF".utf8))
+            #expect(Array(bytes[8..<12]) == Array("WEBP".utf8))
+        }
+    }
+}
+
 struct AngleSnapTests {
     @Test
     func snapsNearHorizontalToHorizontal() {

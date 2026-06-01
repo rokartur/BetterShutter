@@ -3,11 +3,12 @@ import ScreenCaptureKit
 import CoreMedia
 import CoreImage
 
-/// Records a display to an H.264 MP4 (with optional system audio) using ScreenCaptureKit's
-/// `SCStream` feeding an `AVAssetWriter`. Not an actor: SCStream delivers sample buffers on a
-/// background queue, so all writer state is confined to one serial `queue` and the class is
-/// `@unchecked Sendable` with that invariant.
-nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+/// Records a display to an H.264 MP4 (with optional system audio + microphone) using
+/// ScreenCaptureKit's `SCStream` feeding an `AVAssetWriter`. Not an actor: SCStream and the mic
+/// `AVCaptureAudioDataOutput` deliver sample buffers on background queues, so all writer state is
+/// confined to one serial `queue` and the class is `@unchecked Sendable` with that invariant.
+nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDelegate,
+                                         AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "app.bettershutter.recording.writer")
 
@@ -15,12 +16,25 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     private var writer: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
+    private var micInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var sessionStarted = false
     private var stopping = false
     private var outputURL: URL?
 
+    // Microphone capture (separate audio track).
+    private let micSession = AVCaptureSession()
+    private let micOutput = AVCaptureAudioDataOutput()
+    private var micConfigured = false
+
+    // Pause/resume: frames are dropped while paused and subsequent timestamps are shifted back by the
+    // accumulated paused duration, so the output is gapless.
+    private var paused = false
+    private var pausedAtPTS: CMTime?
+    private var accumulatedPause: CMTime = .zero
+
     var captureSystemAudio = true
+    var captureMicrophone = false
     var showsCursor = true
     var fps: Int = 60
 
@@ -89,17 +103,20 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
             writer.add(videoInput)
 
             if captureSystemAudio {
-                let audioSettings: [String: Any] = [
-                    AVFormatIDKey: kAudioFormatMPEG4AAC,
-                    AVNumberOfChannelsKey: 2,
-                    AVSampleRateKey: 48_000,
-                    AVEncoderBitRateKey: 128_000,
-                ]
-                let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+                let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.audioSettings)
                 audioInput.expectsMediaDataInRealTime = true
                 if writer.canAdd(audioInput) {
                     writer.add(audioInput)
                     self.audioInput = audioInput
+                }
+            }
+
+            if captureMicrophone {
+                let micInput = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.audioSettings)
+                micInput.expectsMediaDataInRealTime = true
+                if writer.canAdd(micInput) {
+                    writer.add(micInput)
+                    self.micInput = micInput
                 }
             }
 
@@ -109,7 +126,12 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
             self.adaptor = adaptor
             self.outputURL = url
             self.sessionStarted = false
+            self.paused = false
+            self.pausedAtPTS = nil
+            self.accumulatedPause = .zero
         }
+
+        if captureMicrophone && !gifMode { configureMicrophone() }
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
@@ -120,11 +142,39 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         self.stream = stream
     }
 
+    private static var audioSettings: [String: Any] {
+        [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVNumberOfChannelsKey: 2,
+            AVSampleRateKey: 48_000,
+            AVEncoderBitRateKey: 128_000,
+        ]
+    }
+
+    private func configureMicrophone() {
+        guard !micConfigured,
+              let device = AVCaptureDevice.default(for: .audio),
+              let input = try? AVCaptureDeviceInput(device: device) else { return }
+        micSession.beginConfiguration()
+        if micSession.canAddInput(input) { micSession.addInput(input) }
+        micOutput.setSampleBufferDelegate(self, queue: queue)
+        if micSession.canAddOutput(micOutput) { micSession.addOutput(micOutput) }
+        micSession.commitConfiguration()
+        micConfigured = true
+        micSession.startRunning()
+    }
+
+    // MARK: Pause / resume
+
+    func pause() { queue.async { self.paused = true } }
+    func resume() { queue.async { self.paused = false } }
+
     // MARK: Stop
 
     func stop() async -> URL? {
         try? await stream?.stopCapture()
         stream = nil
+        if micSession.isRunning { micSession.stopRunning() }
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             queue.async {
                 // Reject any sample buffers that are still in flight after this point.
@@ -137,6 +187,7 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
                 }
                 self.videoInput?.markAsFinished()
                 self.audioInput?.markAsFinished()
+                self.micInput?.markAsFinished()
                 guard let writer = self.writer else { continuation.resume(returning: nil); return }
                 writer.finishWriting {
                     continuation.resume(returning: self.writer?.status == .completed ? self.outputURL : nil)
@@ -145,7 +196,7 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         }
     }
 
-    // MARK: SCStreamOutput (background queue)
+    // MARK: SCStreamOutput (writer queue)
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard !stopping, CMSampleBufferDataIsReady(sampleBuffer) else { return }
@@ -155,25 +206,46 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
             guard isComplete(sampleBuffer) else { return }
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             if gifMode {
+                guard !paused else { return }
                 appendGIFFrame(sampleBuffer, pts: pts)
                 return
             }
-            // Anchor the session at the first frame we actually append, so there's no leading gap.
+            if paused {
+                pausedAtPTS = pts        // track the last frame seen during the pause
+                return
+            }
+            if let pausedAt = pausedAtPTS {
+                // First frame after a resume: extend the paused offset by the gap we skipped.
+                accumulatedPause = CMTimeAdd(accumulatedPause, CMTimeSubtract(pts, pausedAt))
+                pausedAtPTS = nil
+            }
             guard let videoInput, videoInput.isReadyForMoreMediaData,
                   let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+            let adjusted = CMTimeSubtract(pts, accumulatedPause)
+            // Anchor the session at the first frame we actually append, so there's no leading gap.
             if !sessionStarted {
-                writer?.startSession(atSourceTime: pts)
+                writer?.startSession(atSourceTime: adjusted)
                 sessionStarted = true
             }
-            adaptor?.append(pixelBuffer, withPresentationTime: pts)
+            adaptor?.append(pixelBuffer, withPresentationTime: adjusted)
 
         case .audio:
-            guard sessionStarted, let audioInput, audioInput.isReadyForMoreMediaData else { return }
-            audioInput.append(sampleBuffer)
+            guard sessionStarted, !paused, pausedAtPTS == nil,
+                  let audioInput, audioInput.isReadyForMoreMediaData else { return }
+            appendOffsetAudio(sampleBuffer, to: audioInput)
 
         default:
             break
         }
+    }
+
+    // MARK: AVCaptureAudioDataOutput (writer queue) — microphone
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard !stopping, !gifMode, sessionStarted, !paused, pausedAtPTS == nil,
+              CMSampleBufferDataIsReady(sampleBuffer),
+              let micInput, micInput.isReadyForMoreMediaData else { return }
+        appendOffsetAudio(sampleBuffer, to: micInput)
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -181,6 +253,38 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     }
 
     // MARK: Helpers
+
+    /// Append an audio buffer, shifting its timestamps back by the accumulated paused duration so it
+    /// stays aligned with the (also-shifted) video.
+    private func appendOffsetAudio(_ sampleBuffer: CMSampleBuffer, to input: AVAssetWriterInput) {
+        if accumulatedPause == .zero {
+            input.append(sampleBuffer)
+        } else if let shifted = Self.retime(sampleBuffer, by: accumulatedPause) {
+            input.append(shifted)
+        }
+    }
+
+    private static func retime(_ sampleBuffer: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        guard count > 0 else { return nil }
+        var timings = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: count, arrayToFill: &timings, entriesNeededOut: &count)
+        for i in 0..<count {
+            if timings[i].presentationTimeStamp.isValid {
+                timings[i].presentationTimeStamp = CMTimeSubtract(timings[i].presentationTimeStamp, offset)
+            }
+            if timings[i].decodeTimeStamp.isValid {
+                timings[i].decodeTimeStamp = CMTimeSubtract(timings[i].decodeTimeStamp, offset)
+            }
+        }
+        var out: CMSampleBuffer?
+        let status = CMSampleBufferCreateCopyWithNewTiming(
+            allocator: kCFAllocatorDefault, sampleBuffer: sampleBuffer,
+            sampleTimingEntryCount: count, sampleTimingArray: &timings, sampleBufferOut: &out
+        )
+        return status == noErr ? out : nil
+    }
 
     private func appendGIFFrame(_ sampleBuffer: CMSampleBuffer, pts: CMTime) {
         if let last = lastGIFTime, CMTimeSubtract(pts, last) < gifInterval { return }

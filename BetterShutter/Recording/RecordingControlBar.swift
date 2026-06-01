@@ -1,24 +1,29 @@
 import AppKit
 
-/// A small floating bar shown while recording: a pulsing red dot, elapsed time, and a stop button.
+/// A small floating bar shown while recording: a pulsing red dot, elapsed time, a pause/resume
+/// button, and a stop button.
 @MainActor
 final class RecordingControlBar {
     private var window: NSPanel?
     private var timer: Timer?
     private var seconds = 0
+    private var paused = false
     private let timeLabel = NSTextField(labelWithString: "0:00")
+    private let dot = NSImageView()
+    private let pauseButton = NSButton()
 
     var onStop: (() -> Void)?
+    var onTogglePause: (() -> Void)?
 
-    func show() {
-        let size = NSSize(width: 168, height: 40)
+    func show(canPause: Bool) {
+        let size = NSSize(width: canPause ? 220 : 168, height: 40)
         let panel = NSPanel.glassChrome(size: size, level: .statusBar)
 
         let glass = GlassPanelView(cornerRadius: 14)
         glass.frame = NSRect(origin: .zero, size: size)
         let container = glass.contentView
 
-        let dot = NSImageView(image: NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")!)
+        dot.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
         dot.contentTintColor = .systemRed
         dot.translatesAutoresizingMaskIntoConstraints = false
 
@@ -26,12 +31,26 @@ final class RecordingControlBar {
         timeLabel.textColor = .white
         timeLabel.stringValue = "0:00"
 
+        var views = [NSView]()
+        views.append(dot)
+        views.append(timeLabel)
+        if canPause {
+            paused = false
+            pauseButton.image = NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")
+            pauseButton.imagePosition = .imageOnly
+            pauseButton.bezelStyle = .accessoryBarAction
+            pauseButton.controlSize = .small
+            pauseButton.target = self
+            pauseButton.action = #selector(pauseTapped)
+            pauseButton.toolTip = "Pause"
+            views.append(pauseButton)
+        }
         let stop = NSButton(title: "Stop", target: self, action: #selector(stopTapped))
         stop.bezelStyle = .accessoryBarAction
         stop.controlSize = .small
-        stop.keyEquivalent = ""
+        views.append(stop)
 
-        let stack = NSStackView(views: [dot, timeLabel, stop])
+        let stack = NSStackView(views: views)
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(stack)
@@ -63,9 +82,20 @@ final class RecordingControlBar {
         window = nil
     }
 
+    /// Reflect paused state: stop counting elapsed time and swap the button glyph / dot tint.
+    func setPaused(_ value: Bool) {
+        paused = value
+        pauseButton.image = NSImage(systemSymbolName: value ? "play.fill" : "pause.fill",
+                                    accessibilityDescription: value ? "Resume" : "Pause")
+        pauseButton.toolTip = value ? "Resume" : "Pause"
+        dot.contentTintColor = value ? .systemGray : .systemRed
+    }
+
     @objc private func stopTapped() { onStop?() }
+    @objc private func pauseTapped() { onTogglePause?() }
 
     @objc private func tick() {
+        guard !paused else { return }
         seconds += 1
         updateLabel()
     }
