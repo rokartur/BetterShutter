@@ -147,6 +147,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let invert = NSMenuItem(title: "Invert Colors", action: #selector(invertPicked), keyEquivalent: "")
         invert.target = self
         popup.menu?.addItem(invert)
+        let redact = NSMenuItem(title: "Auto-Redact PII", action: #selector(autoRedactPicked), keyEquivalent: "")
+        redact.target = self
+        popup.menu?.addItem(redact)
         popup.menu?.addItem(.separator())
         for (title, filter) in Self.filters {
             let item = NSMenuItem(title: title, action: #selector(filterPicked(_:)), keyEquivalent: "")
@@ -184,6 +187,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func invertPicked() { canvas.invertColors() }
+    @objc private func autoRedactPicked() { canvas.autoRedactPII() }
 
     @objc private func filterPicked(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }

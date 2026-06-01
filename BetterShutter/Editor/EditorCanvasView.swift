@@ -106,6 +106,30 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    /// Find PII via OCR and cover each matching line with a black-out box (one undo step).
+    func autoRedactPII() {
+        let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
+        let size = imageSize
+        let currentStyle = style
+        Task {
+            let observations = await TextRecognizer.observations(image)
+            let matches = observations.filter { PIIMatcher.containsPII($0.text) }
+            guard !matches.isEmpty else { HUD.show("No PII found"); return }
+            let before = snapshot()
+            for match in matches {
+                // Vision box is normalized bottom-left → scale to image-pixel bottom-left space.
+                let rect = CGRect(x: match.box.minX * size.width, y: match.box.minY * size.height,
+                                  width: match.box.width * size.width, height: match.box.height * size.height)
+                let block = BlackoutElement(start: CGPoint(x: rect.minX, y: rect.minY), style: currentStyle)
+                block.end = CGPoint(x: rect.maxX, y: rect.maxY)
+                elements.append(block)
+            }
+            commit(before, "Auto-Redact")
+            HUD.show("Redacted \(matches.count)")
+            needsDisplay = true
+        }
+    }
+
     /// Apply a Core Image photo-effect filter destructively to the base image (undoable).
     func applyFilter(named name: String) {
         let source = CIImage(cgImage: baseImage)

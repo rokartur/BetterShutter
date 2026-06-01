@@ -23,4 +23,27 @@ nonisolated enum TextRecognizer {
             }
         }
     }
+
+    /// Recognized lines with their normalized bounding boxes (Vision space: bottom-left, 0…1),
+    /// which matches the editor's bottom-left image space after scaling by the image size.
+    static func observations(_ image: CapturedImage) async -> [(text: String, box: CGRect)] {
+        await withCheckedContinuation { (continuation: CheckedContinuation<[(text: String, box: CGRect)], Never>) in
+            let request = VNRecognizeTextRequest { request, _ in
+                let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
+                let result = observations.compactMap { obs -> (text: String, box: CGRect)? in
+                    guard let string = obs.topCandidates(1).first?.string else { return nil }
+                    return (text: string, box: obs.boundingBox)
+                }
+                continuation.resume(returning: result)
+            }
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            let handler = VNImageRequestHandler(cgImage: image.cgImage, options: [:])
+            do {
+                try handler.perform([request])
+            } catch {
+                continuation.resume(returning: [])
+            }
+        }
+    }
 }

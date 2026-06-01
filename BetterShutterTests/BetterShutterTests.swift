@@ -412,6 +412,23 @@ struct ImageScalerTests {
     }
 }
 
+struct PIIMatcherTests {
+    @Test
+    func detectsCommonPII() {
+        #expect(PIIMatcher.containsPII("contact me at jane.doe@example.com"))
+        #expect(PIIMatcher.containsPII("call 555-123-4567"))
+        #expect(PIIMatcher.containsPII("ip 192.168.1.42"))
+        #expect(PIIMatcher.containsPII("SSN 123-45-6789"))
+        #expect(PIIMatcher.containsPII("Authorization: Bearer abc.def-123"))
+    }
+
+    @Test
+    func ignoresPlainText() {
+        #expect(!PIIMatcher.containsPII("the quick brown fox"))
+        #expect(!PIIMatcher.containsPII("version 2 of 3"))
+    }
+}
+
 struct URLCommandTests {
     @Test
     func parsesKnownHosts() {
