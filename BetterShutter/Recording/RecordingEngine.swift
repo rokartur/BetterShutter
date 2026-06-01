@@ -17,6 +17,7 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     private var audioInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var sessionStarted = false
+    private var stopping = false
     private var outputURL: URL?
 
     var captureSystemAudio = true
@@ -122,6 +123,8 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         stream = nil
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             queue.async {
+                // Reject any sample buffers that are still in flight after this point.
+                self.stopping = true
                 if self.gifMode {
                     let data = GIFEncoder.encode(frames: self.gifFrames, frameDelay: 1.0 / 12.0)
                     if let data, let url = self.outputURL { try? data.write(to: url) }
@@ -141,7 +144,7 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     // MARK: SCStreamOutput (background queue)
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        guard !stopping, CMSampleBufferDataIsReady(sampleBuffer) else { return }
 
         switch type {
         case .screen:
@@ -151,12 +154,13 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
                 appendGIFFrame(sampleBuffer, pts: pts)
                 return
             }
+            // Anchor the session at the first frame we actually append, so there's no leading gap.
+            guard let videoInput, videoInput.isReadyForMoreMediaData,
+                  let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             if !sessionStarted {
                 writer?.startSession(atSourceTime: pts)
                 sessionStarted = true
             }
-            guard let videoInput, videoInput.isReadyForMoreMediaData,
-                  let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             adaptor?.append(pixelBuffer, withPresentationTime: pts)
 
         case .audio:
