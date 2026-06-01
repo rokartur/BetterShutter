@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 /// The post-capture quick-access overlay: captures park in the bottom-right corner of the capture's
 /// screen and stack as a column of cards (newest nearest the corner). Each card auto-dismisses after
@@ -238,14 +239,25 @@ final class FloatPreviewController {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // NSEvent properties are nonisolated; inspect here, touch main-actor state inside.
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard mods == .command, event.charactersIgnoringModifiers?.lowercased() == "w" else { return event }
+            let isCmdW = mods == .command && event.charactersIgnoringModifiers?.lowercased() == "w"
+            let isSpace = mods.isEmpty && event.keyCode == 49
+            guard isCmdW || isSpace else { return event }
             var consumed = false
             MainActor.assumeIsolated {
                 guard let self, let panel = self.panelUnderPointer() else { return }
-                self.remove(panel, animated: true)
-                consumed = true
+                if isCmdW {
+                    self.remove(panel, animated: true)
+                    consumed = true
+                } else if isSpace, let view = self.cardViews[ObjectIdentifier(panel)], view.quickLookURL != nil {
+                    panel.makeFirstResponder(view)
+                    if let ql = QLPreviewPanel.shared() {
+                        if QLPreviewPanel.sharedPreviewPanelExists(), ql.isVisible { ql.orderOut(nil) }
+                        else { ql.makeKeyAndOrderFront(nil) }
+                    }
+                    consumed = true
+                }
             }
-            return consumed ? nil : event   // consume only when we closed a card under the pointer
+            return consumed ? nil : event
         }
     }
 

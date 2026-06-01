@@ -1,11 +1,12 @@
 import AppKit
+import Quartz
 import UniformTypeIdentifiers
 
 /// One quick-access capture card, CleanShot/Snapzy-style: a rounded thumbnail at rest that reveals a
 /// floating action toolbar and a dismiss button on hover. The whole thumbnail is a drag handle that
-/// drags the capture out as a PNG; double-click opens the editor.
+/// drags the capture out as a PNG; double-click opens the editor; space Quick-Looks the saved file.
 @MainActor
-final class FloatPreviewView: NSView, NSDraggingSource {
+final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
     static let cardSize = NSSize(width: 256, height: 196)
     private let corner: CGFloat = 16
@@ -51,6 +52,34 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override var isFlipped: Bool { false }
+    override var acceptsFirstResponder: Bool { true }
+
+    // MARK: Quick Look
+
+    /// The on-disk file Quick Look can preview (nil for an unsaved card).
+    var quickLookURL: URL? { savedURL }
+
+    // Snapshotted when the panel opens so the nonisolated data-source reads need no actor hop.
+    nonisolated(unsafe) private var previewURLs: [URL] = []
+
+    nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            previewURLs = savedURL.map { [$0] } ?? []
+            panel.dataSource = self
+            panel.delegate = self
+            panel.currentPreviewItemIndex = 0
+        }
+    }
+
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
+
+    nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURLs.count }
+
+    nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        previewURLs.indices.contains(index) ? (previewURLs[index] as NSURL) : nil
+    }
 
     // MARK: Controls
 
