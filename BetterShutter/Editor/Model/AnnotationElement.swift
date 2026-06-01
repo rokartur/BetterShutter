@@ -41,6 +41,13 @@ class AnnotationElement {
     /// Deep copy used by the editor's undo/redo to snapshot the document. Subclasses must override
     /// to copy their own geometry; the base value is only a placeholder for the abstract root.
     func clone() -> AnnotationElement { AnnotationElement(style: style) }
+
+    /// Resize handles in image coordinates (bottom-left). Empty = element can't be resized (only
+    /// moved). The editor draws a grab square at each point and hit-tests them by index.
+    func handlePoints() -> [CGPoint] { [] }
+
+    /// Move the handle at `index` (from `handlePoints()`) to `point`, mutating geometry in place.
+    func moveHandle(_ index: Int, to point: CGPoint) {}
 }
 
 // MARK: - Two-point elements
@@ -75,6 +82,41 @@ class TwoPointElement: AnnotationElement {
         copy.end = end
         return copy
     }
+
+    /// Reset the element to span an axis-aligned rect (used by edge/corner resize).
+    func setRect(_ r: CGRect) {
+        start = CGPoint(x: r.minX, y: r.minY)
+        end = CGPoint(x: r.maxX, y: r.maxY)
+    }
+
+    /// 8 handles: corners + edge midpoints, ordered clockwise from top-left (bottom-left origin,
+    /// so maxY is the visual top).
+    override func handlePoints() -> [CGPoint] {
+        let r = rect
+        return [
+            CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY),
+            CGPoint(x: r.maxX, y: r.midY),
+            CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.minX, y: r.minY),
+            CGPoint(x: r.minX, y: r.midY),
+        ]
+    }
+
+    override func moveHandle(_ index: Int, to p: CGPoint) {
+        var (minX, maxX, minY, maxY) = (rect.minX, rect.maxX, rect.minY, rect.maxY)
+        switch index {
+        case 0: minX = p.x; maxY = p.y          // top-left
+        case 1: maxY = p.y                      // top
+        case 2: maxX = p.x; maxY = p.y          // top-right
+        case 3: maxX = p.x                      // right
+        case 4: maxX = p.x; minY = p.y          // bottom-right
+        case 5: minY = p.y                      // bottom
+        case 6: minX = p.x; minY = p.y          // bottom-left
+        case 7: minX = p.x                      // left
+        default: break
+        }
+        setRect(CGRect(x: min(minX, maxX), y: min(minY, maxY),
+                       width: abs(maxX - minX), height: abs(maxY - minY)))
+    }
 }
 
 final class RectangleElement: TwoPointElement {
@@ -105,6 +147,9 @@ final class EllipseElement: TwoPointElement {
 
 final class LineElement: TwoPointElement {
     override var isDegenerate: Bool { hypot(end.x - start.x, end.y - start.y) < 4 }
+    // A line resizes by its two endpoints, not a bounding box, so direction is preserved.
+    override func handlePoints() -> [CGPoint] { [start, end] }
+    override func moveHandle(_ index: Int, to p: CGPoint) { if index == 0 { start = p } else { end = p } }
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         cg.setStrokeColor(style.color.cgColor)
         cg.setLineWidth(style.strokeWidth)
@@ -117,6 +162,9 @@ final class LineElement: TwoPointElement {
 
 final class ArrowElement: TwoPointElement {
     override var isDegenerate: Bool { hypot(end.x - start.x, end.y - start.y) < 6 }
+    // Tail (start) and head (end) are the resize handles.
+    override func handlePoints() -> [CGPoint] { [start, end] }
+    override func moveHandle(_ index: Int, to p: CGPoint) { if index == 0 { start = p } else { end = p } }
 
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         cg.setStrokeColor(style.color.cgColor)

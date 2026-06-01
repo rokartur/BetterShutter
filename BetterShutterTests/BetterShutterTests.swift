@@ -366,6 +366,44 @@ struct AnnotationCloneTests {
 }
 
 @MainActor
+struct AnnotationResizeTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func rectCornerHandleResizesKeepingOppositeCorner() {
+        let rect = RectangleElement(start: CGPoint(x: 10, y: 10), style: style)
+        rect.updateDrag(to: CGPoint(x: 30, y: 20)) // rect = (10,10,20,10)
+        // Handle 2 is the top-right corner (maxX, maxY).
+        let tr = rect.handlePoints()[2]
+        #expect(tr == CGPoint(x: 30, y: 20))
+        rect.moveHandle(2, to: CGPoint(x: 40, y: 25))
+        let box = rect.boundingBox
+        #expect(box == CGRect(x: 10, y: 10, width: 30, height: 15))
+    }
+
+    @Test
+    func rectLeftEdgeHandleMovesOnlyX() {
+        let rect = RectangleElement(start: CGPoint(x: 10, y: 10), style: style)
+        rect.updateDrag(to: CGPoint(x: 30, y: 20))
+        rect.moveHandle(7, to: CGPoint(x: 5, y: 99)) // left edge: y ignored
+        let box = rect.boundingBox
+        #expect(box.minX == 5)
+        #expect(box.minY == 10)
+        #expect(box.maxY == 20)
+    }
+
+    @Test
+    func lineResizesByEndpoint() {
+        let line = LineElement(start: CGPoint(x: 0, y: 0), style: style)
+        line.updateDrag(to: CGPoint(x: 10, y: 10))
+        #expect(line.handlePoints().count == 2)
+        line.moveHandle(1, to: CGPoint(x: 20, y: 5)) // moves end only
+        #expect(line.handlePoints()[0] == CGPoint(x: 0, y: 0))
+        #expect(line.handlePoints()[1] == CGPoint(x: 20, y: 5))
+    }
+}
+
+@MainActor
 struct GIFEncoderTests {
     @Test
     func encodesFramesToGIF() {

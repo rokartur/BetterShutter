@@ -19,10 +19,11 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     var tool: ToolKind = .arrow { didSet { if tool != .select { selected = nil; needsDisplay = true } } }
     var style: AnnotationStyle
 
-    private enum DragMode { case none, creating, moving, cropping }
+    private enum DragMode { case none, creating, moving, resizing, cropping }
     private var dragMode: DragMode = .none
     private var lastImagePoint: CGPoint = .zero
     private var didMove = false
+    private var resizeHandle = 0
 
     private var cropRect: CGRect?
     private var cropAnchor: CGPoint?
@@ -162,6 +163,28 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         path.lineWidth = 1
         path.setLineDash([4, 3], count: 2, phase: 0)
         path.stroke()
+
+        // Grab squares at each resize handle.
+        for hp in element.handlePoints() {
+            let v = viewPoint(hp)
+            let square = NSBezierPath(roundedRect: CGRect(x: v.x - 4, y: v.y - 4, width: 8, height: 8),
+                                      xRadius: 2, yRadius: 2)
+            NSColor.white.setFill()
+            square.fill()
+            square.lineWidth = 1
+            square.setLineDash([], count: 0, phase: 0)
+            NSColor.controlAccentColor.setStroke()
+            square.stroke()
+        }
+    }
+
+    /// Index of the resize handle of `element` near `viewPt` (view coords), or nil.
+    private func handleIndex(at viewPt: CGPoint, of element: AnnotationElement) -> Int? {
+        for (i, hp) in element.handlePoints().enumerated() {
+            let v = viewPoint(hp)
+            if hypot(v.x - viewPt.x, v.y - viewPt.y) <= 8 { return i }
+        }
+        return nil
     }
 
     // MARK: Mouse
@@ -175,8 +198,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
         switch tool {
         case .select:
-            selected = elements.last { $0.hitTest(p) }
-            dragMode = selected == nil ? .none : .moving
+            // A grabbed handle of the current selection takes priority over re-selecting.
+            if let sel = selected,
+               let hi = handleIndex(at: convert(event.locationInWindow, from: nil), of: sel) {
+                resizeHandle = hi
+                dragMode = .resizing
+            } else {
+                selected = elements.last { $0.hitTest(p) }
+                dragMode = selected == nil ? .none : .moving
+            }
         case .text:
             beginText(at: p)
         case .step:
@@ -210,6 +240,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             selected?.translate(by: delta)
             lastImagePoint = p
             if delta.width != 0 || delta.height != 0 { didMove = true }
+        case .resizing:
+            selected?.moveHandle(resizeHandle, to: p)
+            didMove = true
         case .cropping:
             if let anchor = cropAnchor { cropRect = SelectionModel.rect(from: anchor, to: p) }
         case .none:
@@ -230,6 +263,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         }
         if dragMode == .moving, didMove {
             commit(pending, "Move")
+        }
+        if dragMode == .resizing, didMove {
+            commit(pending, "Resize")
         }
         if dragMode == .cropping {
             if let r = cropRect, r.width < 5 || r.height < 5 { cropRect = nil }
