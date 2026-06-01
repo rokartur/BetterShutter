@@ -13,9 +13,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         self.canvas = EditorCanvasView(image: image)
         self.mode = mode
 
+        // Floor wide enough for the full tool segmented control (13 tools) + color/stroke + the
+        // Copy/Save/Done action buttons without the left and right stacks overlapping.
+        let minContentWidth: CGFloat = 860
         let canvasSize = EditorCanvasView.fittedSize(for: image.pixelSize)
         let contentRect = NSRect(x: 0, y: 0,
-                                 width: max(canvasSize.width, 620),
+                                 width: max(canvasSize.width, minContentWidth),
                                  height: canvasSize.height + 48)
         let window = NSWindow(
             contentRect: contentRect,
@@ -24,6 +27,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         )
         window.title = "Edit Screenshot"
         window.isReleasedWhenClosed = false
+        window.contentMinSize = NSSize(width: minContentWidth, height: 240)
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -88,6 +92,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             leftStack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             rightStack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
             rightStack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            rightStack.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor, constant: 16),
 
             canvas.topAnchor.constraint(equalTo: bar.bottomAnchor),
             canvas.leadingAnchor.constraint(equalTo: content.leadingAnchor),
