@@ -2,6 +2,7 @@ import Testing
 import AppKit
 import CoreGraphics
 import CoreImage
+import BetterShortcuts
 @testable import BetterShutter
 
 struct BetterShutterTests {
@@ -167,6 +168,16 @@ struct BeautifyRendererTests {
         let out = BeautifyRenderer.render(base: base, style: style)
         #expect(out?.width == 64)
         #expect(out?.height == 64)
+    }
+}
+
+@MainActor
+struct ShortcutPolicyTests {
+    /// Guards that BetterShutter links BetterShortcuts ≥ 0.2.0, whose default recorder policy
+    /// allows ⌘⇧-style shortcuts (the whole point of the dependency bump).
+    @Test
+    func defaultRecorderPolicyAllowsShift() {
+        #expect(BetterShortcuts.recorderPolicy.allowsShift)
     }
 }
 

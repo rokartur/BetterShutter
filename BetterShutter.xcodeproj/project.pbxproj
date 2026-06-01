@@ -481,7 +481,7 @@
 			repositoryURL = "https://github.com/rokartur/BetterShortcuts";
 			requirement = {
 				kind = upToNextMinorVersion;
-				minimumVersion = 0.1.2;
+				minimumVersion = 0.2.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
