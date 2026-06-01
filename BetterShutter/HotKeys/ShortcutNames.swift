@@ -3,7 +3,6 @@ import BetterShortcuts
 /// Strongly-typed global-shortcut names. Intentionally shipped with NO default combos so we don't
 /// steal the user's existing ⌘⇧3/4/5 — they assign their own in Settings ▸ Shortcuts.
 extension BetterShortcuts.Name {
-    nonisolated static let allInOne = Self("allInOne")
     nonisolated static let quickScreenshot = Self("quickScreenshot")
     nonisolated static let screenshotEdit = Self("screenshotEdit")
     nonisolated static let captureRegion = Self("captureRegion")

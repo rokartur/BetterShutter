@@ -156,9 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         captureMenuItems.removeAll()
-        addCaptureItem(to: menu, title: "Capture (All-in-One)", symbol: "camera.viewfinder",
-                       action: #selector(allInOne), name: .allInOne)
-        menu.addItem(.separator())
         addCaptureItem(to: menu, title: "Quick Screenshot", symbol: "bolt",
                        action: #selector(quickScreenshot), name: .quickScreenshot)
         addCaptureItem(to: menu, title: "Screenshot & Markup", symbol: "pencil.and.outline",
@@ -353,7 +350,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
 
-    @objc private func allInOne() { CaptureCoordinator.shared.allInOne() }
     @objc private func quickScreenshot() { CaptureCoordinator.shared.captureQuick() }
     @objc private func screenshotEdit() { CaptureCoordinator.shared.captureAndEdit() }
     @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }
