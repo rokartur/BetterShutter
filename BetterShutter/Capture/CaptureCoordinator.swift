@@ -200,9 +200,12 @@ final class CaptureCoordinator {
         }
     }
 
-    private func handleRegionAction(_ image: CapturedImage, globalRect: CGRect, displayID: CGDirectDisplayID, action: OverlayAction) {
+    private func handleRegionAction(_ rawImage: CapturedImage, globalRect: CGRect, displayID: CGDirectDisplayID, action: OverlayAction) {
         isCapturing = false
         lastRegion = (globalRect, displayID)
+        // Apply the Retina→1× setting once up front so every action-bar path (annotate / copy /
+        // save) is consistent with the default capture flow, not just `.capture`.
+        let image = outputImage(rawImage)
         switch action {
         case .capture:
             finish(image, mode: .region)
@@ -266,18 +269,17 @@ final class CaptureCoordinator {
 
     // MARK: Output
 
+    /// Apply the Retina→1× downscale option (no-op when disabled or already 1×). Idempotent: a
+    /// second call is a no-op since the result's scale is 1.
+    private func outputImage(_ image: CapturedImage) -> CapturedImage {
+        guard Preferences.downscaleRetina, image.scale > 1,
+              let scaled = ImageScaler.downscaled(image.cgImage, by: image.scale) else { return image }
+        return CapturedImage(cgImage: scaled, scale: 1, displayID: image.displayID)
+    }
+
     private func finish(_ image: CapturedImage, mode: CaptureMode) {
         isCapturing = false
-
-        // Optionally halve Retina captures to 1× so every downstream output uses the smaller image.
-        let output: CapturedImage
-        if Preferences.downscaleRetina, image.scale > 1,
-           let scaled = ImageScaler.downscaled(image.cgImage, by: image.scale) {
-            output = CapturedImage(cgImage: scaled, scale: 1, displayID: image.displayID)
-        } else {
-            output = image
-        }
-
+        let output = outputImage(image)
         CaptureHistory.shared.add(output, mode: mode)
         let action = Preferences.afterCaptureAction
         if action.copies { PasteboardWriter.copy(output.cgImage) }
