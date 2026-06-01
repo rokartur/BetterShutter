@@ -8,24 +8,15 @@ import UniformTypeIdentifiers
 @MainActor
 final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
-    /// Fixed card width keeps the bottom-right column cleanly aligned; height tracks the capture's
-    /// aspect (clamped) so landscape shots fill edge-to-edge with no letterbox bars.
-    static let cardWidth: CGFloat = 264
-    static let minCardHeight: CGFloat = 132
-    static let maxCardHeight: CGFloat = 188
+    /// Every quick-access card is a fixed 16:9 tile so the bottom-right stack reads as a clean,
+    /// uniform column. The capture is aspect-fit inside (centered, with a thin dark frame for shots
+    /// that aren't 16:9).
+    static let cardWidth: CGFloat = 288
+    static let cardHeight: CGFloat = 162   // 288 × 9/16 = exact 16:9
+    static let cardSize = NSSize(width: cardWidth, height: cardHeight)
 
-    /// The aspect-correct card size for a capture of `pixelSize`, bounded by BOTH the max width and
-    /// the height clamp. Landscape shots keep the full width; portrait/tall shots shrink their width
-    /// to match the image so they fill the card instead of sitting in wide dark side-bars.
-    static func cardSize(for pixelSize: CGSize) -> NSSize {
-        guard pixelSize.width > 0, pixelSize.height > 0 else {
-            return NSSize(width: cardWidth, height: 168)
-        }
-        let aspect = pixelSize.width / pixelSize.height
-        let h = min(max(cardWidth / aspect, minCardHeight), maxCardHeight)
-        let w = min(cardWidth, h * aspect)
-        return NSSize(width: w, height: h)
-    }
+    /// Fixed 16:9 regardless of the capture's own aspect (kept as a function for call-site clarity).
+    static func cardSize(for pixelSize: CGSize) -> NSSize { cardSize }
 
     private let corner: CGFloat = 14
 
@@ -62,8 +53,8 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         layer?.cornerRadius = corner
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        // The card is the screenshot itself: a dark backing (shows only as a thin frame / on the
-        // rare portrait letterbox) plus a hairline border so it separates from the desktop behind.
+        // Fixed 16:9 tile: a dark backing (the letterbox frame for non-16:9 captures) plus a
+        // hairline border so the card separates from the desktop behind it.
         layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
         layer?.borderWidth = 1
         layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
@@ -269,9 +260,8 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // The screenshot fills the card edge-to-edge. Because the card height tracks the capture's
-        // aspect, landscape shots fit exactly (no bars); only clamped portrait shots show a thin
-        // dark margin (the layer background), which reads as an intentional frame.
+        // Aspect-fit the capture inside the fixed 16:9 tile. 16:9 shots fill it; other aspects
+        // center with a thin dark frame (the layer background) on the short axis.
         let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds)
         NSGraphicsContext.current?.cgContext.interpolationQuality = .high
         thumbnail.draw(in: fit, from: .zero, operation: .sourceOver, fraction: 1)
