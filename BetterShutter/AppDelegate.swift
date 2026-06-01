@@ -36,6 +36,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupStatusItem()
         RecordingController.shared.onStateChange = { [weak self] in self?.recordingStateChanged() }
         OnboardingWindowController.showIfNeeded()
+        recoverInterruptedRecording()
+    }
+
+    /// If a recording was in progress when the app last quit/crashed, its fragmented MP4 is still
+    /// playable — surface it instead of silently losing the footage.
+    private func recoverInterruptedRecording() {
+        guard let path = Preferences.recordingInProgressPath else { return }
+        Preferences.recordingInProgressPath = nil
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: path),
+              (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0 > 0 else { return }
+        HUD.show("Recovered interrupted recording")
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     // MARK: - Menubar recording timer

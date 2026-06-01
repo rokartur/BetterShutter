@@ -65,6 +65,13 @@ nonisolated enum Preferences {
         static let includeWindowShadow = "includeWindowShadow"
         static let hasOnboarded = "hasOnboarded"
         static let recordingFPS = "recordingFPS"
+        static let recordingInProgressPath = "recordingInProgressPath"
+    }
+
+    /// Path of an MP4 currently being recorded, for crash recovery. Nil when idle.
+    static var recordingInProgressPath: String? {
+        get { defaults.string(forKey: Key.recordingInProgressPath) }
+        set { defaults.set(newValue, forKey: Key.recordingInProgressPath) }
     }
 
     /// Frame rate for screen recordings (30 or 60).

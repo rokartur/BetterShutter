@@ -67,6 +67,8 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
                 return
             }
             let writer = try AVAssetWriter(url: url, fileType: .mp4)
+            // Periodic fragments keep the file playable if the app crashes mid-recording.
+            writer.movieFragmentInterval = CMTime(value: 5, timescale: 1)
 
             let videoSettings: [String: Any] = [
                 AVVideoCodecKey: AVVideoCodecType.h264,

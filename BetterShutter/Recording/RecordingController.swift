@@ -39,6 +39,7 @@ final class RecordingController {
     private func beginRecording(displayID: CGDirectDisplayID, sourceRect: CGRect?, gif: Bool) {
         guard !isRecording else { return }
         let url = Self.recordingURL(ext: gif ? "gif" : "mp4")
+        if !gif { Preferences.recordingInProgressPath = url.path } // for crash recovery
         let engine = RecordingEngine()
         engine.captureSystemAudio = Preferences.recordSystemAudio
         engine.showsCursor = Preferences.showCursorInRecording
@@ -56,6 +57,8 @@ final class RecordingController {
                 try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
             } catch {
                 isRecording = false
+                startDate = nil
+                Preferences.recordingInProgressPath = nil
                 controlBar.hide()
                 ClickHighlighter.shared.stop()
                 self.engine = nil
@@ -81,6 +84,7 @@ final class RecordingController {
             // is actually torn down and never leaks.
             await startTask?.value
             let url = await engine.stop()
+            Preferences.recordingInProgressPath = nil
             if let url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }
     }
