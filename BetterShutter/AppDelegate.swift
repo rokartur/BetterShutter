@@ -26,12 +26,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
     private var recordingItem: NSMenuItem?
     private var recentMenuItem: NSMenuItem?
+    private var recordingTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if SelfTest.runIfRequested() { return }
         bootstrapUpdater()
         HotKeyBridge.install()
         setupStatusItem()
+        RecordingController.shared.onStateChange = { [weak self] in self?.recordingStateChanged() }
+    }
+
+    // MARK: - Menubar recording timer
+
+    private func recordingStateChanged() {
+        if RecordingController.shared.isRecording {
+            if recordingTimer == nil {
+                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.updateRecordingTitle() }
+                }
+                updateRecordingTitle()
+            }
+        } else {
+            recordingTimer?.invalidate()
+            recordingTimer = nil
+            if let button = statusItem?.button {
+                button.title = ""
+                button.image = NSImage(systemSymbolName: "camera.fill", accessibilityDescription: "BetterShutter")
+            }
+        }
+    }
+
+    private func updateRecordingTitle() {
+        guard let start = RecordingController.shared.startDate, let button = statusItem?.button else { return }
+        let elapsed = Int(Date().timeIntervalSince(start))
+        button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Recording")
+        button.title = String(format: " %d:%02d", elapsed / 60, elapsed % 60)
     }
 
     /// Incoming `bettershutter://` automation URLs (once the scheme is registered for the target).

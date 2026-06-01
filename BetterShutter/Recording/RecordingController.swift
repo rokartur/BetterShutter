@@ -10,6 +10,7 @@ final class RecordingController {
     private var startTask: Task<Void, Never>?
     private let controlBar = RecordingControlBar()
     private(set) var isRecording = false
+    private(set) var startDate: Date?
     var onStateChange: (() -> Void)?
 
     private init() {
@@ -44,6 +45,7 @@ final class RecordingController {
         engine.gifMode = gif
         self.engine = engine
         isRecording = true
+        startDate = Date()
         controlBar.show()
         if Preferences.highlightClicks { ClickHighlighter.shared.start(displayID: displayID) }
         onStateChange?()
@@ -65,6 +67,7 @@ final class RecordingController {
     func stop() {
         guard isRecording, let engine else { return }
         isRecording = false
+        startDate = nil
         controlBar.hide()
         ClickHighlighter.shared.stop()
         self.engine = nil
