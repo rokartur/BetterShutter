@@ -571,3 +571,51 @@ struct GIFEncoderTests {
         #expect(GIFEncoder.encode(frames: [], frameDelay: 0.1) == nil)
     }
 }
+
+@MainActor
+struct BeautifyPresetTests {
+    @Test
+    func gradientPresetRoundTrips() throws {
+        var style = BeautifyStyle.makeDefault()
+        style.background = .gradient([.red, .blue], angleDegrees: 30)
+        style.paddingFraction = 0.12
+        style.cornerFraction = 0.04
+        style.shadow = false
+        style.windowFrame = .dark
+        style.targetAspect = 16.0 / 9.0
+
+        let preset = BeautifyPreset(name: "Test", style: style)
+        let data = try JSONEncoder().encode(preset)
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: data)
+        let applied = decoded.applied(to: .makeDefault())
+
+        #expect(abs(applied.paddingFraction - 0.12) < 1e-9)
+        #expect(abs(applied.cornerFraction - 0.04) < 1e-9)
+        #expect(applied.shadow == false)
+        #expect(applied.windowFrame == .dark)
+        #expect(abs((applied.targetAspect ?? 0) - 16.0 / 9.0) < 1e-9)
+        if case .gradient(let colors, let angle) = applied.background {
+            #expect(colors.count == 2)
+            #expect(angle == 30)
+        } else {
+            Issue.record("expected gradient background")
+        }
+    }
+
+    @Test
+    func solidPresetRoundTrips() throws {
+        var style = BeautifyStyle.makeDefault()
+        style.background = .solid(NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1))
+        let preset = BeautifyPreset(name: "Solid", style: style)
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: JSONEncoder().encode(preset))
+        let applied = decoded.applied(to: .makeDefault())
+
+        if case .solid(let color) = applied.background, let s = color.usingColorSpace(.sRGB) {
+            #expect(abs(s.redComponent - 0.2) < 0.01)
+            #expect(abs(s.greenComponent - 0.4) < 0.01)
+            #expect(abs(s.blueComponent - 0.6) < 0.01)
+        } else {
+            Issue.record("expected solid background")
+        }
+    }
+}

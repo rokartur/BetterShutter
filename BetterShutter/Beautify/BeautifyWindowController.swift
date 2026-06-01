@@ -13,6 +13,14 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
     private let preview = BeautifyView()
     var onClose: (() -> Void)?
 
+    // Retained so applying a preset can sync them back to the new style.
+    private var paddingSlider: NSSlider?
+    private var cornerSlider: NSSlider?
+    private var shadowSwitch: NSSwitch?
+    private var framePopup: NSPopUpButton?
+    private var aspectPopup: NSPopUpButton?
+    private let presetButton = NSPopUpButton(frame: .zero, pullsDown: true)
+
     init(image: CapturedImage, mode: CaptureMode) {
         self.fullBase = image.cgImage
         self.previewBase = Self.downscale(image.cgImage, maxSide: 1100) ?? image.cgImage
@@ -69,10 +77,10 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
 
         let padding = makeSlider(min: 0, max: 0.25, value: style.paddingFraction, action: #selector(paddingChanged(_:)))
         let corner = makeSlider(min: 0, max: 0.12, value: style.cornerFraction, action: #selector(cornerChanged(_:)))
-        let shadowSwitch = NSSwitch()
-        shadowSwitch.state = style.shadow ? .on : .off
-        shadowSwitch.target = self
-        shadowSwitch.action = #selector(shadowToggled(_:))
+        let shadowToggle = NSSwitch()
+        shadowToggle.state = style.shadow ? .on : .off
+        shadowToggle.target = self
+        shadowToggle.action = #selector(shadowToggled(_:))
 
         let imageButton = makeButton("Image…", "photo", #selector(chooseBackgroundImage))
 
@@ -81,13 +89,21 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
         aspectPopup.target = self
         aspectPopup.action = #selector(aspectChanged(_:))
 
+        configurePresetButton()
+        self.paddingSlider = padding
+        self.cornerSlider = corner
+        self.shadowSwitch = shadowToggle
+        self.framePopup = framePopup
+        self.aspectPopup = aspectPopup
+
         let left = NSStackView(views: [
             label("Background"), presetPopup, colorWell, imageButton,
             label("Aspect"), aspectPopup,
             label("Frame"), framePopup,
             label("Padding"), padding,
             label("Corner"), corner,
-            label("Shadow"), shadowSwitch,
+            label("Shadow"), shadowToggle,
+            presetButton,
         ])
         left.spacing = 8
         left.translatesAutoresizingMaskIntoConstraints = false
@@ -204,6 +220,98 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
     @objc private func paddingChanged(_ sender: NSSlider) { style.paddingFraction = CGFloat(sender.doubleValue); renderPreview() }
     @objc private func cornerChanged(_ sender: NSSlider) { style.cornerFraction = CGFloat(sender.doubleValue); renderPreview() }
     @objc private func shadowToggled(_ sender: NSSwitch) { style.shadow = (sender.state == .on); renderPreview() }
+
+    // MARK: Presets
+
+    private func configurePresetButton() {
+        presetButton.bezelStyle = .texturedRounded
+        presetButton.imagePosition = .imageOnly
+        presetButton.toolTip = "Beautify Style Presets"
+        rebuildPresetMenu()
+    }
+
+    private func rebuildPresetMenu() {
+        let menu = NSMenu()
+        let face = NSMenuItem()
+        face.image = NSImage(systemSymbolName: "bookmark", accessibilityDescription: "Presets")
+        menu.addItem(face)
+
+        let save = NSMenuItem(title: "Save Current Style…", action: #selector(savePresetTapped), keyEquivalent: "")
+        save.target = self
+        menu.addItem(save)
+
+        let presets = Preferences.beautifyPresets
+        if !presets.isEmpty {
+            menu.addItem(.separator())
+            for preset in presets {
+                let item = NSMenuItem(title: preset.name, action: #selector(applyPresetTapped(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = preset.name
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            let deleteSub = NSMenu()
+            for preset in presets {
+                let item = NSMenuItem(title: preset.name, action: #selector(deletePresetTapped(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = preset.name
+                deleteSub.addItem(item)
+            }
+            let deleteItem = NSMenuItem(title: "Delete Preset", action: nil, keyEquivalent: "")
+            deleteItem.submenu = deleteSub
+            menu.addItem(deleteItem)
+        }
+        presetButton.menu = menu
+    }
+
+    @objc private func savePresetTapped() {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Save Style Preset"
+        alert.informativeText = "Name this beautify style for one-click reuse."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.placeholderString = "Preset name"
+        alert.accessoryView = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+            Preferences.addBeautifyPreset(BeautifyPreset(name: name, style: self.style))
+            self.rebuildPresetMenu()
+        }
+    }
+
+    @objc private func applyPresetTapped(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let preset = Preferences.beautifyPresets.first(where: { $0.name == name }) else { return }
+        style = preset.applied(to: style)
+        syncControls()
+        renderPreview()
+    }
+
+    @objc private func deletePresetTapped(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        Preferences.removeBeautifyPreset(named: name)
+        rebuildPresetMenu()
+    }
+
+    private func syncControls() {
+        paddingSlider?.doubleValue = Double(style.paddingFraction)
+        cornerSlider?.doubleValue = Double(style.cornerFraction)
+        shadowSwitch?.state = style.shadow ? .on : .off
+        framePopup?.selectItem(at: style.windowFrame.rawValue)
+        aspectPopup?.selectItem(at: aspectIndex(for: style.targetAspect))
+    }
+
+    private func aspectIndex(for aspect: CGFloat?) -> Int {
+        guard let a = aspect else { return 0 }
+        if abs(a - 1) < 0.01 { return 1 }
+        if abs(a - 4.0 / 3.0) < 0.01 { return 2 }
+        if abs(a - 16.0 / 9.0) < 0.01 { return 3 }
+        return 0
+    }
 
     @objc private func copyTapped() {
         if let cg = BeautifyRenderer.render(base: fullBase, style: style) { PasteboardWriter.copy(cg) }

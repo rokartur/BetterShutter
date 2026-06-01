@@ -67,6 +67,31 @@ nonisolated enum Preferences {
         static let recordingFPS = "recordingFPS"
         static let recordingInProgressPath = "recordingInProgressPath"
         static let editorToolKeys = "editorToolKeys"
+        static let beautifyPresets = "beautifyPresets"
+    }
+
+    /// User-saved beautify style presets, newest last.
+    static var beautifyPresets: [BeautifyPreset] {
+        get {
+            guard let data = defaults.data(forKey: Key.beautifyPresets),
+                  let list = try? JSONDecoder().decode([BeautifyPreset].self, from: data) else { return [] }
+            return list
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Key.beautifyPresets)
+        }
+    }
+
+    /// Add or replace a preset by name.
+    static func addBeautifyPreset(_ preset: BeautifyPreset) {
+        var list = beautifyPresets.filter { $0.name != preset.name }
+        list.append(preset)
+        beautifyPresets = list
+    }
+
+    static func removeBeautifyPreset(named name: String) {
+        beautifyPresets = beautifyPresets.filter { $0.name != name }
     }
 
     /// Effective single-key shortcut for an editor tool: the user's override, else the default.
