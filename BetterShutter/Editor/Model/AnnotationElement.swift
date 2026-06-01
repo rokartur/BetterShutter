@@ -226,6 +226,54 @@ final class HighlightElement: TwoPointElement {
     }
 }
 
+/// A measuring ruler: a capped line annotated with its pixel length at the midpoint.
+final class MeasureElement: TwoPointElement {
+    override var isDegenerate: Bool { hypot(end.x - start.x, end.y - start.y) < 4 }
+    override func handlePoints() -> [CGPoint] { [start, end] }
+    override func moveHandle(_ index: Int, to p: CGPoint) { if index == 0 { start = p } else { end = p } }
+
+    nonisolated static func pixelLength(from a: CGPoint, to b: CGPoint) -> CGFloat {
+        hypot(b.x - a.x, b.y - a.y)
+    }
+
+    nonisolated static func label(from a: CGPoint, to b: CGPoint) -> String {
+        "\(Int(pixelLength(from: a, to: b).rounded())) px"
+    }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        cg.setStrokeColor(style.color.cgColor)
+        cg.setLineWidth(style.strokeWidth)
+        cg.setLineCap(.butt)
+
+        let angle = atan2(end.y - start.y, end.x - start.x)
+        let tick = max(style.strokeWidth * 3, 8)
+        let nx = -sin(angle) * tick, ny = cos(angle) * tick   // perpendicular cap direction
+
+        cg.move(to: start); cg.addLine(to: end)
+        cg.move(to: CGPoint(x: start.x - nx, y: start.y - ny)); cg.addLine(to: CGPoint(x: start.x + nx, y: start.y + ny))
+        cg.move(to: CGPoint(x: end.x - nx, y: end.y - ny)); cg.addLine(to: CGPoint(x: end.x + nx, y: end.y + ny))
+        cg.strokePath()
+
+        // Pixel-length label on a dark pill at the midpoint (legible over any line color).
+        let text = Self.label(from: start, to: end)
+        let font = NSFont.systemFont(ofSize: max(11, style.fontSize * 0.55), weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let tw = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let padX: CGFloat = 6, padY: CGFloat = 3
+        let pill = CGRect(x: mid.x - tw / 2 - padX, y: mid.y - (ascent + descent) / 2 - padY,
+                          width: tw + padX * 2, height: ascent + descent + padY * 2)
+        cg.addPath(CGPath(roundedRect: pill, cornerWidth: 4, cornerHeight: 4, transform: nil))
+        cg.setFillColor(NSColor.black.withAlphaComponent(0.7).cgColor)
+        cg.fillPath()
+        cg.textMatrix = .identity
+        cg.textPosition = CGPoint(x: mid.x - tw / 2, y: mid.y - (ascent - descent) / 2)
+        CTLineDraw(line, cg)
+    }
+}
+
 final class PixelateElement: TwoPointElement {
     /// Mosaic block size for a region. Uses a high floor (16px) and grows with the region so even a
     /// thin text strip is averaged into blocks coarse enough to resist reconstruction — pixelate as

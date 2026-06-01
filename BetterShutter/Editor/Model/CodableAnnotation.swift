@@ -95,6 +95,7 @@ enum AnnotationProjectIO {
         switch e {
         case let x as RectangleElement: return twoPoint("rectangle", x)
         case let x as EllipseElement:   return twoPoint("ellipse", x)
+        case let x as MeasureElement:   return twoPoint("measure", x)
         case let x as LineElement:      return twoPoint("line", x)
         case let x as ArrowElement:     return twoPoint("arrow", x)
         case let x as HighlightElement: return twoPoint("highlight", x)
@@ -134,6 +135,7 @@ enum AnnotationProjectIO {
         case "rectangle": return twoPoint(RectangleElement.self)
         case "ellipse":   return twoPoint(EllipseElement.self)
         case "line":      return twoPoint(LineElement.self)
+        case "measure":   return twoPoint(MeasureElement.self)
         case "arrow":     return twoPoint(ArrowElement.self)
         case "highlight": return twoPoint(HighlightElement.self)
         case "pixelate":  return twoPoint(PixelateElement.self)

@@ -572,6 +572,20 @@ struct GIFEncoderTests {
     }
 }
 
+struct MeasureElementTests {
+    @Test
+    func pixelLengthIsEuclidean() {
+        #expect(MeasureElement.pixelLength(from: .zero, to: CGPoint(x: 3, y: 4)) == 5)
+        #expect(MeasureElement.pixelLength(from: CGPoint(x: 10, y: 10), to: CGPoint(x: 10, y: 10)) == 0)
+    }
+
+    @Test
+    func labelRoundsToWholePixels() {
+        #expect(MeasureElement.label(from: .zero, to: CGPoint(x: 100, y: 0)) == "100 px")
+        #expect(MeasureElement.label(from: .zero, to: CGPoint(x: 3, y: 4)) == "5 px")
+    }
+}
+
 struct PixelateScaleTests {
     @Test
     func thinStripGetsCoarseFloor() {
