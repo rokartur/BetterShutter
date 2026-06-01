@@ -167,6 +167,13 @@ final class CaptureSettingsTab: SettingsTabViewController {
         sound.action = #selector(toggleSound(_:))
         addRow(to: overlay, title: "Play capture sound", subtitle: "A shutter sound on capture.", accessory: sound)
 
+        let shadow = NSSwitch()
+        shadow.state = Preferences.includeWindowShadow ? .on : .off
+        shadow.target = self
+        shadow.action = #selector(toggleWindowShadow(_:))
+        addRow(to: overlay, title: "Include window shadow",
+               subtitle: "Keep the drop shadow when capturing a single window.", accessory: shadow)
+
         let recording = addSection(title: "Recording", anchor: "capture.recording")
         let audio = NSSwitch()
         audio.state = Preferences.recordSystemAudio ? .on : .off
@@ -203,6 +210,7 @@ final class CaptureSettingsTab: SettingsTabViewController {
     }
 
     @objc private func toggleMagnifier(_ sender: NSSwitch) { Preferences.magnifierEnabled = (sender.state == .on) }
+    @objc private func toggleWindowShadow(_ sender: NSSwitch) { Preferences.includeWindowShadow = (sender.state == .on) }
     @objc private func toggleSound(_ sender: NSSwitch) { Preferences.captureSoundEnabled = (sender.state == .on) }
 }
 

@@ -115,14 +115,15 @@ actor CaptureEngine {
             throw CaptureError.windowNotFound
         }
         let filter = SCContentFilter(desktopIndependentWindow: window)
-        return try await capture(filter: filter, displayID: nil)
+        return try await capture(filter: filter, displayID: nil, includeShadow: Preferences.includeWindowShadow)
     }
 
     // MARK: Core
 
     /// Size the configuration in PIXELS using the filter's authoritative point/pixel scale, then
     /// take a one-shot screenshot.
-    private func capture(filter: SCContentFilter, displayID: CGDirectDisplayID?) async throws -> CapturedImage {
+    private func capture(filter: SCContentFilter, displayID: CGDirectDisplayID?,
+                         includeShadow: Bool = false) async throws -> CapturedImage {
         let scale = CGFloat(filter.pointPixelScale)
         let widthPx = Int((filter.contentRect.width * scale).rounded())
         let heightPx = Int((filter.contentRect.height * scale).rounded())
@@ -134,6 +135,7 @@ actor CaptureEngine {
         config.captureResolution = .best
         config.scalesToFit = false
         config.showsCursor = false
+        config.ignoreShadowsSingleWindow = !includeShadow
         config.colorSpaceName = CGColorSpace.sRGB
 
         let cgImage = try await SCScreenshotManager.captureImage(

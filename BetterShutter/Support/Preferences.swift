@@ -62,6 +62,13 @@ nonisolated enum Preferences {
         static let downscaleRetina = "downscaleRetina"
         static let highlightClicks = "highlightClicks"
         static let showCursorInRecording = "showCursorInRecording"
+        static let includeWindowShadow = "includeWindowShadow"
+    }
+
+    /// Include the macOS drop shadow when capturing a single window.
+    static var includeWindowShadow: Bool {
+        get { defaults.object(forKey: Key.includeWindowShadow) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.includeWindowShadow) }
     }
 
     /// Halve Retina (scale > 1) captures to 1× on output for smaller files.
