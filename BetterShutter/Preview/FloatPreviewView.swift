@@ -18,6 +18,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     var onCopy: (() -> Void)?
     var onSave: (() -> Void)?
     var onClose: (() -> Void)?
+    var onAnnotate: (() -> Void)?
     var onHoverChange: ((Bool) -> Void)?
 
     private var dragOrigin: CGPoint?
@@ -46,11 +47,12 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     // MARK: Buttons
 
     private func setupButtons() {
+        let edit = makeButton(symbol: "pencil.tip.crop.circle", title: "Edit", action: #selector(editTapped))
         let copy = makeButton(symbol: "doc.on.doc", title: "Copy", action: #selector(copyTapped))
         let secondary = (savedURL != nil)
             ? makeButton(symbol: "folder", title: "Show", action: #selector(revealTapped))
             : makeButton(symbol: "arrow.down.circle", title: "Save", action: #selector(saveTapped))
-        let stack = NSStackView(views: [copy, secondary])
+        let stack = NSStackView(views: [edit, copy, secondary])
         stack.orientation = .horizontal
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -81,6 +83,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     @objc private func copyTapped() { onCopy?() }
     @objc private func saveTapped() { onSave?() }
     @objc private func closeTapped() { onClose?() }
+    @objc private func editTapped() { onAnnotate?() }
     @objc private func revealTapped() {
         if let url = savedURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
@@ -134,6 +137,11 @@ final class FloatPreviewView: NSView, NSDraggingSource {
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 2, thumbRect.contains(p) {
+            dragOrigin = nil
+            onAnnotate?()
+            return
+        }
         dragOrigin = thumbRect.contains(p) ? p : nil
     }
 

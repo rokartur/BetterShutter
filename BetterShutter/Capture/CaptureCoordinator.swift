@@ -9,7 +9,12 @@ final class CaptureCoordinator {
     private let engine = CaptureEngine()
     private let overlay = OverlayController()
     private let preview = FloatPreviewController()
+    private var editor: EditorWindowController?
     private var isCapturing = false
+
+    private init() {
+        preview.onAnnotate = { [weak self] image, mode in self?.edit(image, mode: mode) }
+    }
 
     func capture(_ mode: CaptureMode) {
         guard !isCapturing, !overlay.isPresenting else { return }
@@ -87,6 +92,13 @@ final class CaptureCoordinator {
                 preview.show(image, mode: mode, savedURL: url)
             }
         }
+    }
+
+    func edit(_ image: CapturedImage, mode: CaptureMode) {
+        let controller = EditorWindowController(image: image, mode: mode)
+        controller.onClose = { [weak self] in self?.editor = nil }
+        editor = controller
+        controller.present()
     }
 
     private func handleError(_ error: Error) {

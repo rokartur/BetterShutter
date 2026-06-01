@@ -1,5 +1,7 @@
 import Testing
+import AppKit
 import CoreGraphics
+import CoreImage
 @testable import BetterShutter
 
 struct BetterShutterTests {
@@ -93,5 +95,38 @@ struct FilenameTemplateTests {
         let name = FilenameTemplate.render("", mode: .region, format: .png, counter: 1)
         #expect(!name.isEmpty)
         #expect(name.hasSuffix(".png"))
+    }
+}
+
+@MainActor
+struct AnnotationRendererTests {
+    private func solidImage(width: Int, height: Int) -> CGImage {
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(NSColor.blue.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return ctx.makeImage()!
+    }
+
+    @Test
+    func flattenPreservesSizeWithNoElements() {
+        let base = solidImage(width: 20, height: 10)
+        let out = AnnotationRenderer.flatten(base: base, elements: [], ciContext: CIContext())
+        #expect(out?.width == 20)
+        #expect(out?.height == 10)
+    }
+
+    @Test
+    func flattenWithElementsKeepsSize() {
+        let base = solidImage(width: 40, height: 30)
+        let style = AnnotationStyle.makeDefault(imageWidth: 40)
+        let rect = RectangleElement(start: CGPoint(x: 5, y: 5), style: style)
+        rect.updateDrag(to: CGPoint(x: 25, y: 22))
+        let arrow = ArrowElement(start: CGPoint(x: 2, y: 2), style: style)
+        arrow.updateDrag(to: CGPoint(x: 30, y: 25))
+        let out = AnnotationRenderer.flatten(base: base, elements: [rect, arrow], ciContext: CIContext())
+        #expect(out?.width == 40)
+        #expect(out?.height == 30)
     }
 }

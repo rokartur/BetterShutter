@@ -7,6 +7,8 @@ final class FloatPreviewController {
     private var window: FloatPreviewWindow?
     private var dismissTimer: Timer?
 
+    var onAnnotate: ((CapturedImage, CaptureMode) -> Void)?
+
     private let autoDismissDelay: TimeInterval = 6
 
     func show(_ image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
@@ -16,6 +18,10 @@ final class FloatPreviewController {
         view.onCopy = { PasteboardWriter.copy(image.cgImage) }
         view.onSave = { Task.detached { _ = try? FileSaver.save(image.cgImage, mode: mode) } }
         view.onClose = { [weak self] in self?.fadeOutAndDismiss() }
+        view.onAnnotate = { [weak self] in
+            self?.dismiss()
+            self?.onAnnotate?(image, mode)
+        }
         view.onHoverChange = { [weak self] hovered in
             if hovered { self?.cancelTimer() } else { self?.startTimer() }
         }
