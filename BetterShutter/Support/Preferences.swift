@@ -44,6 +44,7 @@ nonisolated enum Preferences {
         static let recordSystemAudio = "recordSystemAudio"
         static let downscaleRetina = "downscaleRetina"
         static let highlightClicks = "highlightClicks"
+        static let showCursorInRecording = "showCursorInRecording"
     }
 
     /// Halve Retina (scale > 1) captures to 1× on output for smaller files.
@@ -56,6 +57,12 @@ nonisolated enum Preferences {
     static var highlightClicks: Bool {
         get { defaults.object(forKey: Key.highlightClicks) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.highlightClicks) }
+    }
+
+    /// Whether the mouse cursor appears in recordings.
+    static var showCursorInRecording: Bool {
+        get { defaults.object(forKey: Key.showCursorInRecording) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.showCursorInRecording) }
     }
 
     static var recordSystemAudio: Bool {

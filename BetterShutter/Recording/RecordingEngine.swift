@@ -21,6 +21,7 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     private var outputURL: URL?
 
     var captureSystemAudio = true
+    var showsCursor = true
 
     // GIF mode: collect downscaled frames instead of writing video.
     var gifMode = false
@@ -52,7 +53,7 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.minimumFrameInterval = CMTime(value: 1, timescale: gifMode ? 15 : 60)
         config.queueDepth = 6
-        config.showsCursor = true
+        config.showsCursor = showsCursor
         config.capturesAudio = captureSystemAudio && !gifMode
         config.sampleRate = 48_000
         config.channelCount = 2

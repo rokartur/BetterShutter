@@ -181,10 +181,18 @@ final class CaptureSettingsTab: SettingsTabViewController {
         clicks.action = #selector(toggleHighlightClicks(_:))
         addRow(to: recording, title: "Highlight mouse clicks",
                subtitle: "Show an animated ring at each click in recordings.", accessory: clicks)
+
+        let cursor = NSSwitch()
+        cursor.state = Preferences.showCursorInRecording ? .on : .off
+        cursor.target = self
+        cursor.action = #selector(toggleShowCursor(_:))
+        addRow(to: recording, title: "Show cursor",
+               subtitle: "Include the mouse pointer in recordings.", accessory: cursor)
     }
 
     @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
     @objc private func toggleHighlightClicks(_ sender: NSSwitch) { Preferences.highlightClicks = (sender.state == .on) }
+    @objc private func toggleShowCursor(_ sender: NSSwitch) { Preferences.showCursorInRecording = (sender.state == .on) }
     @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
 
     @objc private func changeAfterAction(_ sender: NSPopUpButton) {

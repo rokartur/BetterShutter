@@ -40,6 +40,7 @@ final class RecordingController {
         let url = Self.recordingURL(ext: gif ? "gif" : "mp4")
         let engine = RecordingEngine()
         engine.captureSystemAudio = Preferences.recordSystemAudio
+        engine.showsCursor = Preferences.showCursorInRecording
         engine.gifMode = gif
         self.engine = engine
         isRecording = true
