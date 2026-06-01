@@ -589,6 +589,29 @@ struct KeystrokeFormatterTests {
 }
 
 @MainActor
+struct ColorPaletteTests {
+    @Test
+    func prependsDedupsAndCaps() {
+        var list = ColorPalette.add("#FF0000", to: [])
+        list = ColorPalette.add("#00FF00", to: list)
+        list = ColorPalette.add("#ff0000", to: list)   // dup (case-insensitive) -> moves to front
+        #expect(list == ["#FF0000", "#00FF00"])
+        // Cap at max.
+        var big: [String] = []
+        for i in 0..<20 { big = ColorPalette.add(String(format: "#0000%02X", i), to: big, max: 12) }
+        #expect(big.count == 12)
+        #expect(big.first == "#000013")   // newest
+    }
+
+    @Test @MainActor
+    func hexRoundTrips() {
+        let color = NSColor(hexString: "#3366CC")
+        #expect(color != nil)
+        #expect(color?.hexString == "#3366CC")
+    }
+}
+
+@MainActor
 struct WebPFormatTests {
     @Test
     func webpEnumProperties() {

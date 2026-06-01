@@ -99,6 +99,17 @@ nonisolated enum Preferences {
         static let lastRegion = "lastRegion"
         static let stepFormat = "stepFormat"
         static let stepStart = "stepStart"
+        static let recentColors = "recentColors"
+    }
+
+    /// Recently used / saved editor colors as "#RRGGBB" hex, newest first.
+    static var recentColors: [String] {
+        get { defaults.stringArray(forKey: Key.recentColors) ?? [] }
+        set { defaults.set(newValue, forKey: Key.recentColors) }
+    }
+
+    static func addRecentColor(_ hex: String) {
+        recentColors = ColorPalette.add(hex, to: recentColors)
     }
 
     /// Numbering format for new step badges.

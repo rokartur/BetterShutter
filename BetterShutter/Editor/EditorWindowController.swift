@@ -9,6 +9,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private let canvas: EditorCanvasView
     private let mode: CaptureMode
     private var toolControl: NSSegmentedControl?
+    private var colorWell: NSColorWell?
+    private let swatches = NSPopUpButton(frame: .zero, pullsDown: true)
     var onClose: (() -> Void)?
 
     init(image: CapturedImage, mode: CaptureMode, elements: [AnnotationElement] = []) {
@@ -66,19 +68,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         colorWell.color = canvas.style.color
         colorWell.target = self
         colorWell.action = #selector(colorChanged(_:))
-        canvas.onColorPicked = { [weak colorWell] color in colorWell?.color = color }
+        self.colorWell = colorWell
+        canvas.onColorPicked = { [weak self] color in
+            self?.colorWell?.color = color
+            if let hex = color.hexString { Preferences.addRecentColor(hex); self?.rebuildSwatches() }
+        }
         canvas.onPrint = { [weak self] in
             if let cg = self?.canvas.flattened() { Printing.printImage(cg) }
         }
         colorWell.translatesAutoresizingMaskIntoConstraints = false
         colorWell.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
+        configureSwatches()
+
         let widthSlider = NSSlider(value: Double(canvas.style.strokeWidth), minValue: 1, maxValue: 40,
                                    target: self, action: #selector(widthChanged(_:)))
         widthSlider.translatesAutoresizingMaskIntoConstraints = false
         widthSlider.widthAnchor.constraint(equalToConstant: 90).isActive = true
 
-        let leftStack = NSStackView(views: [tools, colorWell, widthSlider, makeTransformControl()])
+        let leftStack = NSStackView(views: [tools, colorWell, swatches, widthSlider, makeTransformControl()])
         leftStack.spacing = 10
         leftStack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(leftStack)
@@ -129,6 +137,56 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         seg.action = #selector(toolChanged(_:))
         seg.translatesAutoresizingMaskIntoConstraints = false
         return seg
+    }
+
+    private func configureSwatches() {
+        swatches.translatesAutoresizingMaskIntoConstraints = false
+        swatches.bezelStyle = .texturedRounded
+        swatches.imagePosition = .imageOnly
+        swatches.toolTip = "Saved Colors"
+        rebuildSwatches()
+    }
+
+    private func rebuildSwatches() {
+        let menu = NSMenu()
+        let face = NSMenuItem()
+        face.image = NSImage(systemSymbolName: "swatchpalette", accessibilityDescription: "Saved Colors")
+        menu.addItem(face)
+        let colors = Preferences.recentColors
+        if colors.isEmpty {
+            let empty = NSMenuItem(title: "No saved colors yet", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for hex in colors {
+                guard let color = NSColor(hexString: hex) else { continue }
+                let item = NSMenuItem(title: hex, action: #selector(swatchPicked(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = hex
+                item.image = Self.swatchImage(color)
+                menu.addItem(item)
+            }
+        }
+        swatches.menu = menu
+    }
+
+    private static func swatchImage(_ color: NSColor) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let path = NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 3, yRadius: 3)
+        color.setFill(); path.fill()
+        NSColor.black.withAlphaComponent(0.2).setStroke(); path.lineWidth = 0.5; path.stroke()
+        image.unlockFocus()
+        return image
+    }
+
+    @objc private func swatchPicked(_ sender: NSMenuItem) {
+        guard let hex = sender.representedObject as? String, let color = NSColor(hexString: hex) else { return }
+        canvas.applyColor(color)
+        colorWell?.color = color
+        Preferences.addRecentColor(hex)
+        rebuildSwatches()
     }
 
     private func makeTransformControl() -> NSPopUpButton {
@@ -210,7 +268,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.applyFilter(named: name)
     }
 
-    @objc private func colorChanged(_ sender: NSColorWell) { canvas.applyColor(sender.color) }
+    @objc private func colorChanged(_ sender: NSColorWell) {
+        canvas.applyColor(sender.color)
+        if let hex = sender.color.hexString { Preferences.addRecentColor(hex); rebuildSwatches() }
+    }
     @objc private func widthChanged(_ sender: NSSlider) { canvas.applyStrokeWidth(CGFloat(sender.doubleValue)) }
 
     @objc private func saveProjectTapped() {
