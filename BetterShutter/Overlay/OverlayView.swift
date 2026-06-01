@@ -320,12 +320,13 @@ final class OverlayView: NSView {
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        let highlight = (phase == .idle) ? hoveredWindow?.rect : nil
-        drawDim(around: activeRect ?? highlight)
+        // Only an actual selection brightens (cuts a hole). Hovering a window keeps the whole screen
+        // dimmed and just outlines the clickable window — it does NOT brighten it.
+        drawDim(around: activeRect)
 
         if let r = activeRect {
             drawSelectionChrome(r)
-        } else if let h = highlight {
+        } else if phase == .idle, let h = hoveredWindow?.rect {
             drawWindowHighlight(rect: h)
         }
 
@@ -346,7 +347,7 @@ final class OverlayView: NSView {
     private func fill(_ rect: NSRect) { NSBezierPath(rect: rect).fill() }
 
     private func drawDim(around hole: CGRect?) {
-        NSColor.black.withAlphaComponent(0.48).setFill()
+        NSColor.black.withAlphaComponent(0.40).setFill()
         guard let h = hole else { fill(bounds); return }
         let b = bounds
         fill(NSRect(x: b.minX, y: h.maxY, width: b.width, height: b.maxY - h.maxY))            // top
