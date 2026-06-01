@@ -121,10 +121,15 @@ final class OverlayController {
             pixelSize: pane.image.pixelSize
         )
         let onRegion = self.onRegion
+        let onCancel = self.onCancel
         let displayID = pane.image.displayID ?? CGMainDisplayID()
         dismiss()
         guard cropPx.width >= 1, cropPx.height >= 1,
-              let cropped = pane.image.cgImage.cropping(to: cropPx) else { return }
+              let cropped = pane.image.cgImage.cropping(to: cropPx) else {
+            // A degenerate selection must still release the caller's capture lock.
+            onCancel?()
+            return
+        }
         onRegion?(CapturedImage(cgImage: cropped, scale: pane.image.scale, displayID: pane.image.displayID),
                   globalRect, displayID)
     }

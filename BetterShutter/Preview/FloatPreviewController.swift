@@ -59,8 +59,9 @@ final class FloatPreviewController {
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                self?.window?.orderOut(nil)
-                self?.window = nil
+                panel.orderOut(nil)
+                // Only clear if a newer preview hasn't replaced this panel during the fade.
+                if self?.window === panel { self?.window = nil }
             }
         })
     }

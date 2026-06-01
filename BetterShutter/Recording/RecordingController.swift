@@ -7,6 +7,7 @@ final class RecordingController {
     static let shared = RecordingController()
 
     private var engine: RecordingEngine?
+    private var startTask: Task<Void, Never>?
     private let controlBar = RecordingControlBar()
     private(set) var isRecording = false
     var onStateChange: (() -> Void)?
@@ -45,10 +46,9 @@ final class RecordingController {
         controlBar.show()
         onStateChange?()
 
-        let snapshotEngine = engine
-        Task {
+        startTask = Task {
             do {
-                try await snapshotEngine.start(displayID: displayID, sourceRect: sourceRect, to: url)
+                try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
             } catch {
                 isRecording = false
                 controlBar.hide()
@@ -66,7 +66,12 @@ final class RecordingController {
         self.engine = nil
         onStateChange?()
 
+        let startTask = self.startTask
+        self.startTask = nil
         Task {
+            // Ensure start() (and its startCapture) finished before stopping, so the SCStream
+            // is actually torn down and never leaks.
+            await startTask?.value
             let url = await engine.stop()
             if let url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }
