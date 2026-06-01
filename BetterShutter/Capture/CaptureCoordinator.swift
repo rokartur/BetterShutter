@@ -26,13 +26,20 @@ final class CaptureCoordinator {
         case .fullDisplay:
             captureFullDisplay()
         case .region, .window:
-            presentOverlay()
+            presentOverlay { [weak self] image, mode in self?.finish(image, mode: mode) }
         }
+    }
+
+    /// Select a region and run on-device OCR, copying the recognized text to the clipboard.
+    func captureText() {
+        guard !isCapturing, !overlay.isPresenting else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        presentOverlay { [weak self] image, _ in self?.recognizeText(image) }
     }
 
     // MARK: Flows
 
-    private func presentOverlay() {
+    private func presentOverlay(completion: @escaping (CapturedImage, CaptureMode) -> Void) {
         isCapturing = true
         Task {
             do {
@@ -42,8 +49,8 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: Preferences.magnifierEnabled,
-                    onRegion: { [weak self] image in self?.finish(image, mode: .region) },
-                    onWindow: { [weak self] id in self?.captureWindow(id) },
+                    onRegion: { image in completion(image, .region) },
+                    onWindow: { [weak self] id in self?.captureWindow(id, completion: completion) },
                     onCancel: { [weak self] in self?.isCapturing = false }
                 )
             } catch {
@@ -53,15 +60,28 @@ final class CaptureCoordinator {
         }
     }
 
-    private func captureWindow(_ id: CGWindowID) {
+    private func captureWindow(_ id: CGWindowID, completion: @escaping (CapturedImage, CaptureMode) -> Void) {
         Task {
             do {
                 let image = try await engine.captureWindow(id)
-                finish(image, mode: .window)
+                completion(image, .window)
             } catch {
                 isCapturing = false
                 handleError(error)
             }
+        }
+    }
+
+    private func recognizeText(_ image: CapturedImage) {
+        isCapturing = false
+        Task {
+            let text = await TextRecognizer.recognize(image)
+            guard !text.isEmpty else { HUD.show("No text found"); return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+            HUD.show("Text copied")
         }
     }
 

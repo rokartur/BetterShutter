@@ -107,6 +107,9 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: section, title: "Capture Full Screen",
                     subtitle: "Capture the display under the cursor.", name: .captureFullScreen,
                     searchItemID: nil)
+        addRecorder(to: section, title: "Capture Text (OCR)",
+                    subtitle: "Select a region and copy its text.", name: .captureText,
+                    searchItemID: nil)
 
         let recording = addSection(title: "Recording", anchor: "shortcuts.recording")
         addRecorder(to: recording, title: "Start / Stop Recording",

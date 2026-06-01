@@ -87,6 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                        action: #selector(captureWindow), name: .captureWindow)
         addCaptureItem(to: menu, title: "Capture Full Screen", symbol: "rectangle.inset.filled",
                        action: #selector(captureFullScreen), name: .captureFullScreen)
+        addCaptureItem(to: menu, title: "Capture Text", symbol: "text.viewfinder",
+                       action: #selector(captureText), name: .captureText)
 
         menu.addItem(.separator())
 
@@ -153,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }
     @objc private func captureWindow() { CaptureCoordinator.shared.capture(.window) }
     @objc private func captureFullScreen() { CaptureCoordinator.shared.capture(.fullDisplay) }
+    @objc private func captureText() { CaptureCoordinator.shared.captureText() }
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
 
     @objc private func openSettings() {
