@@ -147,9 +147,22 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let invert = NSMenuItem(title: "Invert Colors", action: #selector(invertPicked), keyEquivalent: "")
         invert.target = self
         popup.menu?.addItem(invert)
-        popup.toolTip = "Rotate / Flip / Invert"
+        popup.menu?.addItem(.separator())
+        for (title, filter) in Self.filters {
+            let item = NSMenuItem(title: title, action: #selector(filterPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = filter
+            popup.menu?.addItem(item)
+        }
+        popup.toolTip = "Rotate / Flip / Filters"
         return popup
     }
+
+    private static let filters: [(String, String)] = [
+        ("Noir", "CIPhotoEffectNoir"), ("Mono", "CIPhotoEffectMono"), ("Sepia", "CISepiaTone"),
+        ("Chrome", "CIPhotoEffectChrome"), ("Fade", "CIPhotoEffectFade"),
+        ("Instant", "CIPhotoEffectInstant"), ("Vivid", "CIPhotoEffectTransfer"),
+    ]
 
     private func makeActionButton(title: String, symbol: String?, action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
@@ -171,6 +184,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func invertPicked() { canvas.invertColors() }
+
+    @objc private func filterPicked(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        canvas.applyFilter(named: name)
+    }
 
     @objc private func colorChanged(_ sender: NSColorWell) { canvas.applyColor(sender.color) }
     @objc private func widthChanged(_ sender: NSSlider) { canvas.applyStrokeWidth(CGFloat(sender.doubleValue)) }

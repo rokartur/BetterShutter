@@ -106,6 +106,19 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    /// Apply a Core Image photo-effect filter destructively to the base image (undoable).
+    func applyFilter(named name: String) {
+        let source = CIImage(cgImage: baseImage)
+        guard let filter = CIFilter(name: name) else { return }
+        filter.setValue(source, forKey: kCIInputImageKey)
+        guard let output = filter.outputImage,
+              let cg = ciContext.createCGImage(output, from: source.extent) else { return }
+        let before = snapshot()
+        baseImage = cg
+        commit(before, "Filter")
+        needsDisplay = true
+    }
+
     init(image: CapturedImage, elements: [AnnotationElement] = []) {
         self.baseImage = image.cgImage
         self.imageSize = image.pixelSize
