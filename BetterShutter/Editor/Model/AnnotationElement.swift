@@ -321,7 +321,7 @@ final class TextElement: AnnotationElement {
 
 final class StepElement: AnnotationElement {
     var center: CGPoint
-    let number: Int
+    var number: Int
 
     init(center: CGPoint, number: Int, style: AnnotationStyle) {
         self.center = center

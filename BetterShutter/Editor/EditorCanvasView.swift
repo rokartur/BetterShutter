@@ -162,6 +162,18 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         NSBezierPath(rect: NSRect(x: area.minX, y: area.minY, width: area.width, height: r.minY - area.minY)).fill()
         NSBezierPath(rect: NSRect(x: area.minX, y: r.minY, width: r.minX - area.minX, height: r.height)).fill()
         NSBezierPath(rect: NSRect(x: r.maxX, y: r.minY, width: area.maxX - r.maxX, height: r.height)).fill()
+        // Rule-of-thirds guides inside the crop rect.
+        NSColor.white.withAlphaComponent(0.4).setStroke()
+        let thirds = NSBezierPath()
+        thirds.lineWidth = 0.5
+        for i in 1...2 {
+            let x = r.minX + r.width * CGFloat(i) / 3
+            let y = r.minY + r.height * CGFloat(i) / 3
+            thirds.move(to: CGPoint(x: x, y: r.minY)); thirds.line(to: CGPoint(x: x, y: r.maxY))
+            thirds.move(to: CGPoint(x: r.minX, y: y)); thirds.line(to: CGPoint(x: r.maxX, y: y))
+        }
+        thirds.stroke()
+
         NSColor.controlAccentColor.setStroke()
         let border = NSBezierPath(rect: r)
         border.lineWidth = 1.5
@@ -366,8 +378,19 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let before = snapshot()
         elements.remove(at: index)
         self.selected = nil
+        resequenceSteps()
         commit(before, "Delete")
         needsDisplay = true
+    }
+
+    /// Renumber step badges 1…n in their array order, so deleting one closes the gap.
+    private func resequenceSteps() {
+        var n = 1
+        for case let step as StepElement in elements {
+            step.number = n
+            n += 1
+        }
+        stepCounter = n
     }
 
     // MARK: Text editing
