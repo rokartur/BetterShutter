@@ -13,6 +13,9 @@ struct BetterShutterTests {
         #expect(configuration.tabs.contains { $0.id == "general" })
         #expect(configuration.tabs.contains { $0.id == "shortcuts" })
         #expect(configuration.tabs.contains { $0.id == "capture" })
+        #expect(configuration.tabs.contains { $0.id == "annotation" })
+        #expect(configuration.tabs.contains { $0.id == "beautify" })
+        #expect(configuration.tabs.contains { $0.id == "advanced" })
     }
 }
 

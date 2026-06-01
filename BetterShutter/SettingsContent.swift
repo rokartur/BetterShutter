@@ -14,8 +14,14 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
                         iconStyle: .solid(SettingsColor(hex: 0x5E5CE6))),
             SettingsTab(id: "capture", title: "Capture", icon: "camera.viewfinder",
                         iconStyle: .solid(SettingsColor(hex: 0x0A84FF))),
+            SettingsTab(id: "annotation", title: "Annotation", icon: "pencil.tip.crop.circle",
+                        iconStyle: .solid(SettingsColor(hex: 0xFF375F))),
+            SettingsTab(id: "beautify", title: "Beautify", icon: "wand.and.stars",
+                        iconStyle: .solid(SettingsColor(hex: 0xBF5AF2))),
             SettingsTab(id: "output", title: "Output", icon: "square.and.arrow.down",
                         iconStyle: .solid(SettingsColor(hex: 0x30D158))),
+            SettingsTab(id: "advanced", title: "Advanced", icon: "slider.horizontal.3",
+                        iconStyle: .solid(SettingsColor(hex: 0x8E8E93))),
             SettingsTab(id: "about", title: "About", icon: "info.circle.fill",
                         iconStyle: .solid(SettingsColor(hex: 0xFF6F00))),
         ],
@@ -38,7 +44,10 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
             case "general": return GeneralSettingsTab()
             case "shortcuts": return ShortcutsSettingsTab()
             case "capture": return CaptureSettingsTab()
+            case "annotation": return AnnotationSettingsTab()
+            case "beautify": return BeautifySettingsTab()
             case "output": return OutputSettingsTab()
+            case "advanced": return AdvancedSettingsTab()
             default: return AboutSettingsTab()
             }
         }
@@ -332,6 +341,110 @@ final class OutputSettingsTab: SettingsTabViewController {
 
     @objc private func changeTemplate(_ sender: NSTextField) {
         Preferences.filenameTemplate = sender.stringValue
+    }
+}
+
+// MARK: - Annotation
+
+final class AnnotationSettingsTab: SettingsTabViewController {
+    override func setupContent() {
+        let steps = addSection(title: "Step Badges", anchor: "annotation.steps")
+
+        let format = NSPopUpButton()
+        for f in StepFormat.allCases { format.addItem(withTitle: f.presentableName) }
+        format.selectItem(at: StepFormat.allCases.firstIndex(of: Preferences.stepFormat) ?? 0)
+        format.target = self
+        format.action = #selector(changeStepFormat(_:))
+        addRow(to: steps, title: "Number format",
+               subtitle: "Numerals, letters, or Roman numerals for new step badges.", accessory: format)
+
+        let start = NSTextField()
+        start.integerValue = Preferences.stepStart
+        start.alignment = .right
+        start.target = self
+        start.action = #selector(changeStepStart(_:))
+        start.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        addRow(to: steps, title: "Start at", subtitle: "The first badge's number.", accessory: start)
+    }
+
+    @objc private func changeStepFormat(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if StepFormat.allCases.indices.contains(index) { Preferences.stepFormat = StepFormat.allCases[index] }
+    }
+
+    @objc private func changeStepStart(_ sender: NSTextField) {
+        Preferences.stepStart = max(1, sender.integerValue)
+        sender.integerValue = Preferences.stepStart
+    }
+}
+
+// MARK: - Beautify
+
+final class BeautifySettingsTab: SettingsTabViewController {
+    private let presets = Preferences.beautifyPresets
+
+    override func setupContent() {
+        let section = addSection(title: "Auto-Apply", anchor: "beautify.auto")
+        let popup = NSPopUpButton()
+        popup.addItem(withTitle: "Off")
+        for preset in presets { popup.addItem(withTitle: preset.name) }
+        if let name = Preferences.autoBeautifyPresetName, let i = presets.firstIndex(where: { $0.name == name }) {
+            popup.selectItem(at: i + 1)
+        } else {
+            popup.selectItem(at: 0)
+        }
+        popup.target = self
+        popup.action = #selector(changeAutoPreset(_:))
+        addRow(to: section, title: "Auto-apply preset",
+               subtitle: "Style every capture with a saved preset; hold Shift while capturing to bypass.",
+               accessory: popup)
+
+        if presets.isEmpty {
+            let note = addSection(title: "", anchor: "beautify.note")
+            addRow(to: note, title: "No presets yet",
+                   subtitle: "Open Beautify and use the bookmark menu ▸ Save Current Style to create one.",
+                   accessory: NSView())
+        }
+    }
+
+    @objc private func changeAutoPreset(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        Preferences.autoBeautifyPresetName = index <= 0 ? nil : presets[index - 1].name
+    }
+}
+
+// MARK: - Advanced
+
+final class AdvancedSettingsTab: SettingsTabViewController {
+    override func setupContent() {
+        let maintenance = addSection(title: "Maintenance", anchor: "advanced.maintenance")
+
+        let clearColors = NSButton(title: "Clear", target: self, action: #selector(clearColors))
+        clearColors.bezelStyle = .rounded
+        addRow(to: maintenance, title: "Saved colors",
+               subtitle: "Forget the editor's saved color palette.", accessory: clearColors)
+
+        let reset = NSButton(title: "Reset…", target: self, action: #selector(resetAll))
+        reset.bezelStyle = .rounded
+        addRow(to: maintenance, title: "Reset all settings",
+               subtitle: "Restore every preference to its default.", accessory: reset)
+    }
+
+    @objc private func clearColors() {
+        Preferences.recentColors = []
+    }
+
+    @objc private func resetAll() {
+        let alert = NSAlert()
+        alert.messageText = "Reset all settings?"
+        alert.informativeText = "This restores every BetterShutter preference to its default. Saved files are not affected."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let domain = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+        }
     }
 }
 
