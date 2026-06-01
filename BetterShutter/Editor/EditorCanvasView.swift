@@ -23,6 +23,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     var onToolPicked: ((ToolKind) -> Void)?
     /// Fired when the eyedropper samples a color, so the color well can follow.
     var onColorPicked: ((NSColor) -> Void)?
+    /// Fired on ⌘P to print the flattened result.
+    var onPrint: (() -> Void)?
 
     private enum DragMode { case none, creating, moving, resizing, cropping }
     private var dragMode: DragMode = .none
@@ -404,6 +406,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
            event.charactersIgnoringModifiers?.lowercased() == "z" {
             finishTextEditing()
             if event.modifierFlags.contains(.shift) { undoMgr.redo() } else { undoMgr.undo() }
+            return
+        }
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "p" {
+            onPrint?()
             return
         }
         // Single-key tool shortcuts (no ⌘/⌥/⌃). A text field, when editing, is the first responder

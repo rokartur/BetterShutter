@@ -93,6 +93,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     @objc private func beautifyTapped() { onBeautify?() }
     @objc private func pinTapped() { onPin?() }
     @objc private func shareTapped() { onShare?() }
+    @objc private func printTapped() { Printing.printImage(image.cgImage) }
     @objc private func revealTapped() {
         if let url = savedURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
@@ -103,6 +104,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
         addMenuItem(menu, "Beautify", #selector(beautifyTapped))
         addMenuItem(menu, "Pin to Screen", #selector(pinTapped))
         addMenuItem(menu, "Share…", #selector(shareTapped))
+        addMenuItem(menu, "Print…", #selector(printTapped))
         menu.addItem(.separator())
         addMenuItem(menu, "Copy", #selector(copyTapped))
         if savedURL != nil {

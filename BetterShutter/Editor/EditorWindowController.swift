@@ -67,6 +67,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         colorWell.target = self
         colorWell.action = #selector(colorChanged(_:))
         canvas.onColorPicked = { [weak colorWell] color in colorWell?.color = color }
+        canvas.onPrint = { [weak self] in
+            if let cg = self?.canvas.flattened() { Printing.printImage(cg) }
+        }
         colorWell.translatesAutoresizingMaskIntoConstraints = false
         colorWell.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
