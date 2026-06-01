@@ -22,9 +22,26 @@ nonisolated enum AfterCaptureAction: String, CaseIterable, Sendable {
 nonisolated enum ImageFileFormat: String, CaseIterable, Sendable {
     case png
     case jpeg
+    case heic
 
-    var fileExtension: String { self == .png ? "png" : "jpg" }
-    var presentableName: String { self == .png ? "PNG" : "JPEG" }
+    var fileExtension: String {
+        switch self {
+        case .png: return "png"
+        case .jpeg: return "jpg"
+        case .heic: return "heic"
+        }
+    }
+
+    var presentableName: String {
+        switch self {
+        case .png: return "PNG"
+        case .jpeg: return "JPEG"
+        case .heic: return "HEIC"
+        }
+    }
+
+    /// PNG is lossless; JPEG/HEIC honor the quality slider.
+    var isLossy: Bool { self != .png }
 }
 
 /// Thread-safe app preferences backed by `UserDefaults`. Accessor-only (no isolation) so the
