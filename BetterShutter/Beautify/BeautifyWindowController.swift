@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Beautify editor: drop a screenshot onto a gradient/solid background with padding, rounded
 /// corners, and a shadow. Live preview re-renders from a downscaled copy; export is full-res.
@@ -73,8 +74,10 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
         shadowSwitch.target = self
         shadowSwitch.action = #selector(shadowToggled(_:))
 
+        let imageButton = makeButton("Image…", "photo", #selector(chooseBackgroundImage))
+
         let left = NSStackView(views: [
-            label("Background"), presetPopup, colorWell,
+            label("Background"), presetPopup, colorWell, imageButton,
             label("Frame"), framePopup,
             label("Padding"), padding,
             label("Corner"), corner,
@@ -162,6 +165,18 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func solidColorChanged(_ sender: NSColorWell) {
         style.background = .solid(sender.color)
+        renderPreview()
+    }
+
+    @objc private func chooseBackgroundImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let nsImage = NSImage(contentsOf: url) else { return }
+        var rect = CGRect(origin: .zero, size: nsImage.size)
+        guard let cg = nsImage.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return }
+        style.background = .image(cg)
         renderPreview()
     }
 

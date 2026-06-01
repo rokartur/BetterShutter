@@ -88,6 +88,22 @@ enum BeautifyRenderer {
             let start = CGPoint(x: rect.midX - dx * rect.width / 2, y: rect.midY - dy * rect.height / 2)
             let end = CGPoint(x: rect.midX + dx * rect.width / 2, y: rect.midY + dy * rect.height / 2)
             ctx.drawLinearGradient(gradient, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        case .image(let cg):
+            // Aspect-fill the custom image into the background rect.
+            let imageAspect = CGFloat(cg.width) / CGFloat(max(cg.height, 1))
+            let rectAspect = rect.width / max(rect.height, 1)
+            let drawRect: CGRect
+            if imageAspect > rectAspect {
+                let w = rect.height * imageAspect
+                drawRect = CGRect(x: rect.midX - w / 2, y: rect.minY, width: w, height: rect.height)
+            } else {
+                let h = rect.width / imageAspect
+                drawRect = CGRect(x: rect.minX, y: rect.midY - h / 2, width: rect.width, height: h)
+            }
+            ctx.saveGState()
+            ctx.clip(to: rect)
+            ctx.draw(cg, in: drawRect)
+            ctx.restoreGState()
         }
     }
 }

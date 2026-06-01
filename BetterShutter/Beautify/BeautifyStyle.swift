@@ -5,6 +5,7 @@ import AppKit
 enum BackgroundFill {
     case solid(NSColor)
     case gradient([NSColor], angleDegrees: CGFloat)
+    case image(CGImage)
 }
 
 /// A named background option shown in the beautify picker.
