@@ -64,6 +64,13 @@ nonisolated enum Preferences {
         static let showCursorInRecording = "showCursorInRecording"
         static let includeWindowShadow = "includeWindowShadow"
         static let hasOnboarded = "hasOnboarded"
+        static let recordingFPS = "recordingFPS"
+    }
+
+    /// Frame rate for screen recordings (30 or 60).
+    static var recordingFPS: Int {
+        get { let v = defaults.integer(forKey: Key.recordingFPS); return v == 0 ? 60 : v }
+        set { defaults.set(newValue, forKey: Key.recordingFPS) }
     }
 
     /// Whether the first-run onboarding has been shown.

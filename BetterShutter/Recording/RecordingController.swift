@@ -42,6 +42,7 @@ final class RecordingController {
         let engine = RecordingEngine()
         engine.captureSystemAudio = Preferences.recordSystemAudio
         engine.showsCursor = Preferences.showCursorInRecording
+        engine.fps = Preferences.recordingFPS
         engine.gifMode = gif
         self.engine = engine
         isRecording = true

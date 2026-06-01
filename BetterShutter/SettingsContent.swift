@@ -195,6 +195,18 @@ final class CaptureSettingsTab: SettingsTabViewController {
         cursor.action = #selector(toggleShowCursor(_:))
         addRow(to: recording, title: "Show cursor",
                subtitle: "Include the mouse pointer in recordings.", accessory: cursor)
+
+        let fps = NSPopUpButton()
+        fps.addItems(withTitles: ["30 fps", "60 fps"])
+        fps.selectItem(withTitle: Preferences.recordingFPS == 30 ? "30 fps" : "60 fps")
+        fps.target = self
+        fps.action = #selector(changeFPS(_:))
+        addRow(to: recording, title: "Frame rate",
+               subtitle: "Higher is smoother; lower makes smaller files.", accessory: fps)
+    }
+
+    @objc private func changeFPS(_ sender: NSPopUpButton) {
+        Preferences.recordingFPS = sender.indexOfSelectedItem == 0 ? 30 : 60
     }
 
     @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
