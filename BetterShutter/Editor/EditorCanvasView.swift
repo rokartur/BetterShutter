@@ -255,7 +255,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         cg.translateBy(x: displayRect.minX, y: displayRect.minY)
         cg.scaleBy(x: scale, y: scale)
         let rc = AnnotationRenderContext(baseImage: baseImage, imageSize: imageSize, ciContext: ciContext)
-        for element in elements { element.draw(in: cg, context: rc) }
+        for element in elements { element.drawRotated(in: cg, context: rc) }
         cg.restoreGState()
 
         if let selected, selected !== editingElement {
@@ -293,18 +293,24 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     private func drawSelectionHandles(for element: AnnotationElement) {
         let box = element.boundingBox
-        let viewBox = CGRect(origin: viewPoint(box.origin),
-                             size: CGSize(width: box.width * scale, height: box.height * scale))
-            .insetBy(dx: -4, dy: -4)
+        let t = element.rotationTransform
+        // Dashed outline follows rotation (rotate the four local corners into view space).
+        let corners = [
+            CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+            CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY),
+        ].map { viewPoint(element.rotation == 0 ? $0 : $0.applying(t)) }
         NSColor.controlAccentColor.setStroke()
-        let path = NSBezierPath(rect: viewBox)
+        let path = NSBezierPath()
         path.lineWidth = 1
         path.setLineDash([4, 3], count: 2, phase: 0)
+        path.move(to: corners[0])
+        for c in corners.dropFirst() { path.line(to: c) }
+        path.close()
         path.stroke()
 
         // Grab squares at each resize handle.
         for hp in element.handlePoints() {
-            let v = viewPoint(hp)
+            let v = viewPoint(element.rotation == 0 ? hp : hp.applying(t))
             let square = NSBezierPath(roundedRect: CGRect(x: v.x - 4, y: v.y - 4, width: 8, height: 8),
                                       xRadius: 2, yRadius: 2)
             NSColor.white.setFill()
@@ -318,8 +324,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     /// Index of the resize handle of `element` near `viewPt` (view coords), or nil.
     private func handleIndex(at viewPt: CGPoint, of element: AnnotationElement) -> Int? {
+        let t = element.rotationTransform
         for (i, hp) in element.handlePoints().enumerated() {
-            let v = viewPoint(hp)
+            let v = viewPoint(element.rotation == 0 ? hp : hp.applying(t))
             if hypot(v.x - viewPt.x, v.y - viewPt.y) <= 8 { return i }
         }
         return nil
@@ -342,7 +349,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
                 resizeHandle = hi
                 dragMode = .resizing
             } else {
-                selected = elements.last { $0.hitTest(p) }
+                selected = elements.last { $0.hitTest($0.localPoint(p)) }
                 dragMode = selected == nil ? .none : .moving
             }
         case .text:
@@ -398,7 +405,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             lastImagePoint = p
             if delta.width != 0 || delta.height != 0 { didMove = true }
         case .resizing:
-            selected?.moveHandle(resizeHandle, to: p)
+            selected.map { $0.moveHandle(resizeHandle, to: $0.localPoint(p)) }
             didMove = true
         case .cropping:
             if let anchor = cropAnchor { cropRect = SelectionModel.rect(from: anchor, to: p) }
@@ -492,6 +499,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         corners.submenu = cornersSub
         menu.addItem(corners)
 
+        if selected != nil {
+            let rotate = NSMenuItem(title: "Rotate", action: nil, keyEquivalent: "")
+            let rotateSub = NSMenu()
+            for (title, deg) in [("Left 90°", -90.0), ("Right 90°", 90.0), ("−15°", -15.0), ("+15°", 15.0)] {
+                let item = NSMenuItem(title: title, action: #selector(rotateSelected(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = deg
+                rotateSub.addItem(item)
+            }
+            rotateSub.addItem(.separator())
+            let reset = NSMenuItem(title: "Reset Rotation", action: #selector(resetRotation), keyEquivalent: "")
+            reset.target = self
+            rotateSub.addItem(reset)
+            rotate.submenu = rotateSub
+            menu.addItem(rotate)
+        }
+
         if elements.contains(where: { $0 is StepElement }) {
             let number = NSMenuItem(title: "Step Numbers", action: nil, keyEquivalent: "")
             let numberSub = NSMenu()
@@ -507,6 +530,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         }
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func rotateSelected(_ sender: NSMenuItem) {
+        guard let selected, let deg = sender.representedObject as? Double else { return }
+        let before = snapshot()
+        selected.rotation += CGFloat(deg) * .pi / 180
+        commit(before, "Rotate")
+        needsDisplay = true
+    }
+
+    @objc private func resetRotation() {
+        guard let selected else { return }
+        let before = snapshot()
+        selected.rotation = 0
+        commit(before, "Reset Rotation")
+        needsDisplay = true
     }
 
     @objc private func setArrowStyle(_ sender: NSMenuItem) {

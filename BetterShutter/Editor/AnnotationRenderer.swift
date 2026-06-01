@@ -27,7 +27,7 @@ enum AnnotationRenderer {
             ciContext: ciContext
         )
         ctx.draw(base, in: CGRect(x: 0, y: 0, width: width, height: height))
-        for element in elements { element.draw(in: ctx, context: rc) }
+        for element in elements { element.drawRotated(in: ctx, context: rc) }
         guard let rendered = ctx.makeImage() else { return nil }
 
         guard let cropRect else { return rendered }

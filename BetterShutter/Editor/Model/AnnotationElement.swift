@@ -17,11 +17,38 @@ struct AnnotationRenderContext {
 @MainActor
 class AnnotationElement {
     var style: AnnotationStyle
+    /// Rotation in radians about the element's bounding-box center. Drawing and interaction are
+    /// rotation-aware via the canvas; geometry (boundingBox / handlePoints) stays in local space.
+    var rotation: CGFloat = 0
 
     init(style: AnnotationStyle) { self.style = style }
 
+    /// The rotation pivot (local bounding-box center).
+    var rotationCenter: CGPoint { CGPoint(x: boundingBox.midX, y: boundingBox.midY) }
+
+    /// Affine transform that rotates local space into displayed (rotated) space about the center.
+    var rotationTransform: CGAffineTransform {
+        guard rotation != 0 else { return .identity }
+        let c = rotationCenter
+        return CGAffineTransform(translationX: c.x, y: c.y).rotated(by: rotation).translatedBy(x: -c.x, y: -c.y)
+    }
+
+    /// Map a point from displayed space into the element's un-rotated local space (for hit-testing).
+    func localPoint(_ p: CGPoint) -> CGPoint {
+        rotation == 0 ? p : p.applying(rotationTransform.inverted())
+    }
+
     /// Draw into a CoreGraphics context already transformed to image-pixel space (bottom-left).
     func draw(in cg: CGContext, context rc: AnnotationRenderContext) {}
+
+    /// Draw with this element's rotation applied about its center. Call sites use this, not `draw`.
+    func drawRotated(in cg: CGContext, context rc: AnnotationRenderContext) {
+        guard rotation != 0 else { draw(in: cg, context: rc); return }
+        cg.saveGState()
+        cg.concatenate(rotationTransform)
+        draw(in: cg, context: rc)
+        cg.restoreGState()
+    }
 
     /// Bounding box in image coordinates.
     var boundingBox: CGRect { .zero }
@@ -83,6 +110,7 @@ class TwoPointElement: AnnotationElement {
     override func clone() -> AnnotationElement {
         let copy = Self(start: start, style: style)
         copy.end = end
+        copy.rotation = rotation
         return copy
     }
 
@@ -424,7 +452,9 @@ final class TextElement: AnnotationElement {
     override var isDegenerate: Bool { text.isEmpty }
 
     override func clone() -> AnnotationElement {
-        TextElement(origin: origin, text: text, style: style)
+        let copy = TextElement(origin: origin, text: text, style: style)
+        copy.rotation = rotation
+        return copy
     }
 
     override func transform(_ t: CGAffineTransform) { origin = origin.applying(t) }
@@ -469,7 +499,9 @@ final class StepElement: AnnotationElement {
     }
 
     override func clone() -> AnnotationElement {
-        StepElement(center: center, number: number, style: style, format: format, start: start)
+        let copy = StepElement(center: center, number: number, style: style, format: format, start: start)
+        copy.rotation = rotation
+        return copy
     }
 
     override func transform(_ t: CGAffineTransform) { center = center.applying(t) }
@@ -523,7 +555,8 @@ final class LoupeElement: AnnotationElement {
     override func translate(by delta: CGSize) { center.x += delta.width; center.y += delta.height }
     override func transform(_ t: CGAffineTransform) { center = center.applying(t) }
     override func clone() -> AnnotationElement {
-        let l = LoupeElement(center: center, style: style, zoom: zoom); l.radius = radius; return l
+        let l = LoupeElement(center: center, style: style, zoom: zoom)
+        l.radius = radius; l.rotation = rotation; return l
     }
     override func handlePoints() -> [CGPoint] { [CGPoint(x: center.x + radius, y: center.y)] }
     override func moveHandle(_ index: Int, to p: CGPoint) { radius = max(8, hypot(p.x - center.x, p.y - center.y)) }
@@ -564,7 +597,11 @@ final class ImageElement: AnnotationElement {
     override var boundingBox: CGRect { frame }
     override func translate(by delta: CGSize) { frame.origin.x += delta.width; frame.origin.y += delta.height }
     override var isDegenerate: Bool { frame.width < 8 || frame.height < 8 }
-    override func clone() -> AnnotationElement { ImageElement(image: image, frame: frame, style: style) }
+    override func clone() -> AnnotationElement {
+        let copy = ImageElement(image: image, frame: frame, style: style)
+        copy.rotation = rotation
+        return copy
+    }
     override func transform(_ t: CGAffineTransform) { frame = frame.applying(t) }
 
     override func handlePoints() -> [CGPoint] {
@@ -621,7 +658,9 @@ final class StampElement: AnnotationElement {
     }
 
     override func clone() -> AnnotationElement {
-        StampElement(center: center, emoji: emoji, style: style)
+        let copy = StampElement(center: center, emoji: emoji, style: style)
+        copy.rotation = rotation
+        return copy
     }
 
     override func transform(_ t: CGAffineTransform) { center = center.applying(t) }

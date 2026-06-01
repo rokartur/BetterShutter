@@ -46,6 +46,7 @@ nonisolated struct CodableAnnotation: Codable, Sendable {
     var stepStart: Int?     // step first-label value
     var radius: Double?     // loupe
     var zoom: Double?       // loupe
+    var rotation: Double?   // any element, radians
     var imagePNG: Data?     // composed image (base64 in JSON)
 }
 
@@ -88,6 +89,12 @@ enum AnnotationProjectIO {
     // MARK: Element <-> record
 
     static func encode(_ e: AnnotationElement) -> CodableAnnotation? {
+        guard var record = encodeKind(e) else { return nil }
+        record.rotation = e.rotation == 0 ? nil : Double(e.rotation)
+        return record
+    }
+
+    private static func encodeKind(_ e: AnnotationElement) -> CodableAnnotation? {
         let style = CodableStyle(color: CodableColor(e.style.color),
                                  strokeWidth: Double(e.style.strokeWidth),
                                  fontSize: Double(e.style.fontSize),
@@ -130,6 +137,12 @@ enum AnnotationProjectIO {
     }
 
     static func decode(_ c: CodableAnnotation) -> AnnotationElement? {
+        guard let element = decodeKind(c) else { return nil }
+        element.rotation = CGFloat(c.rotation ?? 0)
+        return element
+    }
+
+    private static func decodeKind(_ c: CodableAnnotation) -> AnnotationElement? {
         var style = AnnotationStyle(color: c.style.color.nsColor,
                                     strokeWidth: CGFloat(c.style.strokeWidth),
                                     fontSize: CGFloat(c.style.fontSize),
