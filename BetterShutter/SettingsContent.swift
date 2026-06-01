@@ -107,6 +107,11 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: section, title: "Capture Full Screen",
                     subtitle: "Capture the display under the cursor.", name: .captureFullScreen,
                     searchItemID: nil)
+
+        let recording = addSection(title: "Recording", anchor: "shortcuts.recording")
+        addRecorder(to: recording, title: "Start / Stop Recording",
+                    subtitle: "Record the display to an MP4.", name: .toggleRecording,
+                    searchItemID: nil)
     }
 
     private func addRecorder(
@@ -145,7 +150,17 @@ final class CaptureSettingsTab: SettingsTabViewController {
         sound.target = self
         sound.action = #selector(toggleSound(_:))
         addRow(to: overlay, title: "Play capture sound", subtitle: "A shutter sound on capture.", accessory: sound)
+
+        let recording = addSection(title: "Recording", anchor: "capture.recording")
+        let audio = NSSwitch()
+        audio.state = Preferences.recordSystemAudio ? .on : .off
+        audio.target = self
+        audio.action = #selector(toggleRecordAudio(_:))
+        addRow(to: recording, title: "Record system audio",
+               subtitle: "Include computer audio in screen recordings.", accessory: audio)
     }
+
+    @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
 
     @objc private func changeAfterAction(_ sender: NSPopUpButton) {
         let index = sender.indexOfSelectedItem

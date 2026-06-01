@@ -41,6 +41,12 @@ nonisolated enum Preferences {
         static let magnifier = "magnifierEnabled"
         static let captureSound = "captureSoundEnabled"
         static let captureCounter = "captureCounter"
+        static let recordSystemAudio = "recordSystemAudio"
+    }
+
+    static var recordSystemAudio: Bool {
+        get { defaults.object(forKey: Key.recordSystemAudio) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.recordSystemAudio) }
     }
 
     /// Directory screenshots are saved to. Defaults to the Desktop.

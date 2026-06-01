@@ -15,12 +15,16 @@ enum HotKeyBridge {
         BetterShortcuts.onKeyDown(for: .captureFullScreen) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.capture(.fullDisplay) }
         }
+        BetterShortcuts.onKeyDown(for: .toggleRecording) {
+            MainActor.assumeIsolated { RecordingController.shared.toggle() }
+        }
 
         // Friendly labels in the recorder's conflict alert.
         BetterShortcuts.displayName = { name in
             if name == .captureRegion { return "Capture Region" }
             if name == .captureWindow { return "Capture Window" }
             if name == .captureFullScreen { return "Capture Full Screen" }
+            if name == .toggleRecording { return "Start / Stop Recording" }
             return name.rawValue
         }
     }

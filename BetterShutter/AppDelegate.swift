@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var settingsController: SettingsWindowController?
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
+    private var recordingItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         bootstrapUpdater()
@@ -89,6 +90,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let record = NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: "")
+        record.target = self
+        record.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Record")
+        menu.addItem(record)
+        recordingItem = record
+
+        menu.addItem(.separator())
+
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(openSettings),
@@ -121,13 +130,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Refresh the capture items' key equivalents from the live shortcuts each time the menu opens.
     func menuNeedsUpdate(_ menu: NSMenu) {
         for (item, name) in captureMenuItems {
-            if let ke = HotKeyBridge.menuKeyEquivalent(for: name) {
-                item.keyEquivalent = ke.key
-                item.keyEquivalentModifierMask = ke.modifiers
-            } else {
-                item.keyEquivalent = ""
-                item.keyEquivalentModifierMask = []
-            }
+            applyShortcut(name, to: item)
+        }
+        if let recordingItem {
+            recordingItem.title = RecordingController.shared.isRecording ? "Stop Recording" : "Start Recording"
+            applyShortcut(.toggleRecording, to: recordingItem)
+        }
+    }
+
+    private func applyShortcut(_ name: BetterShortcuts.Name, to item: NSMenuItem) {
+        if let ke = HotKeyBridge.menuKeyEquivalent(for: name) {
+            item.keyEquivalent = ke.key
+            item.keyEquivalentModifierMask = ke.modifiers
+        } else {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
         }
     }
 
@@ -136,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }
     @objc private func captureWindow() { CaptureCoordinator.shared.capture(.window) }
     @objc private func captureFullScreen() { CaptureCoordinator.shared.capture(.fullDisplay) }
+    @objc private func toggleRecording() { RecordingController.shared.toggle() }
 
     @objc private func openSettings() {
         let controller = settingsController ?? SettingsWindowController(
