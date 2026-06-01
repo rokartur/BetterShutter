@@ -32,6 +32,18 @@ struct BackgroundPreset: Identifiable {
                          fill: .gradient([hex(0x434343), hex(0x000000)], angleDegrees: 90)),
         BackgroundPreset(id: "paper", name: "Paper",
                          fill: .solid(hex(0xF2F2F7))),
+        BackgroundPreset(id: "aurora", name: "Aurora",
+                         fill: .gradient([hex(0x00C9FF), hex(0x92FE9D)], angleDegrees: 60)),
+        BackgroundPreset(id: "candy", name: "Candy",
+                         fill: .gradient([hex(0xFC5C7D), hex(0x6A82FB)], angleDegrees: 45)),
+        BackgroundPreset(id: "ember", name: "Ember",
+                         fill: .gradient([hex(0xF12711), hex(0xF5AF19)], angleDegrees: 45)),
+        BackgroundPreset(id: "twilight", name: "Twilight",
+                         fill: .gradient([hex(0x0F2027), hex(0x2C5364)], angleDegrees: 60)),
+        BackgroundPreset(id: "blossom", name: "Blossom",
+                         fill: .gradient([hex(0xFFDEE9), hex(0xB5FFFC)], angleDegrees: 30)),
+        BackgroundPreset(id: "graphite", name: "Graphite",
+                         fill: .solid(hex(0x1C1C1E))),
     ]
 
     static func hex(_ value: UInt32) -> NSColor {
