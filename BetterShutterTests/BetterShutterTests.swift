@@ -365,6 +365,30 @@ struct AnnotationCloneTests {
     }
 }
 
+struct PinGeometryTests {
+    @Test
+    func retinaHalvedAndFits() {
+        // 2000×1000 px @2x = 1000×500 pt, fits within 2000×2000 → unchanged.
+        let s = PinGeometry.fittedSize(pixelSize: CGSize(width: 2000, height: 1000), scale: 2,
+                                       maxSize: CGSize(width: 2000, height: 2000))
+        #expect(s == CGSize(width: 1000, height: 500))
+    }
+
+    @Test
+    func capsToMaxKeepingAspect() {
+        let s = PinGeometry.fittedSize(pixelSize: CGSize(width: 1000, height: 500), scale: 1,
+                                       maxSize: CGSize(width: 400, height: 400))
+        #expect(s == CGSize(width: 400, height: 200))
+    }
+
+    @Test
+    func opacityClamped() {
+        #expect(PinGeometry.clampOpacity(1.5) == 1.0)
+        #expect(PinGeometry.clampOpacity(0.0) == 0.2)
+        #expect(PinGeometry.clampOpacity(0.7) == 0.7)
+    }
+}
+
 @MainActor
 struct AnnotationProjectTests {
     @Test

@@ -143,6 +143,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let pinLast = NSMenuItem(title: "Pin Last Capture", action: #selector(pinLastCapture), keyEquivalent: "")
+        pinLast.target = self
+        pinLast.image = NSImage(systemSymbolName: "pin", accessibilityDescription: "Pin")
+        menu.addItem(pinLast)
+
+        let closePins = NSMenuItem(title: "Close All Pins", action: #selector(closeAllPins), keyEquivalent: "")
+        closePins.target = self
+        closePins.image = NSImage(systemSymbolName: "pin.slash", accessibilityDescription: "Close Pins")
+        menu.addItem(closePins)
+
+        menu.addItem(.separator())
+
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(openSettings),
@@ -256,6 +268,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let image = NSImage(contentsOf: url), let cg = Self.cgImage(from: image) else { return }
         CaptureCoordinator.shared.edit(CapturedImage(cgImage: cg, scale: 1, displayID: nil), mode: .region)
     }
+
+    @objc private func pinLastCapture() {
+        guard let item = CaptureHistory.shared.items.first else { HUD.show("No recent capture"); return }
+        PinController.shared.pin(item.image)
+    }
+
+    @objc private func closeAllPins() { PinController.shared.closeAll() }
 
     @objc private func openProject() {
         let panel = NSOpenPanel()

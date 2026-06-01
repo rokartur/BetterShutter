@@ -20,6 +20,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     var onClose: (() -> Void)?
     var onAnnotate: (() -> Void)?
     var onBeautify: (() -> Void)?
+    var onPin: (() -> Void)?
     var onHoverChange: ((Bool) -> Void)?
 
     private var dragOrigin: CGPoint?
@@ -89,6 +90,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     @objc private func closeTapped() { onClose?() }
     @objc private func editTapped() { onAnnotate?() }
     @objc private func beautifyTapped() { onBeautify?() }
+    @objc private func pinTapped() { onPin?() }
     @objc private func revealTapped() {
         if let url = savedURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
@@ -97,6 +99,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
         let menu = NSMenu()
         addMenuItem(menu, "Annotate", #selector(editTapped))
         addMenuItem(menu, "Beautify", #selector(beautifyTapped))
+        addMenuItem(menu, "Pin to Screen", #selector(pinTapped))
         menu.addItem(.separator())
         addMenuItem(menu, "Copy", #selector(copyTapped))
         if savedURL != nil {

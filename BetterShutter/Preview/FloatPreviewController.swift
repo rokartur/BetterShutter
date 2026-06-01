@@ -27,6 +27,10 @@ final class FloatPreviewController {
             self?.dismiss()
             self?.onBeautify?(image, mode)
         }
+        view.onPin = { [weak self] in
+            self?.dismiss()
+            PinController.shared.pin(image)
+        }
         view.onHoverChange = { [weak self] hovered in
             if hovered { self?.cancelTimer() } else { self?.startTimer() }
         }
