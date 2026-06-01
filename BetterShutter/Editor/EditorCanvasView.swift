@@ -76,12 +76,24 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
-    init(image: CapturedImage) {
+    init(image: CapturedImage, elements: [AnnotationElement] = []) {
         self.baseImage = image.cgImage
         self.imageSize = image.pixelSize
         self.style = AnnotationStyle.makeDefault(imageWidth: image.pixelSize.width)
         super.init(frame: NSRect(origin: .zero, size: Self.fittedSize(for: image.pixelSize)))
+        self.elements = elements
+        // Resume step numbering past any restored badges so new ones don't collide.
+        self.stepCounter = (elements.compactMap { ($0 as? StepElement)?.number }.max() ?? 0) + 1
         wantsLayer = true
+    }
+
+    /// The unflattened base bitmap, for saving a re-editable project.
+    var baseCGImage: CGImage { baseImage }
+
+    /// Annotation layers for a project save, after committing any in-progress text edit.
+    func projectElements() -> [AnnotationElement] {
+        finishTextEditing()
+        return elements
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

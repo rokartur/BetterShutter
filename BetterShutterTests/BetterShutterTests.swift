@@ -366,6 +366,39 @@ struct AnnotationCloneTests {
 }
 
 @MainActor
+struct AnnotationProjectTests {
+    @Test
+    func roundTripPreservesElementsAndBase() throws {
+        let base = makeSolidTestImage(width: 50, height: 40)
+        let style = AnnotationStyle.makeDefault(imageWidth: 50)
+        let rect = RectangleElement(start: CGPoint(x: 5, y: 6), style: style)
+        rect.updateDrag(to: CGPoint(x: 25, y: 30))
+        let text = TextElement(origin: CGPoint(x: 10, y: 12), text: "hi", style: style)
+        let step = StepElement(center: CGPoint(x: 20, y: 20), number: 3, style: style)
+
+        let project = try #require(AnnotationProjectIO.make(base: base, elements: [rect, text, step]))
+        // Survive a full JSON encode/decode, like writing and reopening a .bsproj.
+        let decoded = try JSONDecoder().decode(AnnotationProject.self, from: JSONEncoder().encode(project))
+        let els = AnnotationProjectIO.elements(decoded)
+
+        #expect(els.count == 3)
+        #expect((els[0] as? RectangleElement)?.boundingBox == CGRect(x: 5, y: 6, width: 20, height: 24))
+        #expect((els[1] as? TextElement)?.text == "hi")
+        #expect((els[2] as? StepElement)?.number == 3)
+        #expect(AnnotationProjectIO.baseImage(decoded)?.width == 50)
+        #expect(AnnotationProjectIO.baseImage(decoded)?.height == 40)
+    }
+
+    @Test
+    func colorSurvivesRoundTrip() {
+        let red = NSColor.systemRed.usingColorSpace(.sRGB)!
+        let back = CodableColor(NSColor.systemRed).nsColor
+        #expect(abs(back.redComponent - red.redComponent) < 0.02)
+        #expect(abs(back.blueComponent - red.blueComponent) < 0.02)
+    }
+}
+
+@MainActor
 struct AnnotationResizeTests {
     private let style = AnnotationStyle.makeDefault(imageWidth: 100)
 

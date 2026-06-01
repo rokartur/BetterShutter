@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Hosts the annotation editor: a tool/style/action bar above the canvas. Copy and Save flatten
 /// the annotations onto the capture at full resolution.
@@ -10,13 +11,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private var toolControl: NSSegmentedControl?
     var onClose: (() -> Void)?
 
-    init(image: CapturedImage, mode: CaptureMode) {
-        self.canvas = EditorCanvasView(image: image)
+    init(image: CapturedImage, mode: CaptureMode, elements: [AnnotationElement] = []) {
+        self.canvas = EditorCanvasView(image: image, elements: elements)
         self.mode = mode
 
         // Floor wide enough for the full tool segmented control (13 tools) + color/stroke + the
-        // Share/Copy/Save/Done action buttons without the left and right stacks overlapping.
-        let minContentWidth: CGFloat = 900
+        // Project/Share/Copy/Save/Done action buttons without the left and right stacks overlapping.
+        let minContentWidth: CGFloat = 940
         let canvasSize = EditorCanvasView.fittedSize(for: image.pixelSize)
         let contentRect = NSRect(x: 0, y: 0,
                                  width: max(canvasSize.width, minContentWidth),
@@ -78,13 +79,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         leftStack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(leftStack)
 
+        let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
+        project.toolTip = "Save Re-editable Project (.bsproj)"
         let share = makeActionButton(title: "", symbol: "square.and.arrow.up", action: #selector(shareTapped(_:)))
         share.toolTip = "Share"
         let copy = makeActionButton(title: "Copy", symbol: "doc.on.doc", action: #selector(copyTapped))
         let save = makeActionButton(title: "Save", symbol: "arrow.down.circle", action: #selector(saveTapped))
         let done = makeActionButton(title: "Done", symbol: nil, action: #selector(doneTapped))
         done.keyEquivalent = "\r"
-        let rightStack = NSStackView(views: [share, copy, save, done])
+        let rightStack = NSStackView(views: [project, share, copy, save, done])
         rightStack.spacing = 8
         rightStack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(rightStack)
@@ -140,6 +143,21 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func colorChanged(_ sender: NSColorWell) { canvas.applyColor(sender.color) }
     @objc private func widthChanged(_ sender: NSSlider) { canvas.applyStrokeWidth(CGFloat(sender.doubleValue)) }
+
+    @objc private func saveProjectTapped() {
+        guard let window,
+              let project = AnnotationProjectIO.make(base: canvas.baseCGImage, elements: canvas.projectElements())
+        else { return }
+        let panel = NSSavePanel()
+        if let type = UTType(filenameExtension: AnnotationProjectIO.fileExtension) {
+            panel.allowedContentTypes = [type]
+        }
+        panel.nameFieldStringValue = "Project.\(AnnotationProjectIO.fileExtension)"
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            try? AnnotationProjectIO.write(project, to: url)
+        }
+    }
 
     @objc private func shareTapped(_ sender: NSButton) {
         guard let cg = canvas.flattened() else { return }

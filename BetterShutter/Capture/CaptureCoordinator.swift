@@ -264,6 +264,14 @@ final class CaptureCoordinator {
         controller.present()
     }
 
+    /// Open the editor on a base image plus restored annotation layers (from a `.bsproj` project).
+    func editProject(_ image: CapturedImage, elements: [AnnotationElement]) {
+        let controller = EditorWindowController(image: image, mode: .region, elements: elements)
+        controller.onClose = { [weak self] in self?.editor = nil }
+        editor = controller
+        controller.present()
+    }
+
     func beautify(_ image: CapturedImage, mode: CaptureMode) {
         let controller = BeautifyWindowController(image: image, mode: mode)
         controller.onClose = { [weak self] in self?.beautifier = nil }

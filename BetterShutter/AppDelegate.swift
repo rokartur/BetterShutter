@@ -136,6 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         editFile.image = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: "Edit Image")
         menu.addItem(editFile)
 
+        let openProj = NSMenuItem(title: "Open Project…", action: #selector(openProject), keyEquivalent: "")
+        openProj.target = self
+        openProj.image = NSImage(systemSymbolName: "doc.badge.gearshape", accessibilityDescription: "Open Project")
+        menu.addItem(openProj)
+
         menu.addItem(.separator())
 
         let settings = NSMenuItem(
@@ -250,6 +255,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard panel.runModal() == .OK, let url = panel.url,
               let image = NSImage(contentsOf: url), let cg = Self.cgImage(from: image) else { return }
         CaptureCoordinator.shared.edit(CapturedImage(cgImage: cg, scale: 1, displayID: nil), mode: .region)
+    }
+
+    @objc private func openProject() {
+        let panel = NSOpenPanel()
+        if let type = UTType(filenameExtension: AnnotationProjectIO.fileExtension) {
+            panel.allowedContentTypes = [type]
+        }
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url,
+              let project = try? AnnotationProjectIO.read(url),
+              let base = AnnotationProjectIO.baseImage(project) else { return }
+        CaptureCoordinator.shared.editProject(
+            CapturedImage(cgImage: base, scale: 1, displayID: nil),
+            elements: AnnotationProjectIO.elements(project)
+        )
     }
 
     private static func cgImage(from image: NSImage) -> CGImage? {
