@@ -260,6 +260,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         reopen.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Reopen")
         menu.addItem(reopen)
 
+        let restoreClosed = NSMenuItem(title: "Restore Closed Quick Access", action: #selector(restoreClosed), keyEquivalent: "")
+        restoreClosed.target = self
+        restoreClosed.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Restore")
+        menu.addItem(restoreClosed)
+
         menu.addItem(.separator())
 
         let settings = NSMenuItem(
@@ -396,6 +401,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let item = CaptureHistory.shared.items.first else { HUD.show("No recent capture"); return }
         CaptureCoordinator.shared.reopenPreview(item)
     }
+
+    @objc private func restoreClosed() { CaptureCoordinator.shared.restoreClosedPreview() }
 
     @objc private func trimVideo() {
         let panel = NSOpenPanel()

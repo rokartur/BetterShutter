@@ -11,12 +11,15 @@ final class FloatPreviewController {
 
     private var panels: [FloatPreviewWindow] = []
     private var cardViews: [ObjectIdentifier: FloatPreviewView] = [:]
+    private var cardInfo: [ObjectIdentifier: (image: CapturedImage, mode: CaptureMode, url: URL?)] = [:]
     private var timers: [ObjectIdentifier: Timer] = [:]
     private var hoveredPanels: Set<ObjectIdentifier> = []
     private var previousApp: NSRunningApplication?
     private var keyMonitor: Any?
     private var anchorScreen: NSScreen?
     private var idleWork: DispatchWorkItem?
+    /// The most recently dismissed capture, for "Restore Closed Quick Access".
+    private var lastClosed: (image: CapturedImage, mode: CaptureMode, url: URL?)?
 
     var onAnnotate: ((CapturedImage, CaptureMode) -> Void)?
     var onBeautify: ((CapturedImage, CaptureMode) -> Void)?
@@ -69,6 +72,7 @@ final class FloatPreviewController {
         installKeyMonitorIfNeeded()
         panels.append(panel)
         cardViews[id] = view
+        cardInfo[id] = (image, mode, savedURL)
 
         // Evict the oldest cards that no longer fit (height-bounded), before positioning the new one.
         let cap = cardCapacity()
@@ -95,6 +99,7 @@ final class FloatPreviewController {
         for panel in panels { cancelTimer(for: panel); panel.orderOut(nil) }
         panels.removeAll()
         cardViews.removeAll()
+        cardInfo.removeAll()
         timers.removeAll()
         hoveredPanels.removeAll()
         removeKeyMonitor()
@@ -139,9 +144,18 @@ final class FloatPreviewController {
         let id = ObjectIdentifier(panel)
         cancelTimer(for: panel)
         hoveredPanels.remove(id)
+        if let info = cardInfo[id] { lastClosed = info }
+        cardInfo[id] = nil
         cardViews[id] = nil
         panels.remove(at: index)
         panel.orderOut(nil)
+    }
+
+    /// Re-show the most recently dismissed capture.
+    func reopenLastClosed() {
+        guard let closed = lastClosed else { HUD.show("No closed capture"); return }
+        lastClosed = nil
+        show(closed.image, mode: closed.mode, savedURL: closed.url)
     }
 
     /// Dismiss a card and reconcile hover/focus against the pointer's real position afterward.
@@ -150,6 +164,8 @@ final class FloatPreviewController {
         let id = ObjectIdentifier(panel)
         cancelTimer(for: panel)
         hoveredPanels.remove(id)
+        if let info = cardInfo[id] { lastClosed = info }
+        cardInfo[id] = nil
         cardViews[id] = nil
         panels.remove(at: index)
 

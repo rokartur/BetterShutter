@@ -312,6 +312,11 @@ final class CaptureCoordinator {
         preview.show(item.image, mode: item.mode, savedURL: nil)
     }
 
+    /// Restore the most recently dismissed quick-access card.
+    func restoreClosedPreview() {
+        preview.reopenLastClosed()
+    }
+
     func edit(_ image: CapturedImage, mode: CaptureMode) {
         let controller = EditorWindowController(image: image, mode: mode)
         controller.onClose = { [weak self] in self?.editor = nil }
