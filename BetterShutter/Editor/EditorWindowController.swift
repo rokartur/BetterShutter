@@ -17,7 +17,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
         // Floor wide enough for the full tool segmented control (13 tools) + color/stroke + the
         // Project/Share/Copy/Save/Done action buttons without the left and right stacks overlapping.
-        let minContentWidth: CGFloat = 940
+        let minContentWidth: CGFloat = 1000
         let canvasSize = EditorCanvasView.fittedSize(for: image.pixelSize)
         let contentRect = NSRect(x: 0, y: 0,
                                  width: max(canvasSize.width, minContentWidth),
@@ -75,7 +75,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         widthSlider.translatesAutoresizingMaskIntoConstraints = false
         widthSlider.widthAnchor.constraint(equalToConstant: 90).isActive = true
 
-        let leftStack = NSStackView(views: [tools, colorWell, widthSlider])
+        let leftStack = NSStackView(views: [tools, colorWell, widthSlider, makeTransformControl()])
         leftStack.spacing = 10
         leftStack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(leftStack)
@@ -128,6 +128,29 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         return seg
     }
 
+    private func makeTransformControl() -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: true)
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popup.bezelStyle = .texturedRounded
+        popup.imagePosition = .imageOnly
+        // First item is the (hidden) pull-down face.
+        let face = NSMenuItem()
+        face.image = NSImage(systemSymbolName: "crop.rotate", accessibilityDescription: "Transform")
+        popup.menu?.addItem(face)
+        for kind in ImageTransform.allCases {
+            let item = NSMenuItem(title: kind.actionName, action: #selector(transformPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = kind
+            popup.menu?.addItem(item)
+        }
+        popup.menu?.addItem(.separator())
+        let invert = NSMenuItem(title: "Invert Colors", action: #selector(invertPicked), keyEquivalent: "")
+        invert.target = self
+        popup.menu?.addItem(invert)
+        popup.toolTip = "Rotate / Flip / Invert"
+        return popup
+    }
+
     private func makeActionButton(title: String, symbol: String?, action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
         button.bezelStyle = .rounded
@@ -141,6 +164,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     @objc private func toolChanged(_ sender: NSSegmentedControl) {
         canvas.tool = ToolKind.allCases[sender.selectedSegment]
     }
+
+    @objc private func transformPicked(_ sender: NSMenuItem) {
+        guard let kind = sender.representedObject as? ImageTransform else { return }
+        canvas.applyImageTransform(kind)
+    }
+
+    @objc private func invertPicked() { canvas.invertColors() }
 
     @objc private func colorChanged(_ sender: NSColorWell) { canvas.applyColor(sender.color) }
     @objc private func widthChanged(_ sender: NSSlider) { canvas.applyStrokeWidth(CGFloat(sender.doubleValue)) }

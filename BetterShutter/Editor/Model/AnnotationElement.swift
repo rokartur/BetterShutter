@@ -48,6 +48,9 @@ class AnnotationElement {
 
     /// Move the handle at `index` (from `handlePoints()`) to `point`, mutating geometry in place.
     func moveHandle(_ index: Int, to point: CGPoint) {}
+
+    /// Remap geometry through a whole-canvas transform (rotate/flip). Subclasses transform points.
+    func transform(_ t: CGAffineTransform) {}
 }
 
 // MARK: - Two-point elements
@@ -99,6 +102,11 @@ class TwoPointElement: AnnotationElement {
             CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.minX, y: r.minY),
             CGPoint(x: r.minX, y: r.midY),
         ]
+    }
+
+    override func transform(_ t: CGAffineTransform) {
+        start = start.applying(t)
+        end = end.applying(t)
     }
 
     override func moveHandle(_ index: Int, to p: CGPoint) {
@@ -309,6 +317,8 @@ final class TextElement: AnnotationElement {
         TextElement(origin: origin, text: text, style: style)
     }
 
+    override func transform(_ t: CGAffineTransform) { origin = origin.applying(t) }
+
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         guard !text.isEmpty else { return }
         cg.textMatrix = .identity
@@ -342,6 +352,8 @@ final class StepElement: AnnotationElement {
     override func clone() -> AnnotationElement {
         StepElement(center: center, number: number, style: style)
     }
+
+    override func transform(_ t: CGAffineTransform) { center = center.applying(t) }
 
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         cg.setFillColor(style.color.cgColor)

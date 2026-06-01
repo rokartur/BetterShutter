@@ -7,8 +7,8 @@ import CoreImage
 @MainActor
 final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
-    private let baseImage: CGImage
-    private let imageSize: CGSize
+    private var baseImage: CGImage
+    private var imageSize: CGSize
     private let ciContext = CIContext()
 
     private(set) var elements: [AnnotationElement] = []
@@ -49,12 +49,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     private struct EditorSnapshot {
         let elements: [AnnotationElement]
         let cropRect: CGRect?
+        let baseImage: CGImage
+        let imageSize: CGSize
     }
 
     override var undoManager: UndoManager? { undoMgr }
 
     private func snapshot() -> EditorSnapshot {
-        EditorSnapshot(elements: elements.map { $0.clone() }, cropRect: cropRect)
+        EditorSnapshot(elements: elements.map { $0.clone() }, cropRect: cropRect,
+                       baseImage: baseImage, imageSize: imageSize)
     }
 
     /// Register `before` as the state to return to, naming the action for the Edit menu.
@@ -72,9 +75,34 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         undoMgr.setActionName(name)
         elements = snap.elements
         cropRect = snap.cropRect
+        baseImage = snap.baseImage
+        imageSize = snap.imageSize
         selected = nil
         creating = nil
         dragMode = .none
+        needsDisplay = true
+    }
+
+    // MARK: Whole-canvas transforms
+
+    func applyImageTransform(_ kind: ImageTransform) {
+        guard let newBase = ImageTransformer.apply(kind, to: baseImage) else { return }
+        let (t, newSize) = ImageTransformer.affine(kind, width: imageSize.width, height: imageSize.height)
+        let before = snapshot()
+        baseImage = newBase
+        imageSize = newSize
+        for element in elements { element.transform(t) }
+        if let crop = cropRect { cropRect = crop.applying(t) }
+        selected = nil
+        commit(before, kind.actionName)
+        needsDisplay = true
+    }
+
+    func invertColors() {
+        guard let inverted = ImageTransformer.inverted(baseImage) else { return }
+        let before = snapshot()
+        baseImage = inverted
+        commit(before, "Invert Colors")
         needsDisplay = true
     }
 

@@ -365,6 +365,34 @@ struct AnnotationCloneTests {
     }
 }
 
+struct ImageTransformerTests {
+    @Test
+    func flipHorizontalMirrorsX() {
+        let (t, size) = ImageTransformer.affine(.flipHorizontal, width: 100, height: 60)
+        #expect(size == CGSize(width: 100, height: 60))
+        #expect(CGPoint(x: 10, y: 20).applying(t) == CGPoint(x: 90, y: 20))
+    }
+
+    @Test
+    func rotateRightSwapsDimsAndMapsCorners() {
+        let (t, size) = ImageTransformer.affine(.rotateRight, width: 100, height: 60)
+        #expect(size == CGSize(width: 60, height: 100))
+        // Bottom-right (100,0) rotates clockwise to bottom-left (0,0).
+        #expect(CGPoint(x: 100, y: 0).applying(t) == CGPoint(x: 0, y: 0))
+        // Top-left (0,60) → top-right (60,100).
+        #expect(CGPoint(x: 0, y: 60).applying(t) == CGPoint(x: 60, y: 100))
+    }
+
+    @Test
+    func rotateLeftIsInverseOfRotateRight() {
+        let (right, _) = ImageTransformer.affine(.rotateRight, width: 100, height: 60)
+        // After rotateRight the image is 60×100; rotateLeft on that should bring a point home.
+        let (left, _) = ImageTransformer.affine(.rotateLeft, width: 60, height: 100)
+        let p = CGPoint(x: 30, y: 40)
+        #expect(p.applying(right).applying(left) == p)
+    }
+}
+
 @MainActor
 struct ImageScalerTests {
     @Test
