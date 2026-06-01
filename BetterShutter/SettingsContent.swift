@@ -98,6 +98,9 @@ final class GeneralSettingsTab: SettingsTabViewController {
 final class ShortcutsSettingsTab: SettingsTabViewController {
     override func setupContent() {
         let section = addSection(title: "Capture", anchor: "shortcuts.capture")
+        addRecorder(to: section, title: "Capture (All-in-One)",
+                    subtitle: "One chooser for area / window / full screen / record / scrolling.", name: .allInOne,
+                    searchItemID: "shortcuts.allinone")
         addRecorder(to: section, title: "Capture Region",
                     subtitle: "Drag out a selection to capture.", name: .captureRegion,
                     searchItemID: "shortcuts.region")

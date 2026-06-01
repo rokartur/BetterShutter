@@ -156,6 +156,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         captureMenuItems.removeAll()
+        addCaptureItem(to: menu, title: "Capture (All-in-One)", symbol: "camera.viewfinder",
+                       action: #selector(allInOne), name: .allInOne)
+        menu.addItem(.separator())
         addCaptureItem(to: menu, title: "Capture Region", symbol: "rectangle.dashed",
                        action: #selector(captureRegion), name: .captureRegion)
         addCaptureItem(to: menu, title: "Capture Window", symbol: "macwindow",
@@ -358,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
 
+    @objc private func allInOne() { CaptureCoordinator.shared.allInOne() }
     @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }
     @objc private func captureWindow() { CaptureCoordinator.shared.capture(.window) }
     @objc private func captureFullScreen() { CaptureCoordinator.shared.capture(.fullDisplay) }

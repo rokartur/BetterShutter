@@ -37,6 +37,21 @@ final class CaptureCoordinator {
         }
     }
 
+    /// Show the all-in-one chooser and run whichever capture mode the user picks.
+    func allInOne() {
+        guard !isCapturing, !overlay.isPresenting else { return }
+        AllInOnePicker.shared.show { [weak self] mode in
+            guard let self else { return }
+            switch mode {
+            case .area: self.capture(.region)
+            case .window: self.capture(.window)
+            case .fullScreen: self.capture(.fullDisplay)
+            case .record: self.recordRegion()
+            case .scrolling: self.captureScrolling()
+            }
+        }
+    }
+
     /// Select a region and run on-device OCR, copying the recognized text to the clipboard.
     func captureText() {
         guard !isCapturing, !overlay.isPresenting else { return }
