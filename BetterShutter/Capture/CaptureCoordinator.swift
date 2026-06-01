@@ -13,8 +13,12 @@ final class CaptureCoordinator {
     private var beautifier: BeautifyWindowController?
     private var isCapturing = false
 
-    /// The last region selection (global rect + display), for "Capture Previous Area".
-    private var lastRegion: (rect: CGRect, displayID: CGDirectDisplayID)?
+    /// The last region selection (global rect + display), for "Capture Previous Area". Persisted to
+    /// `Preferences` so it survives relaunches.
+    private var lastRegion: (rect: CGRect, displayID: CGDirectDisplayID)? {
+        get { Preferences.lastRegion.map { ($0.rect, $0.displayID) } }
+        set { Preferences.lastRegion = newValue.map { StoredRegion(rect: $0.rect, displayID: $0.displayID) } }
+    }
 
     private init() {
         preview.onAnnotate = { [weak self] image, mode in self?.edit(image, mode: mode) }

@@ -1,4 +1,26 @@
+import CoreGraphics
 import Foundation
+
+/// A persisted region selection (global bottom-left rect + the display it was on), for "Capture
+/// Previous Area" across launches.
+nonisolated struct StoredRegion: Codable, Sendable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+    var display: UInt32
+
+    init(rect: CGRect, displayID: CGDirectDisplayID) {
+        x = rect.minX
+        y = rect.minY
+        width = rect.width
+        height = rect.height
+        display = displayID
+    }
+
+    var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+    var displayID: CGDirectDisplayID { display }
+}
 
 /// What happens immediately after a capture succeeds.
 nonisolated enum AfterCaptureAction: String, CaseIterable, Sendable {
@@ -68,6 +90,22 @@ nonisolated enum Preferences {
         static let recordingInProgressPath = "recordingInProgressPath"
         static let editorToolKeys = "editorToolKeys"
         static let beautifyPresets = "beautifyPresets"
+        static let lastRegion = "lastRegion"
+    }
+
+    /// The last region selection (global rect + display), persisted for "Capture Previous Area".
+    static var lastRegion: StoredRegion? {
+        get {
+            guard let data = defaults.data(forKey: Key.lastRegion) else { return nil }
+            return try? JSONDecoder().decode(StoredRegion.self, from: data)
+        }
+        set {
+            guard let newValue, let data = try? JSONEncoder().encode(newValue) else {
+                defaults.removeObject(forKey: Key.lastRegion)
+                return
+            }
+            defaults.set(data, forKey: Key.lastRegion)
+        }
     }
 
     /// User-saved beautify style presets, newest last.

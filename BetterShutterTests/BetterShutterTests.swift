@@ -572,6 +572,17 @@ struct GIFEncoderTests {
     }
 }
 
+struct StoredRegionTests {
+    @Test
+    func roundTripsRectAndDisplay() throws {
+        let rect = CGRect(x: -120.5, y: 40, width: 800, height: 600)
+        let stored = StoredRegion(rect: rect, displayID: 7)
+        let decoded = try JSONDecoder().decode(StoredRegion.self, from: JSONEncoder().encode(stored))
+        #expect(decoded.rect == rect)
+        #expect(decoded.displayID == 7)
+    }
+}
+
 @MainActor
 struct BeautifyPresetTests {
     @Test
