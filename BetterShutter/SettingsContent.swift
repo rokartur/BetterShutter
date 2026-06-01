@@ -110,6 +110,12 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: section, title: "Capture Text (OCR)",
                     subtitle: "Select a region and copy its text.", name: .captureText,
                     searchItemID: nil)
+        addRecorder(to: section, title: "Capture Object (Cutout)",
+                    subtitle: "Lift the subject out as a transparent PNG.", name: .captureCutout,
+                    searchItemID: nil)
+        addRecorder(to: section, title: "Scrolling Capture",
+                    subtitle: "Capture a long, scrolling region.", name: .captureScrolling,
+                    searchItemID: nil)
 
         let recording = addSection(title: "Recording", anchor: "shortcuts.recording")
         addRecorder(to: recording, title: "Start / Stop Recording",
@@ -121,6 +127,25 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: recording, title: "Record GIF",
                     subtitle: "Record the display to an animated GIF.", name: .recordGIF,
                     searchItemID: nil)
+
+        let tools = addSection(title: "Editor Tools", anchor: "shortcuts.tools")
+        for (index, tool) in ToolKind.allCases.enumerated() {
+            let field = NSTextField(string: String(tool.effectiveShortcutKey))
+            field.alignment = .center
+            field.tag = index
+            field.target = self
+            field.action = #selector(toolKeyChanged(_:))
+            field.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            addRow(to: tools, title: tool.label, subtitle: "Single-key shortcut in the editor.", accessory: field)
+        }
+    }
+
+    @objc private func toolKeyChanged(_ sender: NSTextField) {
+        guard ToolKind.allCases.indices.contains(sender.tag) else { return }
+        let tool = ToolKind.allCases[sender.tag]
+        let key = sender.stringValue.lowercased().first
+        Preferences.setEditorToolKey(key, for: tool)
+        sender.stringValue = String(tool.effectiveShortcutKey)
     }
 
     private func addRecorder(

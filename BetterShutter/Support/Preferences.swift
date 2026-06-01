@@ -66,6 +66,20 @@ nonisolated enum Preferences {
         static let hasOnboarded = "hasOnboarded"
         static let recordingFPS = "recordingFPS"
         static let recordingInProgressPath = "recordingInProgressPath"
+        static let editorToolKeys = "editorToolKeys"
+    }
+
+    /// Effective single-key shortcut for an editor tool: the user's override, else the default.
+    static func editorToolKey(for tool: ToolKind) -> Character {
+        let map = defaults.dictionary(forKey: Key.editorToolKeys) as? [String: String] ?? [:]
+        if let override = map[tool.rawValue]?.lowercased().first { return override }
+        return tool.shortcutKey
+    }
+
+    static func setEditorToolKey(_ key: Character?, for tool: ToolKind) {
+        var map = defaults.dictionary(forKey: Key.editorToolKeys) as? [String: String] ?? [:]
+        map[tool.rawValue] = key.map { String($0).lowercased() }
+        defaults.set(map, forKey: Key.editorToolKeys)
     }
 
     /// Path of an MP4 currently being recorded, for crash recovery. Nil when idle.

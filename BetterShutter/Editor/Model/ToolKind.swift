@@ -79,8 +79,11 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         }
     }
 
+    /// The active key for this tool (user override from Preferences, else the default).
+    var effectiveShortcutKey: Character { Preferences.editorToolKey(for: self) }
+
     static func forShortcut(_ character: Character) -> ToolKind? {
-        allCases.first { $0.shortcutKey == character }
+        allCases.first { $0.effectiveShortcutKey == character }
     }
 
     /// Tools that draw by dragging from a start point to an end point.

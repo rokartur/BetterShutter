@@ -121,7 +121,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         seg.trackingMode = .selectOne
         for (index, kind) in ToolKind.allCases.enumerated() {
             seg.setImage(NSImage(systemSymbolName: kind.symbol, accessibilityDescription: kind.label), forSegment: index)
-            seg.setToolTip("\(kind.label) (\(kind.shortcutKey.uppercased()))", forSegment: index)
+            seg.setToolTip("\(kind.label) (\(kind.effectiveShortcutKey.uppercased()))", forSegment: index)
             seg.setWidth(30, forSegment: index)
         }
         seg.selectedSegment = ToolKind.allCases.firstIndex(of: canvas.tool) ?? 1
