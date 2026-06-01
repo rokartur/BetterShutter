@@ -19,6 +19,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     var onSave: (() -> Void)?
     var onClose: (() -> Void)?
     var onAnnotate: (() -> Void)?
+    var onBeautify: (() -> Void)?
     var onHoverChange: ((Bool) -> Void)?
 
     private var dragOrigin: CGPoint?
@@ -84,8 +85,31 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     @objc private func saveTapped() { onSave?() }
     @objc private func closeTapped() { onClose?() }
     @objc private func editTapped() { onAnnotate?() }
+    @objc private func beautifyTapped() { onBeautify?() }
     @objc private func revealTapped() {
         if let url = savedURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+        addMenuItem(menu, "Annotate", #selector(editTapped))
+        addMenuItem(menu, "Beautify", #selector(beautifyTapped))
+        menu.addItem(.separator())
+        addMenuItem(menu, "Copy", #selector(copyTapped))
+        if savedURL != nil {
+            addMenuItem(menu, "Show in Finder", #selector(revealTapped))
+        } else {
+            addMenuItem(menu, "Save", #selector(saveTapped))
+        }
+        menu.addItem(.separator())
+        addMenuItem(menu, "Close", #selector(closeTapped))
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    private func addMenuItem(_ menu: NSMenu, _ title: String, _ action: Selector) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
     }
 
     // MARK: Drawing

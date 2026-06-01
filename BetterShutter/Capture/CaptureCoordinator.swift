@@ -10,10 +10,12 @@ final class CaptureCoordinator {
     private let overlay = OverlayController()
     private let preview = FloatPreviewController()
     private var editor: EditorWindowController?
+    private var beautifier: BeautifyWindowController?
     private var isCapturing = false
 
     private init() {
         preview.onAnnotate = { [weak self] image, mode in self?.edit(image, mode: mode) }
+        preview.onBeautify = { [weak self] image, mode in self?.beautify(image, mode: mode) }
     }
 
     func capture(_ mode: CaptureMode) {
@@ -98,6 +100,13 @@ final class CaptureCoordinator {
         let controller = EditorWindowController(image: image, mode: mode)
         controller.onClose = { [weak self] in self?.editor = nil }
         editor = controller
+        controller.present()
+    }
+
+    func beautify(_ image: CapturedImage, mode: CaptureMode) {
+        let controller = BeautifyWindowController(image: image, mode: mode)
+        controller.onClose = { [weak self] in self?.beautifier = nil }
+        beautifier = controller
         controller.present()
     }
 

@@ -99,14 +99,19 @@ struct FilenameTemplateTests {
 }
 
 @MainActor
+func makeSolidTestImage(width: Int, height: Int) -> CGImage {
+    let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+    let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                        bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.setFillColor(NSColor.blue.cgColor)
+    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    return ctx.makeImage()!
+}
+
+@MainActor
 struct AnnotationRendererTests {
     private func solidImage(width: Int, height: Int) -> CGImage {
-        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
-        let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
-                            bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        ctx.setFillColor(NSColor.blue.cgColor)
-        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        return ctx.makeImage()!
+        makeSolidTestImage(width: width, height: height)
     }
 
     @Test
@@ -128,5 +133,28 @@ struct AnnotationRendererTests {
         let out = AnnotationRenderer.flatten(base: base, elements: [rect, arrow], ciContext: CIContext())
         #expect(out?.width == 40)
         #expect(out?.height == 30)
+    }
+}
+
+@MainActor
+struct BeautifyRendererTests {
+    @Test
+    func renderAddsPaddingAroundImage() {
+        let base = makeSolidTestImage(width: 100, height: 80)
+        let style = BeautifyStyle.makeDefault()
+        let out = BeautifyRenderer.render(base: base, style: style)
+        #expect(out != nil)
+        #expect((out?.width ?? 0) > 100)
+        #expect((out?.height ?? 0) > 80)
+    }
+
+    @Test
+    func zeroPaddingMatchesImageSize() {
+        let base = makeSolidTestImage(width: 64, height: 64)
+        var style = BeautifyStyle.makeDefault()
+        style.paddingFraction = 0
+        let out = BeautifyRenderer.render(base: base, style: style)
+        #expect(out?.width == 64)
+        #expect(out?.height == 64)
     }
 }

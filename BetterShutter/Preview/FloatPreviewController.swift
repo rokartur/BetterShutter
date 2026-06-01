@@ -8,6 +8,7 @@ final class FloatPreviewController {
     private var dismissTimer: Timer?
 
     var onAnnotate: ((CapturedImage, CaptureMode) -> Void)?
+    var onBeautify: ((CapturedImage, CaptureMode) -> Void)?
 
     private let autoDismissDelay: TimeInterval = 6
 
@@ -21,6 +22,10 @@ final class FloatPreviewController {
         view.onAnnotate = { [weak self] in
             self?.dismiss()
             self?.onAnnotate?(image, mode)
+        }
+        view.onBeautify = { [weak self] in
+            self?.dismiss()
+            self?.onBeautify?(image, mode)
         }
         view.onHoverChange = { [weak self] hovered in
             if hovered { self?.cancelTimer() } else { self?.startTimer() }
