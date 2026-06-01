@@ -21,6 +21,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     /// Fired when a single-key shortcut changes the tool, so the toolbar selection can follow.
     var onToolPicked: ((ToolKind) -> Void)?
+    /// Fired when the eyedropper samples a color, so the color well can follow.
+    var onColorPicked: ((NSColor) -> Void)?
 
     private enum DragMode { case none, creating, moving, resizing, cropping }
     private var dragMode: DragMode = .none
@@ -244,6 +246,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             dragMode = .none
             commit(pending, "Add Step")
             pending = nil
+        case .eyedropper:
+            // PixelSampler uses top-left origin; canvas points are bottom-left.
+            if let rgb = PixelSampler.rgb(in: baseImage, x: Int(p.x), y: Int(imageSize.height - p.y)) {
+                let color = NSColor(srgbRed: CGFloat(rgb.r) / 255, green: CGFloat(rgb.g) / 255,
+                                    blue: CGFloat(rgb.b) / 255, alpha: 1)
+                style.color = color
+                onColorPicked?(color)
+            }
+            dragMode = .none
         case .crop:
             cropAnchor = p
             cropRect = nil

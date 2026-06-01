@@ -66,6 +66,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         colorWell.color = canvas.style.color
         colorWell.target = self
         colorWell.action = #selector(colorChanged(_:))
+        canvas.onColorPicked = { [weak colorWell] color in colorWell?.color = color }
         colorWell.translatesAutoresizingMaskIntoConstraints = false
         colorWell.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
