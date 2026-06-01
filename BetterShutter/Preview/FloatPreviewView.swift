@@ -34,6 +34,9 @@ final class FloatPreviewView: NSView, NSDraggingSource {
         self.thumbnail = NSImage(cgImage: image.cgImage, size: image.pixelSize)
         super.init(frame: NSRect(origin: .zero, size: Self.cardSize))
         wantsLayer = true
+        layer?.cornerRadius = corner
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
         setupButtons()
     }
 
@@ -115,18 +118,23 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        let cardPath = NSBezierPath(roundedRect: bounds, xRadius: corner, yRadius: corner)
-        NSColor(calibratedWhite: 0.13, alpha: 1).setFill()
-        cardPath.fill()
-
-        // Thumbnail, aspect-fit within the top region.
+        // No solid card fill: a glass backdrop shows through the bottom bar + letterbox gaps.
+        // Thumbnail, aspect-fit within the top region, on a rounded dark mat so any letterboxing
+        // reads as part of the image well rather than bare glass.
         let inset = thumbRect.insetBy(dx: 6, dy: 6)
         let fit = Self.aspectFit(imageSize: image.pixelSize, in: inset)
+        let mat = NSBezierPath(roundedRect: fit.insetBy(dx: -1, dy: -1), xRadius: 6, yRadius: 6)
+        NSColor.black.withAlphaComponent(0.25).setFill()
+        mat.fill()
         NSGraphicsContext.current?.cgContext.interpolationQuality = .high
+        let clip = NSBezierPath(roundedRect: fit, xRadius: 6, yRadius: 6)
+        NSGraphicsContext.current?.saveGraphicsState()
+        clip.addClip()
         thumbnail.draw(in: fit, from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.current?.restoreGraphicsState()
 
         // Bottom bar separator.
-        NSColor.white.withAlphaComponent(0.08).setStroke()
+        NSColor.white.withAlphaComponent(0.10).setStroke()
         let line = NSBezierPath()
         line.move(to: CGPoint(x: 0, y: barHeight))
         line.line(to: CGPoint(x: bounds.width, y: barHeight))

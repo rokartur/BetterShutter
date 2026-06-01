@@ -12,20 +12,11 @@ final class RecordingControlBar {
 
     func show() {
         let size = NSSize(width: 168, height: 40)
-        let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.level = .statusBar
-        panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        let panel = NSPanel.glassChrome(size: size, level: .statusBar)
 
-        let container = NSView(frame: NSRect(origin: .zero, size: size))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(calibratedWhite: 0.12, alpha: 0.95).cgColor
-        container.layer?.cornerRadius = 12
+        let glass = GlassPanelView(cornerRadius: 14)
+        glass.frame = NSRect(origin: .zero, size: size)
+        let container = glass.contentView
 
         let dot = NSImageView(image: NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")!)
         dot.contentTintColor = .systemRed
@@ -36,7 +27,8 @@ final class RecordingControlBar {
         timeLabel.stringValue = "0:00"
 
         let stop = NSButton(title: "Stop", target: self, action: #selector(stopTapped))
-        stop.bezelStyle = .rounded
+        stop.bezelStyle = .accessoryBarAction
+        stop.controlSize = .small
         stop.keyEquivalent = ""
 
         let stack = NSStackView(views: [dot, timeLabel, stop])
@@ -49,7 +41,7 @@ final class RecordingControlBar {
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
-        panel.contentView = container
+        panel.contentView = glass
 
         if let screen = NSScreen.main {
             let x = screen.frame.midX - size.width / 2

@@ -31,8 +31,14 @@ final class FloatPreviewController {
             if hovered { self?.cancelTimer() } else { self?.startTimer() }
         }
 
+        let glass = GlassPanelView(cornerRadius: 12)
+        glass.frame = NSRect(origin: .zero, size: FloatPreviewView.cardSize)
+        view.frame = glass.bounds
+        view.autoresizingMask = [.width, .height]
+        glass.contentView.addSubview(view)
+
         let panel = FloatPreviewWindow(size: FloatPreviewView.cardSize)
-        panel.contentView = view
+        panel.contentView = glass
         position(panel)
         panel.alphaValue = 0
         panel.orderFront(nil)

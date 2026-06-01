@@ -18,6 +18,12 @@ enum HotKeyBridge {
         BetterShortcuts.onKeyDown(for: .captureText) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.captureText() }
         }
+        BetterShortcuts.onKeyDown(for: .captureCutout) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.captureCutout() }
+        }
+        BetterShortcuts.onKeyDown(for: .captureScrolling) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.captureScrolling() }
+        }
         BetterShortcuts.onKeyDown(for: .toggleRecording) {
             MainActor.assumeIsolated { RecordingController.shared.toggle() }
         }
@@ -34,6 +40,8 @@ enum HotKeyBridge {
             if name == .captureWindow { return "Capture Window" }
             if name == .captureFullScreen { return "Capture Full Screen" }
             if name == .captureText { return "Capture Text (OCR)" }
+            if name == .captureCutout { return "Capture Object (Cutout)" }
+            if name == .captureScrolling { return "Scrolling Capture" }
             if name == .toggleRecording { return "Start / Stop Recording" }
             if name == .recordRegion { return "Record Region" }
             if name == .recordGIF { return "Record GIF" }

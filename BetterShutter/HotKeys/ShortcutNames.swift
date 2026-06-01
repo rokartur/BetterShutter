@@ -7,6 +7,8 @@ extension BetterShortcuts.Name {
     nonisolated static let captureWindow = Self("captureWindow")
     nonisolated static let captureFullScreen = Self("captureFullScreen")
     nonisolated static let captureText = Self("captureText")
+    nonisolated static let captureCutout = Self("captureCutout")
+    nonisolated static let captureScrolling = Self("captureScrolling")
     nonisolated static let toggleRecording = Self("toggleRecording")
     nonisolated static let recordRegion = Self("recordRegion")
     nonisolated static let recordGIF = Self("recordGIF")

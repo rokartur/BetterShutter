@@ -74,6 +74,37 @@ actor CaptureEngine {
         return try await capture(filter: filter, displayID: display.displayID)
     }
 
+    // MARK: Region (sub-rect of a display)
+
+    /// Capture a display-local sub-rectangle (points, top-left origin) at native resolution. Used
+    /// by scrolling capture to grab the same region repeatedly while the user scrolls.
+    func captureRegion(displayID: CGDirectDisplayID, sourceRectPoints: CGRect) async throws -> CapturedImage {
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: true
+        )
+        guard let display = content.displays.first(where: { $0.displayID == displayID })
+            ?? content.displays.first else { throw CaptureError.noDisplays }
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let scale = CGFloat(filter.pointPixelScale)
+        let widthPx = Int((sourceRectPoints.width * scale).rounded())
+        let heightPx = Int((sourceRectPoints.height * scale).rounded())
+        guard widthPx > 0, heightPx > 0 else { throw CaptureError.emptyCapture }
+
+        let config = SCStreamConfiguration()
+        config.sourceRect = sourceRectPoints
+        config.width = widthPx
+        config.height = heightPx
+        config.captureResolution = .best
+        config.scalesToFit = false
+        config.showsCursor = false
+        config.colorSpaceName = CGColorSpace.sRGB
+
+        let cgImage = try await SCScreenshotManager.captureImage(
+            contentFilter: filter, configuration: config
+        )
+        return CapturedImage(cgImage: cgImage, scale: scale, displayID: displayID)
+    }
+
     // MARK: Window
 
     func captureWindow(_ windowID: CGWindowID) async throws -> CapturedImage {

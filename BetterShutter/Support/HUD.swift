@@ -18,23 +18,13 @@ enum HUD {
         let w = textSize.width + pad * 2
         let h = textSize.height + pad
 
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: w, height: h),
-            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.level = .statusBar
-        panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        let panel = NSPanel.glassChrome(size: NSSize(width: w, height: h), level: .statusBar)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor(calibratedWhite: 0.1, alpha: 0.92).cgColor
-        container.layer?.cornerRadius = 10
+        let glass = GlassPanelView(cornerRadius: 12)
+        glass.frame = NSRect(x: 0, y: 0, width: w, height: h)
         label.frame = NSRect(x: pad, y: pad / 2, width: textSize.width, height: textSize.height)
-        container.addSubview(label)
-        panel.contentView = container
+        glass.contentView.addSubview(label)
+        panel.contentView = glass
 
         if let screen = NSScreen.main {
             panel.setFrameOrigin(CGPoint(x: screen.frame.midX - w / 2, y: screen.visibleFrame.midY))

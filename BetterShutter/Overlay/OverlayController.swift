@@ -16,7 +16,7 @@ final class OverlayController {
     private var cursorHidden = false
     private var screenObserver: NSObjectProtocol?
 
-    private var onRegion: ((CapturedImage, CGRect, CGDirectDisplayID) -> Void)?
+    private var onRegion: ((CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void)?
     private var onWindow: ((CGWindowID) -> Void)?
     private var onCancel: (() -> Void)?
 
@@ -28,7 +28,8 @@ final class OverlayController {
         frozen: [CapturedImage],
         windows: [WindowInfo],
         magnifierEnabled: Bool,
-        onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID) -> Void,
+        toolbarActions: [OverlayAction] = [],
+        onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void,
         onWindow: @escaping (CGWindowID) -> Void,
         onCancel: @escaping () -> Void
     ) {
@@ -66,13 +67,15 @@ final class OverlayController {
             )
             view.autoresizingMask = [.width, .height]
             view.magnifierEnabled = magnifierEnabled
+            view.toolbarActions = toolbarActions
+            view.setCursorHidden = { [weak self] hidden in hidden ? self?.hideCursor() : self?.showCursor() }
             view.windowHits = WindowHighlighter.viewRects(
                 windows: windows, primaryHeight: primaryHeight, screenGlobalFrame: frame
             )
             container.addSubview(view)
 
             let pane = Pane(window: window, view: view, screenFrame: frame, image: image)
-            view.onRegionSelected = { [weak self] rect in self?.handleRegion(rect, in: pane) }
+            view.onRegionSelected = { [weak self] rect, action in self?.handleRegion(rect, in: pane, action: action) }
             view.onWindowSelected = { [weak self] id in self?.handleWindow(id) }
             view.onCancel = { [weak self] in self?.handleCancel() }
 
@@ -108,7 +111,7 @@ final class OverlayController {
 
     // MARK: Outcomes
 
-    private func handleRegion(_ viewRect: CGRect, in pane: Pane) {
+    private func handleRegion(_ viewRect: CGRect, in pane: Pane, action: OverlayAction) {
         let globalRect = CGRect(
             x: viewRect.minX + pane.screenFrame.minX,
             y: viewRect.minY + pane.screenFrame.minY,
@@ -131,7 +134,7 @@ final class OverlayController {
             return
         }
         onRegion?(CapturedImage(cgImage: cropped, scale: pane.image.scale, displayID: pane.image.displayID),
-                  globalRect, displayID)
+                  globalRect, displayID, action)
     }
 
     private func handleWindow(_ id: CGWindowID) {

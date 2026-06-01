@@ -253,6 +253,59 @@ struct PixelSamplerTests {
 }
 
 @MainActor
+struct ScrollStitcherTests {
+    /// Build a W×H image whose rows are a deterministic gradient keyed by a vertical offset, so two
+    /// images that differ only by a known scroll have predictable, matchable row signatures.
+    /// High-entropy per-row hash so each visual row has a distinctive, non-periodic color — the way
+    /// real screen content does. This makes the true scroll offset the unique global minimum.
+    private func hashByte(_ n: Int, shift: UInt32) -> CGFloat {
+        let h = UInt32(truncatingIfNeeded: n &* 2654435761)
+        return CGFloat((h >> shift) & 0xFF) / 255
+    }
+
+    private func gradient(width: Int, height: Int, offset: Int) -> CGImage {
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        for y in 0..<height {
+            // Top-left visual row index = (height-1-y) in bottom-left context space. Every channel
+            // is keyed to (visualRow + offset) so frame B is a clean vertical scroll of frame A.
+            let k = (height - 1 - y) + offset
+            ctx.setFillColor(red: hashByte(k, shift: 0), green: hashByte(k, shift: 8),
+                             blue: hashByte(k, shift: 16), alpha: 1)
+            ctx.fill(CGRect(x: 0, y: y, width: width, height: 1))
+        }
+        return ctx.makeImage()!
+    }
+
+    @Test
+    func detectsKnownScroll() {
+        let a = gradient(width: 200, height: 400, offset: 0)
+        let b = gradient(width: 200, height: 400, offset: 30) // scrolled down 30 px
+        let sa = ScrollStitcher.grayRows(a, columns: ScrollStitcher.columns)!
+        let sb = ScrollStitcher.grayRows(b, columns: ScrollStitcher.columns)!
+        let dy = ScrollStitcher.bestShift(prev: sa, next: sb)
+        #expect(abs(dy - 30) <= 2)
+    }
+
+    @Test
+    func identicalFramesReportNoScroll() {
+        let a = gradient(width: 120, height: 300, offset: 0)
+        let sa = ScrollStitcher.grayRows(a, columns: ScrollStitcher.columns)!
+        #expect(ScrollStitcher.bestShift(prev: sa, next: sa) == 0)
+    }
+
+    @Test
+    func appendGrowsCanvasByRowCount() {
+        let a = makeSolidTestImage(width: 100, height: 200)
+        let b = makeSolidTestImage(width: 100, height: 200)
+        let out = ScrollStitcher.append(canvas: a, next: b, rows: 40)
+        #expect(out?.width == 100)
+        #expect(out?.height == 240)
+    }
+}
+
+@MainActor
 struct GIFEncoderTests {
     @Test
     func encodesFramesToGIF() {

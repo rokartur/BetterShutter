@@ -26,7 +26,7 @@ final class CaptureCoordinator {
         case .fullDisplay:
             captureFullDisplay()
         case .region, .window:
-            presentOverlay { [weak self] image, mode in self?.finish(image, mode: mode) }
+            beginRegionCapture()
         }
     }
 
@@ -34,7 +34,66 @@ final class CaptureCoordinator {
     func captureText() {
         guard !isCapturing, !overlay.isPresenting else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
-        presentOverlay { [weak self] image, _ in self?.recognizeText(image) }
+        isCapturing = true
+        Task {
+            do {
+                let frozen = try await engine.freezeAllDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: false,
+                    onRegion: { [weak self] image, _, _, _ in self?.recognizeText(image) },
+                    onWindow: { [weak self] _ in self?.isCapturing = false },
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
+    /// Select a region, lift the foreground subject out of it as a transparent PNG (auto-cropped).
+    func captureCutout() {
+        guard !isCapturing, !overlay.isPresenting else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        isCapturing = true
+        Task {
+            do {
+                let frozen = try await engine.freezeAllDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: false,
+                    onRegion: { [weak self] image, _, _, _ in self?.performCutout(image) },
+                    onWindow: { [weak self] _ in self?.isCapturing = false },
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
+    private func performCutout(_ image: CapturedImage) {
+        isCapturing = false
+        HUD.show("Extracting subject…", duration: 0.8)
+        Task {
+            guard let cut = await ObjectCutout.cutout(image) else {
+                HUD.show("No subject found")
+                return
+            }
+            finish(cut, mode: .region)
+        }
+    }
+
+    /// Scrolling capture: select a window/region, scroll, and stitch the frames into one tall image.
+    /// (Implemented in ScrollingCaptureController; this is the entry point.)
+    func captureScrolling() {
+        ScrollingCaptureController.shared.begin()
     }
 
     /// Select a region, then start recording just that region to an MP4.
@@ -50,7 +109,7 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: false,
-                    onRegion: { [weak self] _, globalRect, displayID in
+                    onRegion: { [weak self] _, globalRect, displayID, _ in
                         self?.startRegionRecording(globalRect: globalRect, displayID: displayID)
                     },
                     onWindow: { [weak self] _ in self?.isCapturing = false },
@@ -79,7 +138,10 @@ final class CaptureCoordinator {
 
     // MARK: Flows
 
-    private func presentOverlay(completion: @escaping (CapturedImage, CaptureMode) -> Void) {
+    /// Region / window capture with the CleanShot-style action bar. The bar lets the user pick the
+    /// outcome (capture / annotate / copy / save / record) per selection instead of always running
+    /// the configured default. A window click has no bar and uses the configured after-action.
+    private func beginRegionCapture() {
         isCapturing = true
         Task {
             do {
@@ -89,8 +151,11 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: Preferences.magnifierEnabled,
-                    onRegion: { image, _, _ in completion(image, .region) },
-                    onWindow: { [weak self] id in self?.captureWindow(id, completion: completion) },
+                    toolbarActions: [.capture, .annotate, .copy, .save, .record],
+                    onRegion: { [weak self] image, globalRect, displayID, action in
+                        self?.handleRegionAction(image, globalRect: globalRect, displayID: displayID, action: action)
+                    },
+                    onWindow: { [weak self] id in self?.captureWindow(id) },
                     onCancel: { [weak self] in self?.isCapturing = false }
                 )
             } catch {
@@ -100,11 +165,35 @@ final class CaptureCoordinator {
         }
     }
 
-    private func captureWindow(_ id: CGWindowID, completion: @escaping (CapturedImage, CaptureMode) -> Void) {
+    private func handleRegionAction(_ image: CapturedImage, globalRect: CGRect, displayID: CGDirectDisplayID, action: OverlayAction) {
+        isCapturing = false
+        switch action {
+        case .capture:
+            finish(image, mode: .region)
+        case .annotate:
+            CaptureHistory.shared.add(image, mode: .region)
+            edit(image, mode: .region)
+        case .copy:
+            CaptureHistory.shared.add(image, mode: .region)
+            PasteboardWriter.copy(image.cgImage)
+            if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+            HUD.show("Copied")
+        case .save:
+            CaptureHistory.shared.add(image, mode: .region)
+            Task {
+                let url = await Task.detached { try? FileSaver.save(image.cgImage, mode: .region) }.value
+                HUD.show(url != nil ? "Saved" : "Save failed")
+            }
+        case .record:
+            startRegionRecording(globalRect: globalRect, displayID: displayID)
+        }
+    }
+
+    private func captureWindow(_ id: CGWindowID) {
         Task {
             do {
                 let image = try await engine.captureWindow(id)
-                completion(image, .window)
+                finish(image, mode: .window)
             } catch {
                 isCapturing = false
                 handleError(error)
@@ -155,6 +244,12 @@ final class CaptureCoordinator {
                 preview.show(image, mode: mode, savedURL: url)
             }
         }
+    }
+
+    /// Deliver an externally-produced capture (scrolling stitch, etc.) through the normal output
+    /// pipeline: history + copy/save/preview per the configured after-capture action.
+    func deliver(_ image: CapturedImage, mode: CaptureMode) {
+        finish(image, mode: mode)
     }
 
     /// Re-show the float preview for a capture from history.

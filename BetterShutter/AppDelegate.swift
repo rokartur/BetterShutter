@@ -91,6 +91,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                        action: #selector(captureFullScreen), name: .captureFullScreen)
         addCaptureItem(to: menu, title: "Capture Text", symbol: "text.viewfinder",
                        action: #selector(captureText), name: .captureText)
+        addCaptureItem(to: menu, title: "Capture Object", symbol: "person.and.background.dotted",
+                       action: #selector(captureCutout), name: .captureCutout)
+        addCaptureItem(to: menu, title: "Scrolling Capture", symbol: "arrow.up.and.down.text.horizontal",
+                       action: #selector(captureScrolling), name: .captureScrolling)
 
         menu.addItem(.separator())
 
@@ -112,6 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         recent.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "Recent")
         menu.addItem(recent)
         recentMenuItem = recent
+
+        let browse = NSMenuItem(title: "Browse Captures…", action: #selector(openBrowser), keyEquivalent: "")
+        browse.target = self
+        browse.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Browse")
+        menu.addItem(browse)
 
         menu.addItem(.separator())
 
@@ -206,6 +215,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureWindow() { CaptureCoordinator.shared.capture(.window) }
     @objc private func captureFullScreen() { CaptureCoordinator.shared.capture(.fullDisplay) }
     @objc private func captureText() { CaptureCoordinator.shared.captureText() }
+    @objc private func captureCutout() { CaptureCoordinator.shared.captureCutout() }
+    @objc private func captureScrolling() { CaptureCoordinator.shared.captureScrolling() }
+    @objc private func openBrowser() { CaptureBrowserWindowController.shared.show() }
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
     @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
     @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
