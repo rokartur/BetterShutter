@@ -7,6 +7,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     private let canvas: EditorCanvasView
     private let mode: CaptureMode
+    private var toolControl: NSSegmentedControl?
     var onClose: (() -> Void)?
 
     init(image: CapturedImage, mode: CaptureMode) {
@@ -56,6 +57,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         content.addSubview(canvas)
 
         let tools = makeToolControl()
+        toolControl = tools
+        canvas.onToolPicked = { [weak self] kind in
+            self?.toolControl?.selectedSegment = ToolKind.allCases.firstIndex(of: kind) ?? 0
+        }
         let colorWell = NSColorWell()
         colorWell.color = canvas.style.color
         colorWell.target = self
@@ -107,7 +112,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         seg.trackingMode = .selectOne
         for (index, kind) in ToolKind.allCases.enumerated() {
             seg.setImage(NSImage(systemSymbolName: kind.symbol, accessibilityDescription: kind.label), forSegment: index)
-            seg.setToolTip(kind.label, forSegment: index)
+            seg.setToolTip("\(kind.label) (\(kind.shortcutKey.uppercased()))", forSegment: index)
             seg.setWidth(30, forSegment: index)
         }
         seg.selectedSegment = ToolKind.allCases.firstIndex(of: canvas.tool) ?? 1

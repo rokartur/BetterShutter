@@ -19,6 +19,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     var tool: ToolKind = .arrow { didSet { if tool != .select { selected = nil; needsDisplay = true } } }
     var style: AnnotationStyle
 
+    /// Fired when a single-key shortcut changes the tool, so the toolbar selection can follow.
+    var onToolPicked: ((ToolKind) -> Void)?
+
     private enum DragMode { case none, creating, moving, resizing, cropping }
     private var dragMode: DragMode = .none
     private var lastImagePoint: CGPoint = .zero
@@ -301,6 +304,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
            event.charactersIgnoringModifiers?.lowercased() == "z" {
             finishTextEditing()
             if event.modifierFlags.contains(.shift) { undoMgr.redo() } else { undoMgr.undo() }
+            return
+        }
+        // Single-key tool shortcuts (no ⌘/⌥/⌃). A text field, when editing, is the first responder
+        // instead of the canvas, so these never fire mid-typing.
+        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           let chars = event.charactersIgnoringModifiers, chars.count == 1,
+           let ch = chars.lowercased().first, let picked = ToolKind.forShortcut(ch) {
+            tool = picked
+            onToolPicked?(picked)
             return
         }
         switch event.keyCode {

@@ -52,6 +52,29 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         }
     }
 
+    /// Single-key editor shortcut (no modifiers). Lowercase; matched against typed characters.
+    var shortcutKey: Character {
+        switch self {
+        case .select: return "v"
+        case .arrow: return "a"
+        case .rectangle: return "r"
+        case .ellipse: return "o"
+        case .line: return "l"
+        case .text: return "t"
+        case .highlighter: return "h"
+        case .pixelate: return "p"
+        case .blur: return "b"
+        case .blackout: return "k"
+        case .spotlight: return "s"
+        case .step: return "n"
+        case .crop: return "c"
+        }
+    }
+
+    static func forShortcut(_ character: Character) -> ToolKind? {
+        allCases.first { $0.shortcutKey == character }
+    }
+
     /// Tools that draw by dragging from a start point to an end point.
     var isDragCreated: Bool {
         switch self {
