@@ -250,6 +250,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case .line: return LineElement(start: p, style: style)
         case .highlighter: return HighlightElement(start: p, style: style)
         case .pixelate: return PixelateElement(start: p, style: style)
+        case .blur: return BlurElement(start: p, style: style)
+        case .blackout: return BlackoutElement(start: p, style: style)
+        case .spotlight: return SpotlightElement(start: p, style: style)
         default: return RectangleElement(start: p, style: style)
         }
     }

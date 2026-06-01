@@ -179,6 +179,53 @@ final class PixelateElement: TwoPointElement {
     }
 }
 
+/// Gaussian-blur redaction over a dragged region. Like `PixelateElement` but a soft blur; clamps
+/// the source edges so the blur doesn't bleed transparency in from outside the crop.
+final class BlurElement: TwoPointElement {
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        let r = rect.integral
+        guard r.width >= 2, r.height >= 2 else { return }
+        // Bottom-left image rect → top-left crop rect for the source bitmap.
+        let cropRect = CGRect(
+            x: r.minX, y: rc.imageSize.height - r.maxY,
+            width: r.width, height: r.height
+        ).integral
+        guard let crop = rc.baseImage.cropping(to: cropRect) else { return }
+
+        let source = CIImage(cgImage: crop)
+        let filter = CIFilter.gaussianBlur()
+        filter.inputImage = source.clampedToExtent()
+        filter.radius = Float(max(8, min(r.width, r.height) / 8))
+        guard let output = filter.outputImage?.cropped(to: source.extent),
+              let outCG = rc.ciContext.createCGImage(output, from: source.extent) else { return }
+        cg.draw(outCG, in: r)
+    }
+}
+
+/// Opaque solid block — hard redaction that cannot be reversed from the exported pixels.
+final class BlackoutElement: TwoPointElement {
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        cg.setFillColor(NSColor.black.cgColor)
+        cg.fill(rect)
+    }
+}
+
+/// Spotlight: dims the whole image except the dragged region, to direct attention without arrows.
+/// The bounding box is the bright (clear) area, so selection/hit-testing targets the focus rect.
+final class SpotlightElement: TwoPointElement {
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        let full = CGRect(origin: .zero, size: rc.imageSize)
+        cg.saveGState()
+        cg.setFillColor(NSColor.black.withAlphaComponent(0.55).cgColor)
+        let path = CGMutablePath()
+        path.addRect(full)
+        path.addRect(rect)
+        cg.addPath(path)
+        cg.fillPath(using: .evenOdd) // outer fill minus the focus-rect hole
+        cg.restoreGState()
+    }
+}
+
 // MARK: - Text
 
 final class TextElement: AnnotationElement {

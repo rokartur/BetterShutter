@@ -137,6 +137,24 @@ struct AnnotationRendererTests {
     }
 
     @Test
+    func redactionAndSpotlightToolsFlattenAtSameSize() {
+        let base = makeSolidTestImage(width: 60, height: 50)
+        let style = AnnotationStyle.makeDefault(imageWidth: 60)
+        let blur = BlurElement(start: CGPoint(x: 5, y: 5), style: style)
+        blur.updateDrag(to: CGPoint(x: 30, y: 30))
+        let black = BlackoutElement(start: CGPoint(x: 10, y: 10), style: style)
+        black.updateDrag(to: CGPoint(x: 40, y: 35))
+        let spot = SpotlightElement(start: CGPoint(x: 15, y: 15), style: style)
+        spot.updateDrag(to: CGPoint(x: 45, y: 40))
+        let out = AnnotationRenderer.flatten(base: base, elements: [blur, black, spot], ciContext: CIContext())
+        #expect(out?.width == 60)
+        #expect(out?.height == 50)
+        // The new tools are drag-created and deep-copy through the shared clone(), like other shapes.
+        #expect(blur.clone() is BlurElement)
+        #expect(spot.clone() is SpotlightElement)
+    }
+
+    @Test
     func cropRectShrinksOutput() {
         let base = makeSolidTestImage(width: 100, height: 80)
         let out = AnnotationRenderer.flatten(

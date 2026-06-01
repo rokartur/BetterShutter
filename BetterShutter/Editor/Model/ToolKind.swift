@@ -10,6 +10,9 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
     case text
     case highlighter
     case pixelate
+    case blur
+    case blackout
+    case spotlight
     case step
     case crop
 
@@ -23,6 +26,9 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .text: return "textformat"
         case .highlighter: return "highlighter"
         case .pixelate: return "mosaic"
+        case .blur: return "drop.fill"
+        case .blackout: return "rectangle.fill"
+        case .spotlight: return "rays"
         case .step: return "1.circle.fill"
         case .crop: return "crop"
         }
@@ -38,6 +44,9 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .text: return "Text"
         case .highlighter: return "Highlight"
         case .pixelate: return "Pixelate"
+        case .blur: return "Blur"
+        case .blackout: return "Black Out"
+        case .spotlight: return "Spotlight"
         case .step: return "Step"
         case .crop: return "Crop"
         }
@@ -46,8 +55,10 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
     /// Tools that draw by dragging from a start point to an end point.
     var isDragCreated: Bool {
         switch self {
-        case .arrow, .rectangle, .ellipse, .line, .highlighter, .pixelate: return true
-        case .select, .text, .step, .crop: return false
+        case .arrow, .rectangle, .ellipse, .line, .highlighter, .pixelate, .blur, .blackout, .spotlight:
+            return true
+        case .select, .text, .step, .crop:
+            return false
         }
     }
 }
