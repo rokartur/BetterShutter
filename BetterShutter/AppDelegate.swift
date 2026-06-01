@@ -1,9 +1,10 @@
 import Cocoa
 import BetterSettings
+import BetterShortcuts
 import BetterUpdater
 
 @main
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Explicit entry point. Wires the delegate ourselves instead of relying on
     /// AppKit's synthesized @main + NSApplicationMain, which does not reliably
     /// install the delegate under the Xcode debug-dylib launcher (so
@@ -21,9 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var settingsController: SettingsWindowController?
+    private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         bootstrapUpdater()
+        HotKeyBridge.install()
         setupStatusItem()
     }
 
@@ -74,6 +77,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
+
+        captureMenuItems.removeAll()
+        addCaptureItem(to: menu, title: "Capture Region", symbol: "rectangle.dashed",
+                       action: #selector(captureRegion), name: .captureRegion)
+        addCaptureItem(to: menu, title: "Capture Window", symbol: "macwindow",
+                       action: #selector(captureWindow), name: .captureWindow)
+        addCaptureItem(to: menu, title: "Capture Full Screen", symbol: "rectangle.inset.filled",
+                       action: #selector(captureFullScreen), name: .captureFullScreen)
+
+        menu.addItem(.separator())
 
         let settings = NSMenuItem(
             title: "Settings…",
@@ -94,7 +108,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    private func addCaptureItem(
+        to menu: NSMenu, title: String, symbol: String, action: Selector, name: BetterShortcuts.Name
+    ) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        menu.addItem(item)
+        captureMenuItems.append((item, name))
+    }
+
+    /// Refresh the capture items' key equivalents from the live shortcuts each time the menu opens.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        for (item, name) in captureMenuItems {
+            if let ke = HotKeyBridge.menuKeyEquivalent(for: name) {
+                item.keyEquivalent = ke.key
+                item.keyEquivalentModifierMask = ke.modifiers
+            } else {
+                item.keyEquivalent = ""
+                item.keyEquivalentModifierMask = []
+            }
+        }
+    }
+
     // MARK: - Actions
+
+    @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }
+    @objc private func captureWindow() { CaptureCoordinator.shared.capture(.window) }
+    @objc private func captureFullScreen() { CaptureCoordinator.shared.capture(.fullDisplay) }
 
     @objc private func openSettings() {
         let controller = settingsController ?? SettingsWindowController(

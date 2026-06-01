@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		BE570000000000000000001E /* BetterSettings in Frameworks */ = {isa = PBXBuildFile; productRef = BE570000000000000000001C /* BetterSettings */; };
 		BE570000000000000000001F /* BetterUpdater in Frameworks */ = {isa = PBXBuildFile; productRef = BE570000000000000000001D /* BetterUpdater */; };
+		BE5700000000000000000032 /* BetterShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = BE5700000000000000000031 /* BetterShortcuts */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +47,7 @@
 			files = (
 				BE570000000000000000001E /* BetterSettings in Frameworks */,
 				BE570000000000000000001F /* BetterUpdater in Frameworks */,
+				BE5700000000000000000032 /* BetterShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -99,6 +101,7 @@
 			packageProductDependencies = (
 				BE570000000000000000001C /* BetterSettings */,
 				BE570000000000000000001D /* BetterUpdater */,
+				BE5700000000000000000031 /* BetterShortcuts */,
 			);
 			productName = BetterShutter;
 			productReference = BE5700000000000000000006 /* BetterShutter Debug.app */;
@@ -158,6 +161,7 @@
 			packageReferences = (
 				BE570000000000000000001A /* XCRemoteSwiftPackageReference "BetterSettings" */,
 				BE570000000000000000001B /* XCRemoteSwiftPackageReference "BetterUpdater" */,
+				BE5700000000000000000030 /* XCRemoteSwiftPackageReference "BetterShortcuts" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BE5700000000000000000003 /* Products */;
@@ -472,6 +476,14 @@
 				minimumVersion = 0.2.1;
 			};
 		};
+		BE5700000000000000000030 /* XCRemoteSwiftPackageReference "BetterShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/rokartur/BetterShortcuts";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.1.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -484,6 +496,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BE570000000000000000001B /* XCRemoteSwiftPackageReference "BetterUpdater" */;
 			productName = BetterUpdater;
+		};
+		BE5700000000000000000031 /* BetterShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BE5700000000000000000030 /* XCRemoteSwiftPackageReference "BetterShortcuts" */;
+			productName = BetterShortcuts;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
