@@ -9,7 +9,6 @@ final class OverlayView: NSView {
 
     // Inputs
     private let frozenImage: CGImage
-    private let bitmapRep: NSBitmapImageRep
     private let pixelSize: CGSize
     var windowHits: [WindowHighlighter.Hit] = []
     var magnifierEnabled = true
@@ -34,7 +33,6 @@ final class OverlayView: NSView {
     init(frozenImage: CGImage, pixelSize: CGSize, frame: NSRect) {
         self.frozenImage = frozenImage
         self.pixelSize = pixelSize
-        self.bitmapRep = NSBitmapImageRep(cgImage: frozenImage)
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = .clear
@@ -195,7 +193,6 @@ final class OverlayView: NSView {
                 MagnifierLoupe.draw(
                     at: mousePoint,
                     image: frozenImage,
-                    bitmap: bitmapRep,
                     pixelPoint: pixelPoint(for: mousePoint),
                     viewBounds: bounds
                 )

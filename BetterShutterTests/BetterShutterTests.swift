@@ -201,6 +201,47 @@ struct CaptureHistoryTests {
 }
 
 @MainActor
+struct PixelSamplerTests {
+    private func context(width: Int, height: Int) -> CGContext {
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        return CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                         bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    }
+
+    @Test
+    func samplesKnownColor() {
+        let ctx = context(width: 4, height: 4)
+        ctx.setFillColor(NSColor(srgbRed: 1, green: 128.0 / 255, blue: 0, alpha: 1).cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        let rgb = PixelSampler.rgb(in: ctx.makeImage()!, x: 1, y: 1)
+        #expect(rgb != nil)
+        #expect(abs((rgb?.r ?? 0) - 255) <= 2)
+        #expect(abs((rgb?.g ?? 0) - 128) <= 2)
+        #expect(abs((rgb?.b ?? 0) - 0) <= 2)
+    }
+
+    @Test
+    func samplesCorrectPixelUsingTopLeftOrigin() {
+        // Paint the TOP-LEFT pixel red (bottom-left context → fill the top row), rest black.
+        let ctx = context(width: 2, height: 2)
+        ctx.setFillColor(NSColor.black.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        ctx.setFillColor(NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1).cgColor)
+        ctx.fill(CGRect(x: 0, y: 1, width: 1, height: 1))
+        let image = ctx.makeImage()!
+        #expect((PixelSampler.rgb(in: image, x: 0, y: 0)?.r ?? 0) > 200) // top-left = red
+        #expect((PixelSampler.rgb(in: image, x: 0, y: 1)?.r ?? 255) < 50) // below = black
+    }
+
+    @Test
+    func outOfBoundsReturnsNil() {
+        let image = makeSolidTestImage(width: 4, height: 4)
+        #expect(PixelSampler.rgb(in: image, x: 10, y: 10) == nil)
+        #expect(PixelSampler.rgb(in: image, x: -1, y: 0) == nil)
+    }
+}
+
+@MainActor
 struct GIFEncoderTests {
     @Test
     func encodesFramesToGIF() {

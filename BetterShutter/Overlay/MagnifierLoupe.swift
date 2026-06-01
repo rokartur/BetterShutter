@@ -20,7 +20,6 @@ enum MagnifierLoupe {
     static func draw(
         at anchor: CGPoint,
         image: CGImage,
-        bitmap: NSBitmapImageRep,
         pixelPoint: CGPoint,
         viewBounds: CGRect
     ) {
@@ -92,17 +91,16 @@ enum MagnifierLoupe {
         border.lineWidth = 1.5
         border.stroke()
 
-        // Color readout below the loupe.
-        if let color = bitmap.colorAt(x: clampInt(px, max: bitmap.pixelsWide), y: clampInt(py, max: bitmap.pixelsHigh)) {
-            drawColorReadout(color, below: frame, viewBounds: viewBounds)
+        // Color readout below the loupe — reliable pixel read, not NSBitmapImageRep.colorAt
+        // (which misreads ScreenCaptureKit's BGRA output and would show black/wrong colors).
+        let sx = clampInt(px, max: image.width)
+        let sy = clampInt(py, max: image.height)
+        if let rgb = PixelSampler.rgb(in: image, x: sx, y: sy) {
+            drawColorReadout(r: rgb.r, g: rgb.g, b: rgb.b, below: frame, viewBounds: viewBounds)
         }
     }
 
-    private static func drawColorReadout(_ color: NSColor, below frame: CGRect, viewBounds: CGRect) {
-        let srgb = color.usingColorSpace(.sRGB) ?? color
-        let r = Int((srgb.redComponent * 255).rounded())
-        let g = Int((srgb.greenComponent * 255).rounded())
-        let b = Int((srgb.blueComponent * 255).rounded())
+    private static func drawColorReadout(r: Int, g: Int, b: Int, below frame: CGRect, viewBounds: CGRect) {
         let hex = String(format: "#%02X%02X%02X", r, g, b)
         let text = "\(hex)   \(r) \(g) \(b)"
 
@@ -124,7 +122,7 @@ enum MagnifierLoupe {
 
         // Color swatch.
         let swatch = CGRect(x: box.minX + padding, y: box.midY - 6, width: 12, height: 12)
-        srgb.setFill()
+        NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1).setFill()
         NSBezierPath(roundedRect: swatch, xRadius: 2, yRadius: 2).fill()
         NSColor.white.withAlphaComponent(0.4).setStroke()
         NSBezierPath(roundedRect: swatch, xRadius: 2, yRadius: 2).stroke()

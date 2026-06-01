@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var recentMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if SelfTest.runIfRequested() { return }
         bootstrapUpdater()
         HotKeyBridge.install()
         setupStatusItem()
