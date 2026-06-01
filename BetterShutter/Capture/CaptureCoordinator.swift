@@ -244,12 +244,15 @@ final class CaptureCoordinator {
         isCapturing = false
         Task {
             let text = await TextRecognizer.recognize(image)
-            guard !text.isEmpty else { HUD.show("No text found"); return }
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
+            let barcodes = await BarcodeDetector.detect(image)
+            guard !text.isEmpty || !barcodes.isEmpty else { HUD.show("No text found"); return }
+            if !text.isEmpty {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+            }
             if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
-            HUD.show("Text copied")
+            OCRResultWindowController.shared.show(text: text, barcodes: barcodes)
         }
     }
 
