@@ -15,8 +15,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         self.mode = mode
 
         // Floor wide enough for the full tool segmented control (13 tools) + color/stroke + the
-        // Copy/Save/Done action buttons without the left and right stacks overlapping.
-        let minContentWidth: CGFloat = 860
+        // Share/Copy/Save/Done action buttons without the left and right stacks overlapping.
+        let minContentWidth: CGFloat = 900
         let canvasSize = EditorCanvasView.fittedSize(for: image.pixelSize)
         let contentRect = NSRect(x: 0, y: 0,
                                  width: max(canvasSize.width, minContentWidth),
@@ -78,11 +78,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         leftStack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(leftStack)
 
+        let share = makeActionButton(title: "", symbol: "square.and.arrow.up", action: #selector(shareTapped(_:)))
+        share.toolTip = "Share"
         let copy = makeActionButton(title: "Copy", symbol: "doc.on.doc", action: #selector(copyTapped))
         let save = makeActionButton(title: "Save", symbol: "arrow.down.circle", action: #selector(saveTapped))
         let done = makeActionButton(title: "Done", symbol: nil, action: #selector(doneTapped))
         done.keyEquivalent = "\r"
-        let rightStack = NSStackView(views: [copy, save, done])
+        let rightStack = NSStackView(views: [share, copy, save, done])
         rightStack.spacing = 8
         rightStack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(rightStack)
@@ -138,6 +140,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func colorChanged(_ sender: NSColorWell) { canvas.applyColor(sender.color) }
     @objc private func widthChanged(_ sender: NSSlider) { canvas.applyStrokeWidth(CGFloat(sender.doubleValue)) }
+
+    @objc private func shareTapped(_ sender: NSButton) {
+        guard let cg = canvas.flattened() else { return }
+        let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        let picker = NSSharingServicePicker(items: [image])
+        picker.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+    }
 
     @objc private func copyTapped() {
         if let cg = canvas.flattened() { PasteboardWriter.copy(cg) }
