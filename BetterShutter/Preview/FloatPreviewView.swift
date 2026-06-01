@@ -1,15 +1,14 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// The post-capture quick-access card: a rounded thumbnail you can drag out as a PNG file, plus
-/// Copy / Save / Close actions. Drawn directly (no NSImageView) so the whole thumbnail is a drag
-/// handle.
+/// One quick-access capture card, CleanShot/Snapzy-style: a rounded thumbnail at rest that reveals a
+/// floating action toolbar and a dismiss button on hover. The whole thumbnail is a drag handle that
+/// drags the capture out as a PNG; double-click opens the editor.
 @MainActor
 final class FloatPreviewView: NSView, NSDraggingSource {
 
-    static let cardSize = NSSize(width: 260, height: 200)
-    private let barHeight: CGFloat = 44
-    private let corner: CGFloat = 12
+    static let cardSize = NSSize(width: 256, height: 196)
+    private let corner: CGFloat = 16
 
     private let image: CapturedImage
     private let mode: CaptureMode
@@ -29,6 +28,11 @@ final class FloatPreviewView: NSView, NSDraggingSource {
     private var trackingArea: NSTrackingArea?
     private let thumbnail: NSImage
 
+    private let toolbar = NSView()
+    private let closeButton = NSButton()
+    private let scrim = CAGradientLayer()
+    private var controlsVisible = false
+
     init(image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
         self.image = image
         self.mode = mode
@@ -39,51 +43,133 @@ final class FloatPreviewView: NSView, NSDraggingSource {
         layer?.cornerRadius = corner
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        setupButtons()
+        setupScrim()
+        setupControls()
+        setControls(visible: false, animated: false)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override var isFlipped: Bool { false }
 
-    private var thumbRect: CGRect {
-        CGRect(x: 0, y: barHeight, width: bounds.width, height: bounds.height - barHeight)
+    // MARK: Controls
+
+    /// A bottom gradient so the toolbar icons stay legible over bright screenshots. Only visible with
+    /// the toolbar.
+    private func setupScrim() {
+        // Dark end at the BOTTOM (under the toolbar). Layer geometry is bottom-up, so start at the
+        // top (clear) and end at the bottom (black).
+        scrim.colors = [
+            NSColor.clear.cgColor,
+            NSColor.black.withAlphaComponent(0.55).cgColor,
+        ]
+        scrim.startPoint = CGPoint(x: 0.5, y: 1)
+        scrim.endPoint = CGPoint(x: 0.5, y: 0)
+        scrim.locations = [0.45, 1.0]
+        scrim.cornerRadius = corner
+        scrim.cornerCurve = .continuous
+        layer?.addSublayer(scrim)
     }
 
-    // MARK: Buttons
-
-    private func setupButtons() {
-        let edit = makeButton(symbol: "pencil.tip.crop.circle", title: "Edit", action: #selector(editTapped))
-        let copy = makeButton(symbol: "doc.on.doc", title: "Copy", action: #selector(copyTapped))
+    private func setupControls() {
+        let edit = makeIconButton("pencil.tip.crop.circle", "Edit", #selector(editTapped))
+        let copy = makeIconButton("doc.on.doc", "Copy", #selector(copyTapped))
         let secondary = (savedURL != nil)
-            ? makeButton(symbol: "folder", title: "Show", action: #selector(revealTapped))
-            : makeButton(symbol: "arrow.down.circle", title: "Save", action: #selector(saveTapped))
-        let stack = NSStackView(views: [edit, copy, secondary])
+            ? makeIconButton("folder", "Show in Finder", #selector(revealTapped))
+            : makeIconButton("arrow.down.circle", "Save", #selector(saveTapped))
+        let share = makeIconButton("square.and.arrow.up", "Share", #selector(shareTapped))
+        let pin = makeIconButton("pin", "Pin to Screen", #selector(pinTapped))
+
+        let stack = NSStackView(views: [edit, copy, secondary, share, pin])
         stack.orientation = .horizontal
-        stack.spacing = 8
+        stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+
+        toolbar.wantsLayer = true
+        toolbar.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.5).cgColor
+        toolbar.layer?.cornerRadius = 13
+        toolbar.layer?.cornerCurve = .continuous
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(stack)
+        addSubview(toolbar)
+
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            stack.centerYAnchor.constraint(equalTo: bottomAnchor, constant: barHeight / 2),
+            stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
+            stack.topAnchor.constraint(equalTo: toolbar.topAnchor, constant: 5),
+            stack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: -5),
+            toolbar.centerXAnchor.constraint(equalTo: centerXAnchor),
+            toolbar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
 
-        let close = makeButton(symbol: "xmark", title: nil, action: #selector(closeTapped))
-        close.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(close)
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Dismiss")?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))
+        closeButton.imagePosition = .imageOnly
+        closeButton.isBordered = false
+        closeButton.contentTintColor = .white
+        closeButton.bezelStyle = .regularSquare
+        closeButton.target = self
+        closeButton.action = #selector(closeTapped)
+        closeButton.toolTip = "Dismiss (⌘W)"
+        closeButton.wantsLayer = true
+        closeButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        closeButton.layer?.cornerRadius = 11
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(closeButton)
         NSLayoutConstraint.activate([
-            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            close.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            closeButton.widthAnchor.constraint(equalToConstant: 22),
+            closeButton.heightAnchor.constraint(equalToConstant: 22),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            closeButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
         ])
     }
 
-    private func makeButton(symbol: String, title: String?, action: Selector) -> NSButton {
-        let button = NSButton(title: title ?? "", target: self, action: action)
-        button.bezelStyle = .rounded
-        button.controlSize = .small
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
-        button.imagePosition = title == nil ? .imageOnly : .imageLeading
+    private func makeIconButton(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
+        let button = NSButton(title: "", target: self, action: action)
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
+        button.imagePosition = .imageOnly
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.contentTintColor = .white
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
         return button
+    }
+
+    private func setControls(visible: Bool, animated: Bool) {
+        guard visible != controlsVisible || !animated else { return }
+        controlsVisible = visible
+        if visible { toolbar.isHidden = false; closeButton.isHidden = false; scrim.isHidden = false }
+        let apply = {
+            self.toolbar.animator().alphaValue = visible ? 1 : 0
+            self.closeButton.animator().alphaValue = visible ? 1 : 0
+            self.scrim.opacity = visible ? 1 : 0
+        }
+        if animated {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.16
+                apply()
+            }, completionHandler: {
+                MainActor.assumeIsolated {
+                    // Re-check: a fresh hover may have re-shown the controls during the fade.
+                    if !visible, !self.controlsVisible {
+                        self.toolbar.isHidden = true
+                        self.closeButton.isHidden = true
+                        self.scrim.isHidden = true
+                    }
+                }
+            })
+        } else {
+            toolbar.alphaValue = visible ? 1 : 0
+            closeButton.alphaValue = visible ? 1 : 0
+            scrim.opacity = visible ? 1 : 0
+            toolbar.isHidden = !visible
+            closeButton.isHidden = !visible
+            scrim.isHidden = !visible
+        }
     }
 
     @objc private func copyTapped() { onCopy?() }
@@ -125,28 +211,25 @@ final class FloatPreviewView: NSView, NSDraggingSource {
 
     // MARK: Drawing
 
+    override func layout() {
+        super.layout()
+        scrim.frame = bounds
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        // No solid card fill: a glass backdrop shows through the bottom bar + letterbox gaps.
-        // Thumbnail, aspect-fit within the top region, on a rounded dark mat so any letterboxing
-        // reads as part of the image well rather than bare glass.
-        let inset = thumbRect.insetBy(dx: 6, dy: 6)
+        // Thumbnail aspect-fit on a dark mat so any letterboxing reads as part of the image well
+        // rather than bare glass. The glass backdrop shows through the mat's translucency.
+        let inset = bounds.insetBy(dx: 6, dy: 6)
         let fit = Self.aspectFit(imageSize: image.pixelSize, in: inset)
-        let mat = NSBezierPath(roundedRect: fit.insetBy(dx: -1, dy: -1), xRadius: 6, yRadius: 6)
+        let mat = NSBezierPath(roundedRect: fit.insetBy(dx: -1, dy: -1), xRadius: 8, yRadius: 8)
         NSColor.black.withAlphaComponent(0.25).setFill()
         mat.fill()
         NSGraphicsContext.current?.cgContext.interpolationQuality = .high
-        let clip = NSBezierPath(roundedRect: fit, xRadius: 6, yRadius: 6)
+        let clip = NSBezierPath(roundedRect: fit, xRadius: 8, yRadius: 8)
         NSGraphicsContext.current?.saveGraphicsState()
         clip.addClip()
         thumbnail.draw(in: fit, from: .zero, operation: .sourceOver, fraction: 1)
         NSGraphicsContext.current?.restoreGraphicsState()
-
-        // Bottom bar separator.
-        NSColor.white.withAlphaComponent(0.10).setStroke()
-        let line = NSBezierPath()
-        line.move(to: CGPoint(x: 0, y: barHeight))
-        line.line(to: CGPoint(x: bounds.width, y: barHeight))
-        line.stroke()
     }
 
     private static func aspectFit(imageSize: CGSize, in rect: CGRect) -> CGRect {
@@ -170,19 +253,36 @@ final class FloatPreviewView: NSView, NSDraggingSource {
         trackingArea = area
     }
 
-    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
-    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
+    override func mouseEntered(with event: NSEvent) {
+        setControls(visible: true, animated: true)
+        onHoverChange?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        setControls(visible: false, animated: true)
+        onHoverChange?(false)
+    }
+
+    /// Force the hover chrome on/off without re-firing `onHoverChange` — used by the controller when a
+    /// card slides under a stationary pointer (which emits no synthetic mouseEntered).
+    func setHoverVisual(_ visible: Bool) {
+        setControls(visible: visible, animated: true)
+    }
+
+    /// Accept the click that also activates the app, so a drag-out / double-click on a fresh card
+    /// from another app isn't swallowed.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     // MARK: Drag-out
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if event.clickCount == 2, thumbRect.contains(p) {
+        if event.clickCount == 2 {
             dragOrigin = nil
             onAnnotate?()
             return
         }
-        dragOrigin = thumbRect.contains(p) ? p : nil
+        dragOrigin = p
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -203,7 +303,7 @@ final class FloatPreviewView: NSView, NSDraggingSource {
 
         let provider = NSFilePromiseProvider(fileType: UTType.png.identifier, delegate: delegate)
         let item = NSDraggingItem(pasteboardWriter: provider)
-        let fit = Self.aspectFit(imageSize: image.pixelSize, in: thumbRect.insetBy(dx: 6, dy: 6))
+        let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds.insetBy(dx: 6, dy: 6))
         item.setDraggingFrame(fit, contents: thumbnail)
         beginDraggingSession(with: [item], event: event, source: self)
     }
