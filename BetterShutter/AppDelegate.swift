@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 import BetterSettings
 import BetterShortcuts
 import BetterUpdater
@@ -124,6 +125,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let editClipboard = NSMenuItem(title: "Edit Image from Clipboard",
+                                       action: #selector(editFromClipboard), keyEquivalent: "")
+        editClipboard.target = self
+        editClipboard.image = NSImage(systemSymbolName: "clipboard", accessibilityDescription: "Clipboard")
+        menu.addItem(editClipboard)
+
+        let editFile = NSMenuItem(title: "Edit Image…", action: #selector(openImageForEditing), keyEquivalent: "")
+        editFile.target = self
+        editFile.image = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: "Edit Image")
+        menu.addItem(editFile)
+
+        menu.addItem(.separator())
+
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(openSettings),
@@ -218,6 +232,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureCutout() { CaptureCoordinator.shared.captureCutout() }
     @objc private func captureScrolling() { CaptureCoordinator.shared.captureScrolling() }
     @objc private func openBrowser() { CaptureBrowserWindowController.shared.show() }
+
+    @objc private func editFromClipboard() {
+        guard let image = NSImage(pasteboard: .general), let cg = Self.cgImage(from: image) else {
+            HUD.show("No image in clipboard")
+            return
+        }
+        CaptureCoordinator.shared.edit(CapturedImage(cgImage: cg, scale: 1, displayID: nil), mode: .region)
+    }
+
+    @objc private func openImageForEditing() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .heic, .gif, .image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url,
+              let image = NSImage(contentsOf: url), let cg = Self.cgImage(from: image) else { return }
+        CaptureCoordinator.shared.edit(CapturedImage(cgImage: cg, scale: 1, displayID: nil), mode: .region)
+    }
+
+    private static func cgImage(from image: NSImage) -> CGImage? {
+        var rect = CGRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+    }
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
     @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
     @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
