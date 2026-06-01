@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             button.image = NSImage(
-                systemSymbolName: "camera",
+                systemSymbolName: "camera.fill",
                 accessibilityDescription: "BetterShutter"
             )
             // Fallback so the item is never a zero-width (invisible) button.
