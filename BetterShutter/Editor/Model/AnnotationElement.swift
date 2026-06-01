@@ -23,8 +23,13 @@ class AnnotationElement {
 
     init(style: AnnotationStyle) { self.style = style }
 
-    /// The rotation pivot (local bounding-box center).
-    var rotationCenter: CGPoint { CGPoint(x: boundingBox.midX, y: boundingBox.midY) }
+    /// Pins the rotation pivot during a resize gesture so the shape rotates about a fixed point
+    /// instead of the live (moving) bbox center — otherwise a rotated resize "swims". Set at the
+    /// start of a rotated resize, cleared at the end.
+    var resizePivot: CGPoint?
+
+    /// The rotation pivot (local bounding-box center, or the pinned pivot mid-resize).
+    var rotationCenter: CGPoint { resizePivot ?? CGPoint(x: boundingBox.midX, y: boundingBox.midY) }
 
     /// Affine transform that rotates local space into displayed (rotated) space about the center.
     var rotationTransform: CGAffineTransform {
@@ -269,9 +274,15 @@ final class ArrowElement: TwoPointElement {
             // Right-angle path: travel along the longer axis first, then turn to the tip.
             let horizontalFirst = abs(end.x - start.x) >= abs(end.y - start.y)
             let corner = horizontalFirst ? CGPoint(x: end.x, y: start.y) : CGPoint(x: start.x, y: end.y)
-            incoming = horizontalFirst
-                ? (end.y >= start.y ? .pi / 2 : -.pi / 2)
-                : (end.x >= start.x ? 0 : .pi)
+            // If the final segment collapses (pure horizontal/vertical drag), the head must follow the
+            // only real segment, not the would-be perpendicular turn.
+            if hypot(end.x - corner.x, end.y - corner.y) < headLength {
+                incoming = atan2(end.y - start.y, end.x - start.x)
+            } else {
+                incoming = horizontalFirst
+                    ? (end.y >= start.y ? .pi / 2 : -.pi / 2)
+                    : (end.x >= start.x ? 0 : .pi)
+            }
             let shaftEnd = CGPoint(x: end.x - cos(incoming) * headLength * 0.6,
                                    y: end.y - sin(incoming) * headLength * 0.6)
             cg.move(to: start); cg.addLine(to: corner); cg.addLine(to: shaftEnd); cg.strokePath()

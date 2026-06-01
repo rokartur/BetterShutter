@@ -348,6 +348,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
                let hi = handleIndex(at: convert(event.locationInWindow, from: nil), of: sel) {
                 resizeHandle = hi
                 dragMode = .resizing
+                if sel.rotation != 0 { sel.resizePivot = sel.rotationCenter }  // pin pivot for the gesture
             } else {
                 selected = elements.last { $0.hitTest($0.localPoint(p)) }
                 dragMode = selected == nil ? .none : .moving
@@ -437,8 +438,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if dragMode == .moving, didMove {
             commit(pending, "Move")
         }
-        if dragMode == .resizing, didMove {
-            commit(pending, "Resize")
+        if dragMode == .resizing {
+            selected?.resizePivot = nil   // unpin the rotation pivot after the gesture
+            if didMove { commit(pending, "Resize") }
         }
         if dragMode == .cropping {
             if let r = cropRect, r.width < 5 || r.height < 5 { cropRect = nil }

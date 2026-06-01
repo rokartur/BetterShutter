@@ -144,7 +144,7 @@ final class FloatPreviewController {
         let id = ObjectIdentifier(panel)
         cancelTimer(for: panel)
         hoveredPanels.remove(id)
-        if let info = cardInfo[id] { lastClosed = info }
+        // Overflow eviction is not a user close — don't overwrite the restore target.
         cardInfo[id] = nil
         cardViews[id] = nil
         panels.remove(at: index)
@@ -155,7 +155,9 @@ final class FloatPreviewController {
     func reopenLastClosed() {
         guard let closed = lastClosed else { HUD.show("No closed capture"); return }
         lastClosed = nil
-        show(closed.image, mode: closed.mode, savedURL: closed.url)
+        // The saved file may have been moved/deleted since; only pass a URL that still exists.
+        let url = closed.url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        show(closed.image, mode: closed.mode, savedURL: url)
     }
 
     /// Dismiss a card and reconcile hover/focus against the pointer's real position afterward.
@@ -245,7 +247,9 @@ final class FloatPreviewController {
     private func restoreFocus() {
         guard let app = previousApp else { return }
         previousApp = nil
-        if app != .current { app.activate() }
+        // Only hand focus back if WE still hold it; if the user already switched elsewhere, leave it.
+        guard NSApp.isActive, app != .current else { return }
+        app.activate()
     }
 
     // MARK: ⌘W via local key monitor

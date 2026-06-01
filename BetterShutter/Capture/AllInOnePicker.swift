@@ -3,7 +3,7 @@ import AppKit
 /// A single glass chooser that offers every capture mode at once (CleanShot's all-in-one entry):
 /// Area, Window, Full Screen, Record, Scrolling. Esc or clicking away dismisses it.
 @MainActor
-final class AllInOnePicker {
+final class AllInOnePicker: NSObject, NSWindowDelegate {
     static let shared = AllInOnePicker()
 
     enum Mode: String, CaseIterable {
@@ -42,6 +42,7 @@ final class AllInOnePicker {
         let size = NSSize(width: width, height: buttonH + pad * 2)
 
         let panel = NSPanel.glassChrome(size: size, level: .statusBar)
+        panel.delegate = self
         let glass = GlassPanelView(cornerRadius: 18)
         glass.frame = NSRect(origin: .zero, size: size)
 
@@ -63,12 +64,14 @@ final class AllInOnePicker {
         panel.makeKeyAndOrderFront(nil)
         window = panel
 
-        // Esc to cancel; click-away handled by resignKey.
+        // Esc to cancel; clicking away resigns key (see windowDidResignKey).
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 { self?.dismiss(); return nil }
             return event
         }
     }
+
+    func windowDidResignKey(_ notification: Notification) { dismiss() }
 
     private func makeButton(_ mode: Mode) -> NSButton {
         let button = NSButton(title: mode.title, target: self, action: #selector(pick(_:)))

@@ -28,6 +28,7 @@ final class CaptureCoordinator {
     func capture(_ mode: CaptureMode) {
         guard !isCapturing, !overlay.isPresenting else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        sampleBypass()
 
         switch mode {
         case .fullDisplay:
@@ -128,6 +129,7 @@ final class CaptureCoordinator {
         guard !isCapturing, !overlay.isPresenting else { return }
         guard let last = lastRegion else { HUD.show("No previous area"); return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        sampleBypass()
         guard let screen = NSScreen.screens.first(where: { $0.displayID == last.displayID }) else { return }
         let frame = screen.frame
         // Global (bottom-left) rect → display-local top-left points for SCStream.
@@ -221,6 +223,7 @@ final class CaptureCoordinator {
 
     private func handleRegionAction(_ rawImage: CapturedImage, globalRect: CGRect, displayID: CGDirectDisplayID, action: OverlayAction) {
         isCapturing = false
+        sampleBypass()   // Shift is still held at overlay confirm
         lastRegion = (globalRect, displayID)
         // Apply the Retina→1× setting once up front so every action-bar path (annotate / copy /
         // save) is consistent with the default capture flow, not just `.capture`.
@@ -299,9 +302,15 @@ final class CaptureCoordinator {
         return CapturedImage(cgImage: scaled, scale: 1, displayID: image.displayID)
     }
 
-    /// Auto-apply the default beautify preset (CleanShot-style), unless Shift is held to bypass it.
+    /// Shift held at the moment of the capture gesture bypasses beautify auto-apply for that shot.
+    /// Sampled synchronously at the trigger because `finish()` runs later (after async capture).
+    private var bypassBeautify = false
+
+    private func sampleBypass() { bypassBeautify = NSEvent.modifierFlags.contains(.shift) }
+
+    /// Auto-apply the default beautify preset (CleanShot-style), unless Shift bypassed it.
     private func autoBeautified(_ image: CapturedImage) -> CapturedImage {
-        guard !NSEvent.modifierFlags.contains(.shift),
+        guard !bypassBeautify,
               let name = Preferences.autoBeautifyPresetName,
               let preset = Preferences.beautifyPresets.first(where: { $0.name == name }) else { return image }
         let style = preset.applied(to: .makeDefault())
@@ -329,6 +338,7 @@ final class CaptureCoordinator {
     /// Deliver an externally-produced capture (scrolling stitch, etc.) through the normal output
     /// pipeline: history + copy/save/preview per the configured after-capture action.
     func deliver(_ image: CapturedImage, mode: CaptureMode) {
+        sampleBypass()
         finish(image, mode: mode)
     }
 
