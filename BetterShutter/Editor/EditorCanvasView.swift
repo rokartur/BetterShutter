@@ -596,6 +596,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case .ellipse: return EllipseElement(start: p, style: style)
         case .line: return LineElement(start: p, style: style)
         case .measure: return MeasureElement(start: p, style: style)
+        case .loupe: return LoupeElement(center: p, style: style)
         case .highlighter: return HighlightElement(start: p, style: style)
         case .pixelate: return PixelateElement(start: p, style: style)
         case .blur: return BlurElement(start: p, style: style)

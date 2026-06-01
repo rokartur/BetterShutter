@@ -40,10 +40,12 @@ nonisolated struct CodableAnnotation: Codable, Sendable {
     var end: CGPoint?
     var origin: CGPoint?    // text
     var text: String?
-    var center: CGPoint?    // step
+    var center: CGPoint?    // step / loupe
     var number: Int?
     var stepFormat: String? // step numbering format
     var stepStart: Int?     // step first-label value
+    var radius: Double?     // loupe
+    var zoom: Double?       // loupe
     var imagePNG: Data?     // composed image (base64 in JSON)
 }
 
@@ -112,6 +114,9 @@ enum AnnotationProjectIO {
         case let x as StepElement:
             return CodableAnnotation(kind: "step", style: style, center: x.center, number: x.number,
                                      stepFormat: x.format.rawValue, stepStart: x.start)
+        case let x as LoupeElement:
+            return CodableAnnotation(kind: "loupe", style: style, center: x.center,
+                                     radius: Double(x.radius), zoom: Double(x.zoom))
         case let x as StampElement:
             return CodableAnnotation(kind: "stamp", style: style, text: x.emoji, center: x.center)
         case let x as ImageElement:
@@ -153,6 +158,10 @@ enum AnnotationProjectIO {
             return StepElement(center: c.center ?? .zero, number: c.number ?? 1, style: style,
                                format: StepFormat(rawValue: c.stepFormat ?? "decimal") ?? .decimal,
                                start: c.stepStart ?? 1)
+        case "loupe":
+            let loupe = LoupeElement(center: c.center ?? .zero, style: style, zoom: CGFloat(c.zoom ?? 2))
+            loupe.radius = CGFloat(c.radius ?? 0)
+            return loupe
         case "stamp":     return StampElement(center: c.center ?? .zero, emoji: c.text ?? "⭐️", style: style)
         case "image":
             guard let data = c.imagePNG, let source = CGImageSourceCreateWithData(data as CFData, nil),

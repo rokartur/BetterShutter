@@ -500,6 +500,53 @@ final class StepElement: AnnotationElement {
     }
 }
 
+// MARK: - Loupe (magnifier bubble)
+
+/// A circular magnifier placed over the capture: shows the base image beneath it enlarged. Drag to
+/// set the radius; one handle resizes; the whole bubble moves.
+final class LoupeElement: AnnotationElement {
+    var center: CGPoint
+    var radius: CGFloat = 0
+    var zoom: CGFloat
+
+    init(center: CGPoint, style: AnnotationStyle, zoom: CGFloat = 2) {
+        self.center = center
+        self.zoom = zoom
+        super.init(style: style)
+    }
+
+    override var boundingBox: CGRect {
+        CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+    }
+    override var isDegenerate: Bool { radius < 8 }
+    override func updateDrag(to p: CGPoint) { radius = hypot(p.x - center.x, p.y - center.y) }
+    override func translate(by delta: CGSize) { center.x += delta.width; center.y += delta.height }
+    override func transform(_ t: CGAffineTransform) { center = center.applying(t) }
+    override func clone() -> AnnotationElement {
+        let l = LoupeElement(center: center, style: style, zoom: zoom); l.radius = radius; return l
+    }
+    override func handlePoints() -> [CGPoint] { [CGPoint(x: center.x + radius, y: center.y)] }
+    override func moveHandle(_ index: Int, to p: CGPoint) { radius = max(8, hypot(p.x - center.x, p.y - center.y)) }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        guard radius >= 1 else { return }
+        let circle = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        cg.saveGState()
+        cg.addEllipse(in: circle)
+        cg.clip()
+        // Enlarge the base image about the bubble center so the area beneath reads magnified.
+        cg.translateBy(x: center.x, y: center.y)
+        cg.scaleBy(x: zoom, y: zoom)
+        cg.translateBy(x: -center.x, y: -center.y)
+        cg.draw(rc.baseImage, in: CGRect(origin: .zero, size: rc.imageSize))
+        cg.restoreGState()
+
+        cg.setStrokeColor(style.color.cgColor)
+        cg.setLineWidth(max(2, style.strokeWidth))
+        cg.strokeEllipse(in: circle)
+    }
+}
+
 // MARK: - Composed image
 
 /// An additional image dropped onto the canvas (compose multiple captures into one). Movable and
