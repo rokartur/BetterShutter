@@ -9,7 +9,8 @@ enum AnnotationRenderer {
     static func flatten(
         base: CGImage,
         elements: [AnnotationElement],
-        ciContext: CIContext
+        ciContext: CIContext,
+        cropRect: CGRect? = nil
     ) -> CGImage? {
         let width = base.width
         let height = base.height
@@ -27,6 +28,16 @@ enum AnnotationRenderer {
         )
         ctx.draw(base, in: CGRect(x: 0, y: 0, width: width, height: height))
         for element in elements { element.draw(in: ctx, context: rc) }
-        return ctx.makeImage()
+        guard let rendered = ctx.makeImage() else { return nil }
+
+        guard let cropRect else { return rendered }
+        // cropRect is in bottom-left image coords; CGImage.cropping is top-left.
+        let topLeft = CGRect(
+            x: cropRect.minX, y: CGFloat(height) - cropRect.maxY,
+            width: cropRect.width, height: cropRect.height
+        ).integral
+        let clamped = CoordinateConverter.clamp(topLeft, to: CGSize(width: width, height: height))
+        guard clamped.width >= 1, clamped.height >= 1 else { return rendered }
+        return rendered.cropping(to: clamped) ?? rendered
     }
 }

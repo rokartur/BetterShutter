@@ -134,6 +134,17 @@ struct AnnotationRendererTests {
         #expect(out?.width == 40)
         #expect(out?.height == 30)
     }
+
+    @Test
+    func cropRectShrinksOutput() {
+        let base = makeSolidTestImage(width: 100, height: 80)
+        let out = AnnotationRenderer.flatten(
+            base: base, elements: [], ciContext: CIContext(),
+            cropRect: CGRect(x: 10, y: 10, width: 40, height: 30)
+        )
+        #expect(out?.width == 40)
+        #expect(out?.height == 30)
+    }
 }
 
 @MainActor

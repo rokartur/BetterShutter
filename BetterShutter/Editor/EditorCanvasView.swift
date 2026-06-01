@@ -19,9 +19,12 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     var tool: ToolKind = .arrow { didSet { if tool != .select { selected = nil; needsDisplay = true } } }
     var style: AnnotationStyle
 
-    private enum DragMode { case none, creating, moving }
+    private enum DragMode { case none, creating, moving, cropping }
     private var dragMode: DragMode = .none
     private var lastImagePoint: CGPoint = .zero
+
+    private var cropRect: CGRect?
+    private var cropAnchor: CGPoint?
 
     private var editingField: NSTextField?
     private var editingElement: TextElement?
@@ -88,6 +91,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if let selected, selected !== editingElement {
             drawSelectionHandles(for: selected)
         }
+        if let cropRect { drawCropOverlay(cropRect) }
+    }
+
+    private func drawCropOverlay(_ imageRect: CGRect) {
+        let r = CGRect(origin: viewPoint(imageRect.origin),
+                       size: CGSize(width: imageRect.width * scale, height: imageRect.height * scale))
+        let area = displayRect
+        NSColor.black.withAlphaComponent(0.45).setFill()
+        NSBezierPath(rect: NSRect(x: area.minX, y: r.maxY, width: area.width, height: area.maxY - r.maxY)).fill()
+        NSBezierPath(rect: NSRect(x: area.minX, y: area.minY, width: area.width, height: r.minY - area.minY)).fill()
+        NSBezierPath(rect: NSRect(x: area.minX, y: r.minY, width: r.minX - area.minX, height: r.height)).fill()
+        NSBezierPath(rect: NSRect(x: r.maxX, y: r.minY, width: area.maxX - r.maxX, height: r.height)).fill()
+        NSColor.controlAccentColor.setStroke()
+        let border = NSBezierPath(rect: r)
+        border.lineWidth = 1.5
+        border.stroke()
     }
 
     private func drawSelectionHandles(for element: AnnotationElement) {
@@ -121,6 +140,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             elements.append(element)
             selected = element
             dragMode = .none
+        case .crop:
+            cropAnchor = p
+            cropRect = nil
+            dragMode = .cropping
         default:
             let element = makeDragElement(at: p)
             elements.append(element)
@@ -139,6 +162,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             let delta = CGSize(width: p.x - lastImagePoint.x, height: p.y - lastImagePoint.y)
             selected?.translate(by: delta)
             lastImagePoint = p
+        case .cropping:
+            if let anchor = cropAnchor { cropRect = SelectionModel.rect(from: anchor, to: p) }
         case .none:
             break
         }
@@ -153,6 +178,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             } else {
                 selected = creating
             }
+        }
+        if dragMode == .cropping {
+            if let r = cropRect, r.width < 5 || r.height < 5 { cropRect = nil }
+            cropAnchor = nil
         }
         creating = nil
         dragMode = .none
@@ -250,6 +279,6 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     func flattened() -> CGImage? {
         finishTextEditing()
-        return AnnotationRenderer.flatten(base: baseImage, elements: elements, ciContext: ciContext)
+        return AnnotationRenderer.flatten(base: baseImage, elements: elements, ciContext: ciContext, cropRect: cropRect)
     }
 }

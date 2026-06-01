@@ -11,6 +11,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
     case highlighter
     case pixelate
     case step
+    case crop
 
     var symbol: String {
         switch self {
@@ -23,6 +24,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .highlighter: return "highlighter"
         case .pixelate: return "mosaic"
         case .step: return "1.circle.fill"
+        case .crop: return "crop"
         }
     }
 
@@ -37,6 +39,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .highlighter: return "Highlight"
         case .pixelate: return "Pixelate"
         case .step: return "Step"
+        case .crop: return "Crop"
         }
     }
 
@@ -44,7 +47,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
     var isDragCreated: Bool {
         switch self {
         case .arrow, .rectangle, .ellipse, .line, .highlighter, .pixelate: return true
-        case .select, .text, .step: return false
+        case .select, .text, .step, .crop: return false
         }
     }
 }
