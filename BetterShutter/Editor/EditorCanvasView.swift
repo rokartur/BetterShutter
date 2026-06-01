@@ -22,12 +22,55 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     private enum DragMode { case none, creating, moving, cropping }
     private var dragMode: DragMode = .none
     private var lastImagePoint: CGPoint = .zero
+    private var didMove = false
 
     private var cropRect: CGRect?
     private var cropAnchor: CGPoint?
 
     private var editingField: NSTextField?
     private var editingElement: TextElement?
+
+    // MARK: Undo
+    //
+    // Undo works on whole-document snapshots: a snapshot deep-copies every element (via `clone()`)
+    // plus the crop rect, so a single uniform mechanism covers create / delete / move / restyle /
+    // text / step / crop without per-operation bookkeeping. `pending` is captured at the start of a
+    // gesture (before any mutation) and registered only if the gesture actually changed something.
+    private let undoMgr = UndoManager()
+    private var pending: EditorSnapshot?
+    private var textPending: EditorSnapshot?
+
+    private struct EditorSnapshot {
+        let elements: [AnnotationElement]
+        let cropRect: CGRect?
+    }
+
+    override var undoManager: UndoManager? { undoMgr }
+
+    private func snapshot() -> EditorSnapshot {
+        EditorSnapshot(elements: elements.map { $0.clone() }, cropRect: cropRect)
+    }
+
+    /// Register `before` as the state to return to, naming the action for the Edit menu.
+    private func commit(_ before: EditorSnapshot?, _ name: String) {
+        guard let before else { return }
+        undoMgr.registerUndo(withTarget: self) { $0.restore(before, name) }
+        undoMgr.setActionName(name)
+    }
+
+    /// Swap the document to `snap`, registering the inverse so redo (and further undo) works.
+    private func restore(_ snap: EditorSnapshot, _ name: String) {
+        finishTextEditing()
+        let inverse = snapshot()
+        undoMgr.registerUndo(withTarget: self) { $0.restore(inverse, name) }
+        undoMgr.setActionName(name)
+        elements = snap.elements
+        cropRect = snap.cropRect
+        selected = nil
+        creating = nil
+        dragMode = .none
+        needsDisplay = true
+    }
 
     init(image: CapturedImage) {
         self.baseImage = image.cgImage
@@ -127,6 +170,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         finishTextEditing()
         let p = imagePoint(convert(event.locationInWindow, from: nil))
         lastImagePoint = p
+        didMove = false
+        pending = snapshot()   // captured before any mutation; committed only if something changes
 
         switch tool {
         case .select:
@@ -140,6 +185,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             elements.append(element)
             selected = element
             dragMode = .none
+            commit(pending, "Add Step")
+            pending = nil
         case .crop:
             cropAnchor = p
             cropRect = nil
@@ -162,6 +209,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             let delta = CGSize(width: p.x - lastImagePoint.x, height: p.y - lastImagePoint.y)
             selected?.translate(by: delta)
             lastImagePoint = p
+            if delta.width != 0 || delta.height != 0 { didMove = true }
         case .cropping:
             if let anchor = cropAnchor { cropRect = SelectionModel.rect(from: anchor, to: p) }
         case .none:
@@ -177,12 +225,18 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
                 selected = nil
             } else {
                 selected = creating
+                commit(pending, "Add \(tool.label)")
             }
+        }
+        if dragMode == .moving, didMove {
+            commit(pending, "Move")
         }
         if dragMode == .cropping {
             if let r = cropRect, r.width < 5 || r.height < 5 { cropRect = nil }
             cropAnchor = nil
+            if cropRect != pending?.cropRect { commit(pending, "Crop") }
         }
+        pending = nil
         creating = nil
         dragMode = .none
         needsDisplay = true
@@ -203,6 +257,13 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
+        // ⌘Z / ⌘⇧Z — layout-aware via charactersIgnoringModifiers (not a fixed keyCode).
+        if event.modifierFlags.contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "z" {
+            finishTextEditing()
+            if event.modifierFlags.contains(.shift) { undoMgr.redo() } else { undoMgr.undo() }
+            return
+        }
         switch event.keyCode {
         case 51, 117: // delete / forward-delete
             deleteSelected()
@@ -215,14 +276,17 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     func deleteSelected() {
         guard let selected, let index = elements.firstIndex(where: { $0 === selected }) else { return }
+        let before = snapshot()
         elements.remove(at: index)
         self.selected = nil
+        commit(before, "Delete")
         needsDisplay = true
     }
 
     // MARK: Text editing
 
     private func beginText(at p: CGPoint) {
+        textPending = snapshot()   // before the empty TextElement is appended
         let element = TextElement(origin: p, text: "", style: style)
         elements.append(element)
         editingElement = element
@@ -258,7 +322,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if element.isDegenerate, let index = elements.firstIndex(where: { $0 === element }) {
             elements.remove(at: index)
             selected = nil
+        } else {
+            commit(textPending, "Add Text")
         }
+        textPending = nil
         needsDisplay = true
     }
 
@@ -266,14 +333,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     func applyColor(_ color: NSColor) {
         style.color = color
-        if let selected { selected.style.color = color }
+        if let selected {
+            let before = snapshot()
+            selected.style.color = color
+            commit(before, "Color")
+        }
         editingField?.textColor = color
         needsDisplay = true
     }
 
     func applyStrokeWidth(_ width: CGFloat) {
         style.strokeWidth = width
-        if let selected { selected.style.strokeWidth = width }
+        if let selected {
+            let before = snapshot()
+            selected.style.strokeWidth = width
+            commit(before, "Stroke Width")
+        }
         needsDisplay = true
     }
 

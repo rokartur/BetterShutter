@@ -37,6 +37,10 @@ class AnnotationElement {
 
     /// True when the element is too small to be worth keeping after creation.
     var isDegenerate: Bool { false }
+
+    /// Deep copy used by the editor's undo/redo to snapshot the document. Subclasses must override
+    /// to copy their own geometry; the base value is only a placeholder for the abstract root.
+    func clone() -> AnnotationElement { AnnotationElement(style: style) }
 }
 
 // MARK: - Two-point elements
@@ -46,7 +50,7 @@ class TwoPointElement: AnnotationElement {
     var start: CGPoint
     var end: CGPoint
 
-    init(start: CGPoint, style: AnnotationStyle) {
+    required init(start: CGPoint, style: AnnotationStyle) {
         self.start = start
         self.end = start
         super.init(style: style)
@@ -64,6 +68,13 @@ class TwoPointElement: AnnotationElement {
         end.x += delta.width; end.y += delta.height
     }
     override var isDegenerate: Bool { rect.width < 3 && rect.height < 3 }
+
+    /// `Self` resolves to the dynamic subclass, so this single override clones every two-point shape.
+    override func clone() -> AnnotationElement {
+        let copy = Self(start: start, style: style)
+        copy.end = end
+        return copy
+    }
 }
 
 final class RectangleElement: TwoPointElement {
@@ -199,6 +210,10 @@ final class TextElement: AnnotationElement {
 
     override var isDegenerate: Bool { text.isEmpty }
 
+    override func clone() -> AnnotationElement {
+        TextElement(origin: origin, text: text, style: style)
+    }
+
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         guard !text.isEmpty else { return }
         cg.textMatrix = .identity
@@ -227,6 +242,10 @@ final class StepElement: AnnotationElement {
 
     override func translate(by delta: CGSize) {
         center.x += delta.width; center.y += delta.height
+    }
+
+    override func clone() -> AnnotationElement {
+        StepElement(center: center, number: number, style: style)
     }
 
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {

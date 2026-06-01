@@ -306,6 +306,48 @@ struct ScrollStitcherTests {
 }
 
 @MainActor
+struct AnnotationCloneTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func twoPointCloneIsIndependentAndKeepsType() {
+        let rect = RectangleElement(start: CGPoint(x: 1, y: 2), style: style)
+        rect.updateDrag(to: CGPoint(x: 10, y: 20))
+        let copy = rect.clone()
+        // Dynamic type is preserved through the single TwoPointElement.clone() override.
+        #expect(copy is RectangleElement)
+        // Mutating the original must not affect the clone (deep copy).
+        rect.translate(by: CGSize(width: 100, height: 100))
+        let copyBox = copy.boundingBox
+        #expect(copyBox.origin.x == 1)
+        #expect(copyBox.origin.y == 2)
+        #expect(copyBox.width == 9)
+        #expect(copyBox.height == 18)
+    }
+
+    @Test
+    func textCloneCopiesContentAndIsIndependent() {
+        let text = TextElement(origin: CGPoint(x: 5, y: 5), text: "hello", style: style)
+        let copy = text.clone() as? TextElement
+        #expect(copy?.text == "hello")
+        text.text = "changed"
+        text.translate(by: CGSize(width: 50, height: 0))
+        #expect(copy?.text == "hello")
+        #expect(copy?.origin.x == 5)
+    }
+
+    @Test
+    func stepCloneKeepsNumberAndPosition() {
+        let step = StepElement(center: CGPoint(x: 7, y: 8), number: 3, style: style)
+        let copy = step.clone() as? StepElement
+        #expect(copy?.number == 3)
+        step.translate(by: CGSize(width: 10, height: 10))
+        #expect(copy?.center.x == 7)
+        #expect(copy?.center.y == 8)
+    }
+}
+
+@MainActor
 struct GIFEncoderTests {
     @Test
     func encodesFramesToGIF() {
