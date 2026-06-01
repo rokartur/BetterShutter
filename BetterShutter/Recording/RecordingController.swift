@@ -61,14 +61,19 @@ final class RecordingController {
         isPaused = false
         startDate = Date()
         controlBar.show(canPause: !gif)
-        // Trigger the mic permission prompt up front so the next recording captures audio.
-        if engine.captureMicrophone { AVCaptureDevice.requestAccess(for: .audio) { _ in } }
+        // Keep our own control bar out of the recording (overlays stay in deliberately).
+        engine.excludedWindowIDs = [controlBar.windowID].compactMap { $0 }
         if Preferences.highlightClicks { ClickHighlighter.shared.start(displayID: displayID) }
         if !gif, Preferences.showWebcam { WebcamOverlay.shared.start(displayID: displayID) }
         if !gif, Preferences.showKeystrokes { KeystrokeOverlay.shared.start(displayID: displayID) }
         onStateChange?()
 
         startTask = Task {
+            // Await mic authorization before capture so the first recording actually gets mic audio.
+            if engine.captureMicrophone {
+                let granted = await AVCaptureDevice.requestAccess(for: .audio)
+                if !granted { engine.captureMicrophone = false }
+            }
             do {
                 try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
             } catch {

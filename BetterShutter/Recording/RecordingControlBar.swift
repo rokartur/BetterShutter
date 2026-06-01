@@ -6,7 +6,9 @@ import AppKit
 final class RecordingControlBar {
     private var window: NSPanel?
     private var timer: Timer?
-    private var seconds = 0
+    private var startDate = Date()
+    private var pausedAccum: TimeInterval = 0
+    private var pauseStart: Date?
     private var paused = false
     private let timeLabel = NSTextField(labelWithString: "0:00")
     private let dot = NSImageView()
@@ -14,6 +16,9 @@ final class RecordingControlBar {
 
     var onStop: (() -> Void)?
     var onTogglePause: (() -> Void)?
+
+    /// The control bar's window id, so the recorder can exclude it from the captured video.
+    var windowID: CGWindowID? { window.map { CGWindowID($0.windowNumber) } }
 
     func show(canPause: Bool) {
         let size = NSSize(width: canPause ? 220 : 168, height: 40)
@@ -70,9 +75,11 @@ final class RecordingControlBar {
         panel.orderFront(nil)
         window = panel
 
-        seconds = 0
+        startDate = Date()
+        pausedAccum = 0
+        pauseStart = nil
         updateLabel()
-        timer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
+        timer = Timer.scheduledTimer(timeInterval: 0.5, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
     }
 
     func hide() {
@@ -84,7 +91,14 @@ final class RecordingControlBar {
 
     /// Reflect paused state: stop counting elapsed time and swap the button glyph / dot tint.
     func setPaused(_ value: Bool) {
+        guard value != paused else { return }
         paused = value
+        if value {
+            pauseStart = Date()
+        } else if let start = pauseStart {
+            pausedAccum += Date().timeIntervalSince(start)
+            pauseStart = nil
+        }
         pauseButton.image = NSImage(systemSymbolName: value ? "play.fill" : "pause.fill",
                                     accessibilityDescription: value ? "Resume" : "Pause")
         pauseButton.toolTip = value ? "Resume" : "Pause"
@@ -94,13 +108,13 @@ final class RecordingControlBar {
     @objc private func stopTapped() { onStop?() }
     @objc private func pauseTapped() { onTogglePause?() }
 
-    @objc private func tick() {
-        guard !paused else { return }
-        seconds += 1
-        updateLabel()
-    }
+    @objc private func tick() { updateLabel() }
 
     private func updateLabel() {
-        timeLabel.stringValue = String(format: "%d:%02d", seconds / 60, seconds % 60)
+        // Elapsed = wall-clock since start, minus time spent paused (avoids whole-second drift).
+        var elapsed = Date().timeIntervalSince(startDate) - pausedAccum
+        if let pauseStart { elapsed -= Date().timeIntervalSince(pauseStart) }
+        let total = Int(max(0, elapsed))
+        timeLabel.stringValue = String(format: "%d:%02d", total / 60, total % 60)
     }
 }

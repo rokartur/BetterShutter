@@ -13,8 +13,9 @@ nonisolated enum ImageEncoder {
         case .webp: type = .webP
         }
         let data = NSMutableData()
-        // WebP encoding requires ImageIO to advertise the writer; if the OS can't encode it,
-        // destination creation fails and we return nil (callers fall back).
+        // WebP encoding requires ImageIO to advertise a writer for it; if the OS can't encode the
+        // requested type, destination creation fails and this returns nil. Callers must surface that
+        // (e.g. a "Save failed" toast) — there is no automatic format fallback.
         guard let destination = CGImageDestinationCreateWithData(
             data, type.identifier as CFString, 1, nil
         ) else { return nil }

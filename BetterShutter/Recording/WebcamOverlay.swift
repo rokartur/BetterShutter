@@ -19,9 +19,18 @@ final class WebcamOverlay {
     private let size: CGFloat = 180
 
     func start(displayID: CGDirectDisplayID) {
-        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-            guard granted else { return }
-            Task { @MainActor in self?.present(displayID: displayID) }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            present(displayID: displayID)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                Task { @MainActor in
+                    if granted { self?.present(displayID: displayID) }
+                    else { HUD.show("Camera access denied") }
+                }
+            }
+        default:
+            HUD.show("Enable camera access in System Settings ▸ Privacy")
         }
     }
 
