@@ -174,9 +174,17 @@ final class CaptureSettingsTab: SettingsTabViewController {
         audio.action = #selector(toggleRecordAudio(_:))
         addRow(to: recording, title: "Record system audio",
                subtitle: "Include computer audio in screen recordings.", accessory: audio)
+
+        let clicks = NSSwitch()
+        clicks.state = Preferences.highlightClicks ? .on : .off
+        clicks.target = self
+        clicks.action = #selector(toggleHighlightClicks(_:))
+        addRow(to: recording, title: "Highlight mouse clicks",
+               subtitle: "Show an animated ring at each click in recordings.", accessory: clicks)
     }
 
     @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
+    @objc private func toggleHighlightClicks(_ sender: NSSwitch) { Preferences.highlightClicks = (sender.state == .on) }
     @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
 
     @objc private func changeAfterAction(_ sender: NSPopUpButton) {

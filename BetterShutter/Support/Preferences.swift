@@ -43,12 +43,19 @@ nonisolated enum Preferences {
         static let captureCounter = "captureCounter"
         static let recordSystemAudio = "recordSystemAudio"
         static let downscaleRetina = "downscaleRetina"
+        static let highlightClicks = "highlightClicks"
     }
 
     /// Halve Retina (scale > 1) captures to 1× on output for smaller files.
     static var downscaleRetina: Bool {
         get { defaults.object(forKey: Key.downscaleRetina) as? Bool ?? false }
         set { defaults.set(newValue, forKey: Key.downscaleRetina) }
+    }
+
+    /// Show an animated ring at each mouse click during recordings.
+    static var highlightClicks: Bool {
+        get { defaults.object(forKey: Key.highlightClicks) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.highlightClicks) }
     }
 
     static var recordSystemAudio: Bool {

@@ -44,6 +44,7 @@ final class RecordingController {
         self.engine = engine
         isRecording = true
         controlBar.show()
+        if Preferences.highlightClicks { ClickHighlighter.shared.start(displayID: displayID) }
         onStateChange?()
 
         startTask = Task {
@@ -52,6 +53,7 @@ final class RecordingController {
             } catch {
                 isRecording = false
                 controlBar.hide()
+                ClickHighlighter.shared.stop()
                 self.engine = nil
                 onStateChange?()
                 showError(error)
@@ -63,6 +65,7 @@ final class RecordingController {
         guard isRecording, let engine else { return }
         isRecording = false
         controlBar.hide()
+        ClickHighlighter.shared.stop()
         self.engine = nil
         onStateChange?()
 
