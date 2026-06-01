@@ -9,8 +9,9 @@ enum BeautifyRenderer {
         let h = CGFloat(base.height)
         let minDim = min(w, h)
         let pad = (minDim * style.paddingFraction).rounded()
+        let barHeight = style.windowFrame == .none ? 0 : max(24, (minDim * 0.05).rounded())
         let outW = Int(w + 2 * pad)
-        let outH = Int(h + 2 * pad)
+        let outH = Int(h + barHeight + 2 * pad)
         guard outW > 0, outH > 0 else { return nil }
 
         let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
@@ -22,9 +23,11 @@ enum BeautifyRenderer {
         let full = CGRect(x: 0, y: 0, width: outW, height: outH)
         drawBackground(style.background, in: ctx, rect: full)
 
+        // Bottom-left coords: image sits at the bottom of the card, chrome bar above it.
+        let cardRect = CGRect(x: pad, y: pad, width: w, height: h + barHeight)
         let imageRect = CGRect(x: pad, y: pad, width: w, height: h)
         let radius = minDim * style.cornerFraction
-        let rounded = CGPath(roundedRect: imageRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        let rounded = CGPath(roundedRect: cardRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
         if style.shadow {
             ctx.saveGState()
@@ -40,10 +43,31 @@ enum BeautifyRenderer {
         ctx.saveGState()
         ctx.addPath(rounded)
         ctx.clip()
+        if style.windowFrame != .none {
+            let barColor = style.windowFrame == .dark
+                ? NSColor(calibratedWhite: 0.17, alpha: 1)
+                : NSColor(calibratedWhite: 0.93, alpha: 1)
+            ctx.setFillColor(barColor.cgColor)
+            ctx.fill(cardRect)
+            let barRect = CGRect(x: pad, y: pad + h, width: w, height: barHeight)
+            drawTrafficLights(in: ctx, barRect: barRect)
+        }
         ctx.draw(base, in: imageRect)
         ctx.restoreGState()
 
         return ctx.makeImage()
+    }
+
+    private static func drawTrafficLights(in ctx: CGContext, barRect: CGRect) {
+        let r = max(4, barRect.height * 0.16)
+        let gap = r * 2.8
+        let cy = barRect.midY
+        let colors = [BackgroundPreset.hex(0xFF5F57), BackgroundPreset.hex(0xFEBC2E), BackgroundPreset.hex(0x28C840)]
+        for (index, color) in colors.enumerated() {
+            let cx = barRect.minX + barRect.height * 0.9 + CGFloat(index) * gap
+            ctx.setFillColor(color.cgColor)
+            ctx.fillEllipse(in: CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2))
+        }
     }
 
     private static func drawBackground(_ fill: BackgroundFill, in ctx: CGContext, rect: CGRect) {

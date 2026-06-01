@@ -43,6 +43,21 @@ struct BackgroundPreset: Identifiable {
     }
 }
 
+/// Optional macOS window-chrome mockup drawn above the screenshot.
+enum WindowFrame: Int, CaseIterable, Sendable {
+    case none
+    case light
+    case dark
+
+    var presentableName: String {
+        switch self {
+        case .none: return "No Frame"
+        case .light: return "Light Frame"
+        case .dark: return "Dark Frame"
+        }
+    }
+}
+
 /// The full beautify configuration. Padding / corner / shadow are fractions of the image's
 /// smaller side so the look is resolution-independent.
 @MainActor
@@ -52,6 +67,7 @@ struct BeautifyStyle {
     var cornerFraction: CGFloat
     var shadow: Bool
     var shadowFraction: CGFloat
+    var windowFrame: WindowFrame
 
     static func makeDefault() -> BeautifyStyle {
         BeautifyStyle(
@@ -59,7 +75,8 @@ struct BeautifyStyle {
             paddingFraction: 0.08,
             cornerFraction: 0.03,
             shadow: true,
-            shadowFraction: 0.05
+            shadowFraction: 0.05,
+            windowFrame: .none
         )
     }
 }

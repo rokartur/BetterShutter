@@ -60,6 +60,12 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
         colorWell.action = #selector(solidColorChanged(_:))
         colorWell.widthAnchor.constraint(equalToConstant: 38).isActive = true
 
+        let framePopup = NSPopUpButton()
+        for frame in WindowFrame.allCases { framePopup.addItem(withTitle: frame.presentableName) }
+        framePopup.selectItem(at: style.windowFrame.rawValue)
+        framePopup.target = self
+        framePopup.action = #selector(frameChanged(_:))
+
         let padding = makeSlider(min: 0, max: 0.25, value: style.paddingFraction, action: #selector(paddingChanged(_:)))
         let corner = makeSlider(min: 0, max: 0.12, value: style.cornerFraction, action: #selector(cornerChanged(_:)))
         let shadowSwitch = NSSwitch()
@@ -69,6 +75,7 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
 
         let left = NSStackView(views: [
             label("Background"), presetPopup, colorWell,
+            label("Frame"), framePopup,
             label("Padding"), padding,
             label("Corner"), corner,
             label("Shadow"), shadowSwitch,
@@ -155,6 +162,11 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func solidColorChanged(_ sender: NSColorWell) {
         style.background = .solid(sender.color)
+        renderPreview()
+    }
+
+    @objc private func frameChanged(_ sender: NSPopUpButton) {
+        style.windowFrame = WindowFrame(rawValue: sender.indexOfSelectedItem) ?? .none
         renderPreview()
     }
 
