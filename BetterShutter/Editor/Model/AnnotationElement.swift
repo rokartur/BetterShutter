@@ -369,3 +369,42 @@ final class StepElement: AnnotationElement {
         CTLineDraw(line, cg)
     }
 }
+
+// MARK: - Emoji / stamp
+
+final class StampElement: AnnotationElement {
+    var center: CGPoint
+    var emoji: String
+    let size: CGFloat
+
+    init(center: CGPoint, emoji: String, style: AnnotationStyle) {
+        self.center = center
+        self.emoji = emoji
+        self.size = max(40, style.fontSize * 2)
+        super.init(style: style)
+    }
+
+    override var boundingBox: CGRect {
+        CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
+    }
+
+    override func translate(by delta: CGSize) {
+        center.x += delta.width; center.y += delta.height
+    }
+
+    override func clone() -> AnnotationElement {
+        StampElement(center: center, emoji: emoji, style: style)
+    }
+
+    override func transform(_ t: CGAffineTransform) { center = center.applying(t) }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        let font = NSFont.systemFont(ofSize: size)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: emoji, attributes: [.font: font]))
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, &leading))
+        cg.textMatrix = .identity
+        cg.textPosition = CGPoint(x: center.x - width / 2, y: center.y - (ascent - descent) / 2)
+        CTLineDraw(line, cg)
+    }
+}

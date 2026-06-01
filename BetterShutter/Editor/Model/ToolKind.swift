@@ -14,6 +14,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
     case blackout
     case spotlight
     case eyedropper
+    case stamp
     case step
     case crop
 
@@ -31,6 +32,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .blackout: return "rectangle.fill"
         case .spotlight: return "rays"
         case .eyedropper: return "eyedropper"
+        case .stamp: return "face.smiling"
         case .step: return "1.circle.fill"
         case .crop: return "crop"
         }
@@ -50,6 +52,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .blackout: return "Black Out"
         case .spotlight: return "Spotlight"
         case .eyedropper: return "Color Picker"
+        case .stamp: return "Stamp"
         case .step: return "Step"
         case .crop: return "Crop"
         }
@@ -70,6 +73,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .blackout: return "k"
         case .spotlight: return "s"
         case .eyedropper: return "i"
+        case .stamp: return "g"
         case .step: return "n"
         case .crop: return "c"
         }
@@ -84,7 +88,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         switch self {
         case .arrow, .rectangle, .ellipse, .line, .highlighter, .pixelate, .blur, .blackout, .spotlight:
             return true
-        case .select, .text, .step, .crop, .eyedropper:
+        case .select, .text, .step, .crop, .eyedropper, .stamp:
             return false
         }
     }

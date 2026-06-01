@@ -313,6 +313,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             dragMode = .none
             commit(pending, "Add Step")
             pending = nil
+        case .stamp:
+            presentStampMenu(with: event, at: p)
+            dragMode = .none
         case .eyedropper:
             // PixelSampler uses top-left origin; canvas points are bottom-left.
             if let rgb = PixelSampler.rgb(in: baseImage, x: Int(p.x), y: Int(imageSize.height - p.y)) {
@@ -380,6 +383,31 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         pending = nil
         creating = nil
         dragMode = .none
+        needsDisplay = true
+    }
+
+    private static let stampEmojis = ["⭐️", "❤️", "✅", "❌", "🔥", "👍", "👎", "⚠️", "💡", "🎯", "😀", "🚀", "🔒", "📌", "➡️", "💬"]
+
+    private func presentStampMenu(with event: NSEvent, at p: CGPoint) {
+        let menu = NSMenu()
+        for emoji in Self.stampEmojis {
+            let item = NSMenuItem(title: emoji, action: #selector(placeStamp(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["emoji": emoji, "x": p.x, "y": p.y] as [String: Any]
+            menu.addItem(item)
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func placeStamp(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: Any],
+              let emoji = info["emoji"] as? String,
+              let x = info["x"] as? CGFloat, let y = info["y"] as? CGFloat else { return }
+        let before = snapshot()
+        let stamp = StampElement(center: CGPoint(x: x, y: y), emoji: emoji, style: style)
+        elements.append(stamp)
+        selected = stamp
+        commit(before, "Stamp")
         needsDisplay = true
     }
 

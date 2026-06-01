@@ -101,6 +101,8 @@ enum AnnotationProjectIO {
             return CodableAnnotation(kind: "text", style: style, origin: x.origin, text: x.text)
         case let x as StepElement:
             return CodableAnnotation(kind: "step", style: style, center: x.center, number: x.number)
+        case let x as StampElement:
+            return CodableAnnotation(kind: "stamp", style: style, text: x.emoji, center: x.center)
         default:
             return nil
         }
@@ -128,6 +130,7 @@ enum AnnotationProjectIO {
         case "spotlight": return twoPoint(SpotlightElement.self)
         case "text":      return TextElement(origin: c.origin ?? .zero, text: c.text ?? "", style: style)
         case "step":      return StepElement(center: c.center ?? .zero, number: c.number ?? 1, style: style)
+        case "stamp":     return StampElement(center: c.center ?? .zero, emoji: c.text ?? "⭐️", style: style)
         default:          return nil
         }
     }
