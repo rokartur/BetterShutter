@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var recordingItem: NSMenuItem?
     private var recentMenuItem: NSMenuItem?
     private var recordingTimer: Timer?
+    private var trimController: VideoTrimWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if SelfTest.runIfRequested() { return }
@@ -211,6 +212,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         editFile.image = NSImage(systemSymbolName: "pencil.and.outline", accessibilityDescription: "Edit Image")
         menu.addItem(editFile)
 
+        let trim = NSMenuItem(title: "Trim Video…", action: #selector(trimVideo), keyEquivalent: "")
+        trim.target = self
+        trim.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "Trim Video")
+        menu.addItem(trim)
+
         let openProj = NSMenuItem(title: "Open Project…", action: #selector(openProject), keyEquivalent: "")
         openProj.target = self
         openProj.image = NSImage(systemSymbolName: "doc.badge.gearshape", accessibilityDescription: "Open Project")
@@ -364,6 +370,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func reopenLast() {
         guard let item = CaptureHistory.shared.items.first else { HUD.show("No recent capture"); return }
         CaptureCoordinator.shared.reopenPreview(item)
+    }
+
+    @objc private func trimVideo() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie]
+        panel.allowsMultipleSelection = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let controller = VideoTrimWindowController(url: url)
+        trimController = controller
+        controller.show()
     }
 
     @objc private func openProject() {
