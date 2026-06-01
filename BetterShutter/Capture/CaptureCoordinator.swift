@@ -299,9 +299,19 @@ final class CaptureCoordinator {
         return CapturedImage(cgImage: scaled, scale: 1, displayID: image.displayID)
     }
 
+    /// Auto-apply the default beautify preset (CleanShot-style), unless Shift is held to bypass it.
+    private func autoBeautified(_ image: CapturedImage) -> CapturedImage {
+        guard !NSEvent.modifierFlags.contains(.shift),
+              let name = Preferences.autoBeautifyPresetName,
+              let preset = Preferences.beautifyPresets.first(where: { $0.name == name }) else { return image }
+        let style = preset.applied(to: .makeDefault())
+        guard let cg = BeautifyRenderer.render(base: image.cgImage, style: style) else { return image }
+        return CapturedImage(cgImage: cg, scale: 1, displayID: image.displayID)
+    }
+
     private func finish(_ image: CapturedImage, mode: CaptureMode) {
         isCapturing = false
-        let output = outputImage(image)
+        let output = autoBeautified(outputImage(image))
         CaptureHistory.shared.add(output, mode: mode)
         let action = Preferences.afterCaptureAction
         if action.copies { PasteboardWriter.copy(output.cgImage) }

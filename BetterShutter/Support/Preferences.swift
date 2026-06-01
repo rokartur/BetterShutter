@@ -152,6 +152,13 @@ nonisolated enum Preferences {
         }
     }
 
+    /// Name of a beautify preset to auto-apply to every capture (nil = off). Hold Shift while
+    /// capturing to bypass it for that shot.
+    static var autoBeautifyPresetName: String? {
+        get { defaults.string(forKey: "autoBeautifyPresetName") }
+        set { defaults.set(newValue, forKey: "autoBeautifyPresetName") }
+    }
+
     /// Add or replace a preset by name.
     static func addBeautifyPreset(_ preset: BeautifyPreset) {
         var list = beautifyPresets.filter { $0.name != preset.name }

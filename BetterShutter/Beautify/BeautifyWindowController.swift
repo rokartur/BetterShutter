@@ -260,8 +260,31 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
             let deleteItem = NSMenuItem(title: "Delete Preset", action: nil, keyEquivalent: "")
             deleteItem.submenu = deleteSub
             menu.addItem(deleteItem)
+
+            menu.addItem(.separator())
+            let autoSub = NSMenu()
+            let off = NSMenuItem(title: "Off", action: #selector(setAutoApply(_:)), keyEquivalent: "")
+            off.target = self; off.representedObject = ""
+            off.state = Preferences.autoBeautifyPresetName == nil ? .on : .off
+            autoSub.addItem(off)
+            autoSub.addItem(.separator())
+            for preset in presets {
+                let item = NSMenuItem(title: preset.name, action: #selector(setAutoApply(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = preset.name
+                item.state = Preferences.autoBeautifyPresetName == preset.name ? .on : .off
+                autoSub.addItem(item)
+            }
+            let autoItem = NSMenuItem(title: "Auto-Apply to Captures", action: nil, keyEquivalent: "")
+            autoItem.submenu = autoSub
+            menu.addItem(autoItem)
         }
         presetButton.menu = menu
+    }
+
+    @objc private func setAutoApply(_ sender: NSMenuItem) {
+        let name = sender.representedObject as? String
+        Preferences.autoBeautifyPresetName = (name?.isEmpty ?? true) ? nil : name
+        rebuildPresetMenu()
     }
 
     @objc private func savePresetTapped() {
