@@ -143,6 +143,7 @@ final class CaptureCoordinator {
 
     private func finish(_ image: CapturedImage, mode: CaptureMode) {
         isCapturing = false
+        CaptureHistory.shared.add(image, mode: mode)
         let action = Preferences.afterCaptureAction
         if action.copies { PasteboardWriter.copy(image.cgImage) }
         if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
@@ -154,6 +155,11 @@ final class CaptureCoordinator {
                 preview.show(image, mode: mode, savedURL: url)
             }
         }
+    }
+
+    /// Re-show the float preview for a capture from history.
+    func reopenPreview(_ item: CaptureHistory.Item) {
+        preview.show(item.image, mode: item.mode, savedURL: nil)
     }
 
     func edit(_ image: CapturedImage, mode: CaptureMode) {

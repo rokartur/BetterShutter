@@ -19,26 +19,36 @@ final class RecordingController {
 
     func start() {
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
-        beginRecording(displayID: displayUnderMouse(), sourceRect: nil)
+        beginRecording(displayID: displayUnderMouse(), sourceRect: nil, gif: false)
     }
 
     func startRegion(displayID: CGDirectDisplayID, sourceRectPoints: CGRect) {
-        beginRecording(displayID: displayID, sourceRect: sourceRectPoints)
+        beginRecording(displayID: displayID, sourceRect: sourceRectPoints, gif: false)
     }
 
-    private func beginRecording(displayID: CGDirectDisplayID, sourceRect: CGRect?) {
+    func startGIF() {
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        beginRecording(displayID: displayUnderMouse(), sourceRect: nil, gif: true)
+    }
+
+    /// Stop if recording, otherwise start a GIF recording.
+    func toggleGIF() { isRecording ? stop() : startGIF() }
+
+    private func beginRecording(displayID: CGDirectDisplayID, sourceRect: CGRect?, gif: Bool) {
         guard !isRecording else { return }
-        let url = Self.recordingURL()
+        let url = Self.recordingURL(ext: gif ? "gif" : "mp4")
         let engine = RecordingEngine()
         engine.captureSystemAudio = Preferences.recordSystemAudio
+        engine.gifMode = gif
         self.engine = engine
         isRecording = true
         controlBar.show()
         onStateChange?()
 
+        let snapshotEngine = engine
         Task {
             do {
-                try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
+                try await snapshotEngine.start(displayID: displayID, sourceRect: sourceRect, to: url)
             } catch {
                 isRecording = false
                 controlBar.hide()
@@ -64,7 +74,7 @@ final class RecordingController {
 
     // MARK: Helpers
 
-    private static func recordingURL() -> URL {
+    private static func recordingURL(ext: String) -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
@@ -72,10 +82,10 @@ final class RecordingController {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         let stamp = formatter.string(from: Date())
-        var url = dir.appendingPathComponent("Recording \(stamp).mp4")
+        var url = dir.appendingPathComponent("Recording \(stamp).\(ext)")
         var index = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            url = dir.appendingPathComponent("Recording \(stamp) (\(index)).mp4")
+            url = dir.appendingPathComponent("Recording \(stamp) (\(index)).\(ext)")
             index += 1
         }
         return url

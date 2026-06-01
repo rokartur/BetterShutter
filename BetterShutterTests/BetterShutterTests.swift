@@ -158,3 +158,55 @@ struct BeautifyRendererTests {
         #expect(out?.height == 64)
     }
 }
+
+@MainActor
+struct CaptureHistoryTests {
+    private func image() -> CapturedImage {
+        CapturedImage(cgImage: makeSolidTestImage(width: 4, height: 4), scale: 1, displayID: nil)
+    }
+
+    @Test
+    func ringBufferCapsAtLimit() {
+        let history = CaptureHistory()
+        for _ in 0..<(history.limit + 5) { history.add(image(), mode: .region) }
+        #expect(history.items.count == history.limit)
+    }
+
+    @Test
+    func newestEntryIsFirst() {
+        let history = CaptureHistory()
+        history.add(image(), mode: .region, date: Date(timeIntervalSince1970: 1))
+        history.add(image(), mode: .window, date: Date(timeIntervalSince1970: 2))
+        #expect(history.items.first?.mode == .window)
+    }
+
+    @Test
+    func clearEmptiesHistory() {
+        let history = CaptureHistory()
+        history.add(image(), mode: .fullDisplay)
+        history.clear()
+        #expect(history.items.isEmpty)
+    }
+}
+
+@MainActor
+struct GIFEncoderTests {
+    @Test
+    func encodesFramesToGIF() {
+        let frames = [
+            makeSolidTestImage(width: 8, height: 8),
+            makeSolidTestImage(width: 8, height: 8),
+            makeSolidTestImage(width: 8, height: 8),
+        ]
+        let data = GIFEncoder.encode(frames: frames, frameDelay: 0.1)
+        #expect(data != nil)
+        // GIF magic header "GIF8".
+        let prefix = data?.prefix(4)
+        #expect(prefix.map { Array($0) } == Array("GIF8".utf8))
+    }
+
+    @Test
+    func emptyFramesReturnsNil() {
+        #expect(GIFEncoder.encode(frames: [], frameDelay: 0.1) == nil)
+    }
+}

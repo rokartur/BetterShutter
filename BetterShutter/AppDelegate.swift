@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settingsController: SettingsWindowController?
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
     private var recordingItem: NSMenuItem?
+    private var recentMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         bootstrapUpdater()
@@ -100,6 +101,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         addCaptureItem(to: menu, title: "Record Region", symbol: "rectangle.dashed",
                        action: #selector(recordRegion), name: .recordRegion)
+        addCaptureItem(to: menu, title: "Record GIF", symbol: "square.stack.3d.forward.dottedline",
+                       action: #selector(recordGIF), name: .recordGIF)
+
+        menu.addItem(.separator())
+
+        let recent = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+        recent.submenu = NSMenu()
+        recent.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "Recent")
+        menu.addItem(recent)
+        recentMenuItem = recent
 
         menu.addItem(.separator())
 
@@ -141,6 +152,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             recordingItem.title = RecordingController.shared.isRecording ? "Stop Recording" : "Start Recording"
             applyShortcut(.toggleRecording, to: recordingItem)
         }
+        rebuildRecentSubmenu()
+    }
+
+    private func rebuildRecentSubmenu() {
+        guard let submenu = recentMenuItem?.submenu else { return }
+        submenu.removeAllItems()
+        let items = CaptureHistory.shared.items
+        guard !items.isEmpty else {
+            let empty = NSMenuItem(title: "No Recent Captures", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        for (index, item) in items.enumerated() {
+            let menuItem = NSMenuItem(
+                title: "\(item.mode.fileTag) · \(formatter.string(from: item.date))",
+                action: #selector(reopenRecent(_:)), keyEquivalent: ""
+            )
+            menuItem.target = self
+            menuItem.representedObject = index
+            menuItem.image = recentThumbnail(for: item.image)
+            submenu.addItem(menuItem)
+        }
+        submenu.addItem(.separator())
+        let clear = NSMenuItem(title: "Clear", action: #selector(clearRecent), keyEquivalent: "")
+        clear.target = self
+        submenu.addItem(clear)
+    }
+
+    private func recentThumbnail(for image: CapturedImage) -> NSImage {
+        let height: CGFloat = 16
+        let width = max(1, image.pixelSize.width / max(image.pixelSize.height, 1) * height)
+        return NSImage(cgImage: image.cgImage, size: NSSize(width: width, height: height))
     }
 
     private func applyShortcut(_ name: BetterShortcuts.Name, to item: NSMenuItem) {
@@ -161,6 +207,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureText() { CaptureCoordinator.shared.captureText() }
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
     @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
+    @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
+
+    @objc private func reopenRecent(_ sender: NSMenuItem) {
+        guard let index = sender.representedObject as? Int,
+              CaptureHistory.shared.items.indices.contains(index) else { return }
+        CaptureCoordinator.shared.reopenPreview(CaptureHistory.shared.items[index])
+    }
+
+    @objc private func clearRecent() { CaptureHistory.shared.clear() }
 
     @objc private func openSettings() {
         let controller = settingsController ?? SettingsWindowController(

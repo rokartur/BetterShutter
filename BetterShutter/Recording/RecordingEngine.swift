@@ -1,6 +1,7 @@
 import AVFoundation
 import ScreenCaptureKit
 import CoreMedia
+import CoreImage
 
 /// Records a display to an H.264 MP4 (with optional system audio) using ScreenCaptureKit's
 /// `SCStream` feeding an `AVAssetWriter`. Not an actor: SCStream delivers sample buffers on a
@@ -19,6 +20,14 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     private var outputURL: URL?
 
     var captureSystemAudio = true
+
+    // GIF mode: collect downscaled frames instead of writing video.
+    var gifMode = false
+    private let ciContext = CIContext()
+    private var gifFrames: [CGImage] = []
+    private var lastGIFTime: CMTime?
+    private let gifInterval = CMTime(value: 1, timescale: 12)
+    private let gifMaxFrames = 300
 
     // MARK: Start
 
@@ -40,16 +49,20 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         config.height = height
         if sourceRect != nil { config.sourceRect = regionPoints }
         config.pixelFormat = kCVPixelFormatType_32BGRA
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        config.minimumFrameInterval = CMTime(value: 1, timescale: gifMode ? 15 : 60)
         config.queueDepth = 6
         config.showsCursor = true
-        config.capturesAudio = captureSystemAudio
+        config.capturesAudio = captureSystemAudio && !gifMode
         config.sampleRate = 48_000
         config.channelCount = 2
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
 
         try queue.sync {
+            guard !self.gifMode else {
+                self.outputURL = url
+                return
+            }
             let writer = try AVAssetWriter(url: url, fileType: .mp4)
 
             let videoSettings: [String: Any] = [
@@ -95,7 +108,7 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
 
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
-        if captureSystemAudio {
+        if captureSystemAudio && !gifMode {
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
         }
         try await stream.startCapture()
@@ -109,6 +122,12 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         stream = nil
         return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
             queue.async {
+                if self.gifMode {
+                    let data = GIFEncoder.encode(frames: self.gifFrames, frameDelay: 1.0 / 12.0)
+                    if let data, let url = self.outputURL { try? data.write(to: url) }
+                    continuation.resume(returning: data != nil ? self.outputURL : nil)
+                    return
+                }
                 self.videoInput?.markAsFinished()
                 self.audioInput?.markAsFinished()
                 guard let writer = self.writer else { continuation.resume(returning: nil); return }
@@ -128,6 +147,10 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         case .screen:
             guard isComplete(sampleBuffer) else { return }
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            if gifMode {
+                appendGIFFrame(sampleBuffer, pts: pts)
+                return
+            }
             if !sessionStarted {
                 writer?.startSession(atSourceTime: pts)
                 sessionStarted = true
@@ -150,6 +173,20 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     }
 
     // MARK: Helpers
+
+    private func appendGIFFrame(_ sampleBuffer: CMSampleBuffer, pts: CMTime) {
+        if let last = lastGIFTime, CMTimeSubtract(pts, last) < gifInterval { return }
+        lastGIFTime = pts
+        guard gifFrames.count < gifMaxFrames,
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let ci = CIImage(cvPixelBuffer: pixelBuffer)
+        let maxWidth: CGFloat = 640
+        let scale = min(1, maxWidth / max(ci.extent.width, 1))
+        let scaled = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        if let cg = ciContext.createCGImage(scaled, from: scaled.extent) {
+            gifFrames.append(cg)
+        }
+    }
 
     private func isComplete(_ sampleBuffer: CMSampleBuffer) -> Bool {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
