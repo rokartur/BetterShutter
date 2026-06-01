@@ -39,6 +39,7 @@ nonisolated struct CodableAnnotation: Codable, Sendable {
     var text: String?
     var center: CGPoint?    // step
     var number: Int?
+    var imagePNG: Data?     // composed image (base64 in JSON)
 }
 
 nonisolated struct AnnotationProject: Codable, Sendable {
@@ -103,6 +104,11 @@ enum AnnotationProjectIO {
             return CodableAnnotation(kind: "step", style: style, center: x.center, number: x.number)
         case let x as StampElement:
             return CodableAnnotation(kind: "stamp", style: style, text: x.emoji, center: x.center)
+        case let x as ImageElement:
+            return CodableAnnotation(kind: "image", style: style,
+                                     start: CGPoint(x: x.frame.minX, y: x.frame.minY),
+                                     end: CGPoint(x: x.frame.maxX, y: x.frame.maxY),
+                                     imagePNG: ImageEncoder.encode(x.image, as: .png))
         default:
             return nil
         }
@@ -131,6 +137,13 @@ enum AnnotationProjectIO {
         case "text":      return TextElement(origin: c.origin ?? .zero, text: c.text ?? "", style: style)
         case "step":      return StepElement(center: c.center ?? .zero, number: c.number ?? 1, style: style)
         case "stamp":     return StampElement(center: c.center ?? .zero, emoji: c.text ?? "⭐️", style: style)
+        case "image":
+            guard let data = c.imagePNG, let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let cg = CGImageSourceCreateImageAtIndex(source, 0, nil),
+                  let start = c.start, let end = c.end else { return nil }
+            let frame = CGRect(x: min(start.x, end.x), y: min(start.y, end.y),
+                               width: abs(end.x - start.x), height: abs(end.y - start.y))
+            return ImageElement(image: cg, frame: frame, style: style)
         default:          return nil
         }
     }

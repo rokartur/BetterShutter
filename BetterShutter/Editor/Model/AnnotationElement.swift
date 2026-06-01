@@ -370,6 +370,57 @@ final class StepElement: AnnotationElement {
     }
 }
 
+// MARK: - Composed image
+
+/// An additional image dropped onto the canvas (compose multiple captures into one). Movable and
+/// resizable via the 8 bbox handles.
+final class ImageElement: AnnotationElement {
+    let image: CGImage
+    var frame: CGRect
+
+    init(image: CGImage, frame: CGRect, style: AnnotationStyle) {
+        self.image = image
+        self.frame = frame
+        super.init(style: style)
+    }
+
+    override var boundingBox: CGRect { frame }
+    override func translate(by delta: CGSize) { frame.origin.x += delta.width; frame.origin.y += delta.height }
+    override var isDegenerate: Bool { frame.width < 8 || frame.height < 8 }
+    override func clone() -> AnnotationElement { ImageElement(image: image, frame: frame, style: style) }
+    override func transform(_ t: CGAffineTransform) { frame = frame.applying(t) }
+
+    override func handlePoints() -> [CGPoint] {
+        let r = frame
+        return [
+            CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY),
+            CGPoint(x: r.maxX, y: r.midY),
+            CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.minX, y: r.minY),
+            CGPoint(x: r.minX, y: r.midY),
+        ]
+    }
+
+    override func moveHandle(_ index: Int, to p: CGPoint) {
+        var (minX, maxX, minY, maxY) = (frame.minX, frame.maxX, frame.minY, frame.maxY)
+        switch index {
+        case 0: minX = p.x; maxY = p.y
+        case 1: maxY = p.y
+        case 2: maxX = p.x; maxY = p.y
+        case 3: maxX = p.x
+        case 4: maxX = p.x; minY = p.y
+        case 5: minY = p.y
+        case 6: minX = p.x; minY = p.y
+        case 7: minX = p.x
+        default: break
+        }
+        frame = CGRect(x: min(minX, maxX), y: min(minY, maxY), width: abs(maxX - minX), height: abs(maxY - minY))
+    }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        cg.draw(image, in: frame)
+    }
+}
+
 // MARK: - Emoji / stamp
 
 final class StampElement: AnnotationElement {

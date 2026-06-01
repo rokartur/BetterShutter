@@ -108,6 +108,21 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    /// Add another image onto the canvas, centered and scaled to fit, selected for repositioning.
+    func addComposedImage(_ cg: CGImage) {
+        let before = snapshot()
+        let scale = min(imageSize.width * 0.5 / CGFloat(cg.width), imageSize.height * 0.5 / CGFloat(cg.height), 1)
+        let w = CGFloat(cg.width) * scale, h = CGFloat(cg.height) * scale
+        let frame = CGRect(x: imageSize.width / 2 - w / 2, y: imageSize.height / 2 - h / 2, width: w, height: h)
+        let element = ImageElement(image: cg, frame: frame, style: style)
+        elements.append(element)
+        selected = element
+        tool = .select
+        onToolPicked?(.select)
+        commit(before, "Add Image")
+        needsDisplay = true
+    }
+
     /// Find PII via OCR and cover each matching line with a black-out box (one undo step).
     func autoRedactPII() {
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)

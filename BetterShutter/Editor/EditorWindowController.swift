@@ -153,6 +153,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let redact = NSMenuItem(title: "Auto-Redact PII", action: #selector(autoRedactPicked), keyEquivalent: "")
         redact.target = self
         popup.menu?.addItem(redact)
+        let addImage = NSMenuItem(title: "Add Image…", action: #selector(addImagePicked), keyEquivalent: "")
+        addImage.target = self
+        popup.menu?.addItem(addImage)
         popup.menu?.addItem(.separator())
         for (title, filter) in Self.filters {
             let item = NSMenuItem(title: title, action: #selector(filterPicked(_:)), keyEquivalent: "")
@@ -191,6 +194,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func invertPicked() { canvas.invertColors() }
     @objc private func autoRedactPicked() { canvas.autoRedactPII() }
+
+    @objc private func addImagePicked() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url, let nsImage = NSImage(contentsOf: url) else { return }
+        var rect = CGRect(origin: .zero, size: nsImage.size)
+        guard let cg = nsImage.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return }
+        canvas.addComposedImage(cg)
+    }
 
     @objc private func filterPicked(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
