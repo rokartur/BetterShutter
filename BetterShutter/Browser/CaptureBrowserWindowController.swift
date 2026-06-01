@@ -66,7 +66,7 @@ final class CaptureBrowserWindowController: NSObject, NSWindowDelegate, NSTableV
         table.dataSource = self
         table.delegate = self
         table.target = self
-        table.doubleAction = #selector(openSelected)
+        table.doubleAction = #selector(editSelected)
         table.menu = makeContextMenu()
         table.urls = { [weak self] in self?.shown.map { $0.url } ?? [] }
         let column = NSTableColumn(identifier: .init("capture"))
@@ -98,6 +98,7 @@ final class CaptureBrowserWindowController: NSObject, NSWindowDelegate, NSTableV
     private func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
         for (title, sel) in [
+            ("Edit", #selector(editSelected)),
             ("Open", #selector(openSelected)),
             ("Reveal in Finder", #selector(revealSelected)),
             ("Copy", #selector(copySelected)),
@@ -181,6 +182,26 @@ final class CaptureBrowserWindowController: NSObject, NSWindowDelegate, NSTableV
     @objc private func openSelected() {
         guard let url = selectedURL else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    /// Re-open a past capture in the editor. If a re-editable project sidecar (.bsproj with the same
+    /// base name) exists, restore its annotation layers; otherwise edit the flat image.
+    @objc private func editSelected() {
+        guard let url = selectedURL else { return }
+        let project = url.deletingPathExtension().appendingPathExtension(AnnotationProjectIO.fileExtension)
+        if FileManager.default.fileExists(atPath: project.path),
+           let parsed = try? AnnotationProjectIO.read(project),
+           let base = AnnotationProjectIO.baseImage(parsed) {
+            CaptureCoordinator.shared.editProject(
+                CapturedImage(cgImage: base, scale: 1, displayID: nil),
+                elements: AnnotationProjectIO.elements(parsed)
+            )
+            return
+        }
+        guard let nsImage = NSImage(contentsOf: url) else { return }
+        var rect = CGRect(origin: .zero, size: nsImage.size)
+        guard let cg = nsImage.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return }
+        CaptureCoordinator.shared.edit(CapturedImage(cgImage: cg, scale: 1, displayID: nil), mode: .region)
     }
 
     @objc private func revealSelected() {
