@@ -176,18 +176,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addCaptureItem(to: menu, title: "Scrolling Capture", symbol: "arrow.up.and.down.text.horizontal",
                        action: #selector(captureScrolling), name: .captureScrolling)
 
-        let delay = NSMenuItem(title: "Capture After Delay", action: nil, keyEquivalent: "")
-        delay.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Delay")
-        let delaySub = NSMenu()
-        for seconds in [3, 5, 10] {
-            let it = NSMenuItem(title: "\(seconds) seconds", action: #selector(captureAfterDelay(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = seconds
-            delaySub.addItem(it)
-        }
-        delay.submenu = delaySub
-        menu.addItem(delay)
-
         let previous = NSMenuItem(title: "Capture Previous Area",
                                   action: #selector(capturePreviousArea), keyEquivalent: "")
         previous.target = self
@@ -374,10 +362,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureText() { CaptureCoordinator.shared.captureText() }
     @objc private func captureCutout() { CaptureCoordinator.shared.captureCutout() }
     @objc private func captureScrolling() { CaptureCoordinator.shared.captureScrolling() }
-    @objc private func captureAfterDelay(_ sender: NSMenuItem) {
-        guard let seconds = sender.representedObject as? Int else { return }
-        CaptureCoordinator.shared.captureFullScreenAfter(seconds)
-    }
     @objc private func capturePreviousArea() { CaptureCoordinator.shared.captureLastRegion() }
     @objc private func openBrowser() { CaptureBrowserWindowController.shared.show() }
 

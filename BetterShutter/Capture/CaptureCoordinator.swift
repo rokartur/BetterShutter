@@ -200,11 +200,6 @@ final class CaptureCoordinator {
         ScrollingCaptureController.shared.begin()
     }
 
-    /// Count down, then capture the full screen — lets the user open menus / hover states first.
-    func captureFullScreenAfter(_ seconds: Int) {
-        SelfTimer.shared.run(seconds: seconds) { [weak self] in self?.capture(.fullDisplay) }
-    }
-
     /// Re-capture the exact region from the previous selection, with no overlay.
     func captureLastRegion() {
         guard !isCapturing, !overlay.isPresenting else { return }
