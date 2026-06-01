@@ -227,6 +227,13 @@ final class HighlightElement: TwoPointElement {
 }
 
 final class PixelateElement: TwoPointElement {
+    /// Mosaic block size for a region. Uses a high floor (16px) and grows with the region so even a
+    /// thin text strip is averaged into blocks coarse enough to resist reconstruction — pixelate as
+    /// redaction, not decoration.
+    nonisolated static func secureScale(width: CGFloat, height: CGFloat) -> CGFloat {
+        max(16, min(width, height) / 6)
+    }
+
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         let r = rect.integral
         guard r.width >= 2, r.height >= 2 else { return }
@@ -240,7 +247,7 @@ final class PixelateElement: TwoPointElement {
         let ci = CIImage(cgImage: crop)
         let filter = CIFilter.pixellate()
         filter.inputImage = ci
-        filter.scale = Float(max(8, min(r.width, r.height) / 12))
+        filter.scale = Float(Self.secureScale(width: r.width, height: r.height))
         filter.center = CGPoint(x: ci.extent.midX, y: ci.extent.midY)
         guard let output = filter.outputImage?.cropped(to: ci.extent),
               let outCG = rc.ciContext.createCGImage(output, from: ci.extent) else { return }

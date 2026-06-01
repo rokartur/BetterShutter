@@ -572,6 +572,21 @@ struct GIFEncoderTests {
     }
 }
 
+struct PixelateScaleTests {
+    @Test
+    func thinStripGetsCoarseFloor() {
+        // A 200×20 text strip must still be averaged into ≥16px blocks (not the old 8px).
+        #expect(PixelateElement.secureScale(width: 200, height: 20) == 16)
+    }
+
+    @Test
+    func largeRegionScalesUp() {
+        let scale = PixelateElement.secureScale(width: 600, height: 480)
+        #expect(scale == 80)            // min dim 480 / 6
+        #expect(scale > 16)
+    }
+}
+
 struct HighlightSnapTests {
     // Three text lines stacked vertically (image-pixel, bottom-left), each 80 wide × 10 tall.
     private let lines = [
