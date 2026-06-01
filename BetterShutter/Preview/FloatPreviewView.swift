@@ -115,7 +115,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     private func setupControls() {
-        let edit = makeIconButton("pencil.tip.crop.circle", "Edit", #selector(editTapped))
+        let edit = makeIconButton("pencil.tip.crop.circle", "Edit (⌘E)", #selector(editTapped))
         let copy = makeIconButton("doc.on.doc", "Copy", #selector(copyTapped))
         let secondary = (savedURL != nil)
             ? makeIconButton("folder", "Show in Finder", #selector(revealTapped))

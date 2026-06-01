@@ -117,13 +117,14 @@ final class FloatPreviewController {
         return heights + CGFloat(panels.count - 1) * spacing
     }
 
-    /// Target origin for each card: newest pinned to the bottom-right corner, older cards stacked
-    /// upward. Heights vary per card, so positions are summed bottom-up rather than indexed.
+    /// Target origin for each card: the oldest sits at the bottom-right corner and newer captures
+    /// stack upward above it (so a fresh capture appears on top). When the oldest auto-dismisses, the
+    /// cards above slide down to fill the gap. Positions summed bottom-up.
     private func layout() -> [ObjectIdentifier: CGPoint] {
         let visible = anchorVisibleFrame()
         var y = visible.minY + margin
         var result: [ObjectIdentifier: CGPoint] = [:]
-        for panel in panels.reversed() {               // newest (last) first → sits at the corner
+        for panel in panels {                          // oldest (first) at the corner, newest on top
             // Right-anchor per card: portrait cards are narrower, so anchor by each card's own width.
             let x = visible.maxX - margin - panel.frame.width
             result[ObjectIdentifier(panel)] = CGPoint(x: x, y: y)
@@ -265,14 +266,20 @@ final class FloatPreviewController {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // NSEvent properties are nonisolated; inspect here, touch main-actor state inside.
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let isCmdW = mods == .command && event.charactersIgnoringModifiers?.lowercased() == "w"
+            let key = event.charactersIgnoringModifiers?.lowercased()
+            let isCmdW = mods == .command && key == "w"
+            let isCmdE = mods == .command && key == "e"
             let isSpace = mods.isEmpty && event.keyCode == 49
-            guard isCmdW || isSpace else { return event }
+            guard isCmdW || isCmdE || isSpace else { return event }
             var consumed = false
             MainActor.assumeIsolated {
                 guard let self, let panel = self.panelUnderPointer() else { return }
                 if isCmdW {
                     self.remove(panel, animated: true)
+                    consumed = true
+                } else if isCmdE {
+                    // Open the hovered capture in the editor (the card removes itself first).
+                    self.cardViews[ObjectIdentifier(panel)]?.onAnnotate?()
                     consumed = true
                 } else if isSpace, let view = self.cardViews[ObjectIdentifier(panel)], view.quickLookURL != nil {
                     panel.makeFirstResponder(view)
