@@ -436,7 +436,7 @@ final class OverlayView: NSView {
         origin.x = min(max(bounds.minX + 2, origin.x), bounds.maxX - boxW - 2)
         let box = CGRect(origin: origin, size: CGSize(width: boxW, height: boxH))
 
-        NSColor.black.withAlphaComponent(0.65).setFill()
+        GlassTokens.Fixed.dimensionPill.setFill()
         NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
         (text as NSString).draw(
             at: CGPoint(x: box.minX + padding, y: box.minY + padding / 2),

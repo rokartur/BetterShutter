@@ -118,10 +118,15 @@ private final class PinImageView: NSView {
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.25).cgColor
+        layer?.borderColor = GlassTokens.cg(GlassTokens.pinBorder, for: self)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.borderColor = GlassTokens.cg(GlassTokens.pinBorder, for: self)
+    }
 
     override var acceptsFirstResponder: Bool { true }
 

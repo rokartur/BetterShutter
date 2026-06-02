@@ -63,7 +63,7 @@ final class WebcamOverlay {
         host.layer?.cornerRadius = size / 2
         host.layer?.masksToBounds = true
         host.layer?.borderWidth = 3
-        host.layer?.borderColor = NSColor.white.withAlphaComponent(0.9).cgColor
+        host.layer?.borderColor = GlassTokens.Fixed.webcamBorder.cgColor
 
         let preview = AVCaptureVideoPreviewLayer(session: box.session)
         preview.videoGravity = .resizeAspectFill

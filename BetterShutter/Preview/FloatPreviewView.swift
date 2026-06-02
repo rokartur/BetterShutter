@@ -38,8 +38,8 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     private var trackingArea: NSTrackingArea?
     private let thumbnail: NSImage
 
-    private let toolbar = NSView()
-    private let closeButton = NSButton()
+    private let toolbar = GlassPanelView(cornerRadius: GlassTokens.Radius.bar)
+    private var closeButton: NSView!
     private let scrim = CAGradientLayer()
     private var controlsVisible = false
 
@@ -53,13 +53,12 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         layer?.cornerRadius = corner
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        // Fixed 16:9 tile: a dark backing (the letterbox frame for non-16:9 captures) plus a
-        // hairline border so the card separates from the desktop behind it.
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        // Fixed 16:9 tile: a backing (the letterbox frame for non-16:9 captures) plus a hairline
+        // border so the card separates from the desktop behind it. Both adapt to light/dark.
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.16).cgColor
         setupScrim()
         setupControls()
+        applyAppearanceColors()
         setControls(visible: false, animated: false)
     }
 
@@ -101,17 +100,26 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     /// the toolbar.
     private func setupScrim() {
         // Dark end at the BOTTOM (under the toolbar). Layer geometry is bottom-up, so start at the
-        // top (clear) and end at the bottom (black).
-        scrim.colors = [
-            NSColor.clear.cgColor,
-            NSColor.black.withAlphaComponent(0.55).cgColor,
-        ]
+        // top (clear) and end at the bottom (dark). Colors are set in `applyAppearanceColors`.
         scrim.startPoint = CGPoint(x: 0.5, y: 1)
         scrim.endPoint = CGPoint(x: 0.5, y: 0)
         scrim.locations = [0.45, 1.0]
         scrim.cornerRadius = corner
         scrim.cornerCurve = .continuous
         layer?.addSublayer(scrim)
+    }
+
+    /// (Re)applies the appearance-dependent layer colors. Must run on every effective-appearance
+    /// change because a CALayer's `cgColor` is captured at assignment time and won't auto-adapt.
+    private func applyAppearanceColors() {
+        layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
+        layer?.borderColor = GlassTokens.cg(GlassTokens.hairline, for: self)
+        scrim.colors = [NSColor.clear.cgColor, GlassTokens.cg(GlassTokens.scrimBottom, for: self)]
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
     }
 
     private func setupControls() {
@@ -128,42 +136,33 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        toolbar.wantsLayer = true
-        toolbar.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.5).cgColor
-        toolbar.layer?.cornerRadius = 13
-        toolbar.layer?.cornerCurve = .continuous
         toolbar.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.addSubview(stack)
+        toolbar.contentView.addSubview(stack)
         addSubview(toolbar)
 
+        // Fixed glass-pill size (5 × 28pt buttons + 4 × 6pt gaps + insets). A fixed size — rather than
+        // tying the glass view to the stack — avoids a layout-recursion loop with NSGlassEffectView
+        // re-laying out its contentView.
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: toolbar.topAnchor, constant: 5),
-            stack.bottomAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: -5),
+            stack.centerXAnchor.constraint(equalTo: toolbar.contentView.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: toolbar.contentView.centerYAnchor),
+            toolbar.widthAnchor.constraint(equalToConstant: 180),
+            toolbar.heightAnchor.constraint(equalToConstant: 38),
             toolbar.centerXAnchor.constraint(equalTo: centerXAnchor),
             toolbar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
 
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Dismiss")?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .bold))
-        closeButton.imagePosition = .imageOnly
-        closeButton.isBordered = false
-        closeButton.contentTintColor = .white
-        closeButton.bezelStyle = .regularSquare
-        closeButton.target = self
-        closeButton.action = #selector(closeTapped)
-        closeButton.toolTip = "Dismiss (⌘W)"
-        closeButton.wantsLayer = true
-        closeButton.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
-        closeButton.layer?.cornerRadius = 11
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(closeButton)
+        let close = GlassIconButton.make(symbol: "xmark", tooltip: "Dismiss (⌘W)",
+                                         target: self, action: #selector(closeTapped),
+                                         pointSize: 10, standalone: true)
+        close.translatesAutoresizingMaskIntoConstraints = false
+        closeButton = close
+        addSubview(close)
         NSLayoutConstraint.activate([
-            closeButton.widthAnchor.constraint(equalToConstant: 22),
-            closeButton.heightAnchor.constraint(equalToConstant: 22),
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            closeButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            close.widthAnchor.constraint(equalToConstant: 22),
+            close.heightAnchor.constraint(equalToConstant: 22),
+            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            close.topAnchor.constraint(equalTo: topAnchor, constant: 8),
         ])
     }
 
@@ -174,7 +173,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         button.imagePosition = .imageOnly
         button.isBordered = false
         button.bezelStyle = .regularSquare
-        button.contentTintColor = .white
+        button.contentTintColor = .labelColor
         button.toolTip = label
         button.setAccessibilityLabel(label)
         button.widthAnchor.constraint(equalToConstant: 28).isActive = true

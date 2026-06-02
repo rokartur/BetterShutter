@@ -56,7 +56,11 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         rangeLabel.textColor = .secondaryLabelColor
 
         let export = NSButton(title: "Save Trimmed", target: self, action: #selector(exportTapped))
-        export.bezelStyle = .rounded
+        if #available(macOS 26.0, *) {
+            export.bezelStyle = .glass
+        } else {
+            export.bezelStyle = .rounded
+        }
         export.keyEquivalent = "\r"
         let bottom = NSStackView(views: [rangeLabel, NSView(), export])
         bottom.translatesAutoresizingMaskIntoConstraints = false
@@ -66,16 +70,28 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         stack.alignment = .leading
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+
+        // The trim controls ride a Liquid Glass bar (regular glass on 26, vibrancy fallback below).
+        let controlBar = GlassPanelView(cornerRadius: GlassTokens.Radius.bar)
+        controlBar.translatesAutoresizingMaskIntoConstraints = false
+        controlBar.contentView.addSubview(stack)
+        content.addSubview(controlBar)
 
         NSLayoutConstraint.activate([
             playerView.topAnchor.constraint(equalTo: content.topAnchor),
             playerView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             playerView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: playerView.bottomAnchor, constant: 10),
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -14),
+            playerView.bottomAnchor.constraint(equalTo: controlBar.topAnchor, constant: -10),
+
+            controlBar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            controlBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            controlBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
+            // Fixed height (not tied to the stack) avoids a layout-recursion loop with the glass
+            // view re-laying out its contentView.
+            controlBar.heightAnchor.constraint(equalToConstant: 116),
+            stack.leadingAnchor.constraint(equalTo: controlBar.contentView.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: controlBar.contentView.trailingAnchor, constant: -16),
+            stack.centerYAnchor.constraint(equalTo: controlBar.contentView.centerYAnchor),
             bottom.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         rangeChanged()

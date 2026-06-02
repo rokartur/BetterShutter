@@ -38,6 +38,7 @@ final class CaptureActionBar: NSView {
 
     var onAction: ((OverlayAction) -> Void)?
     var onCancel: (() -> Void)?
+    private var separatorView: NSView?
 
     private static let button: CGFloat = 34
     private static let gap: CGFloat = 3
@@ -74,8 +75,9 @@ final class CaptureActionBar: NSView {
         x += Self.separatorSlot - Self.gap
         let sep = NSView(frame: NSRect(x: x - Self.separatorSlot / 2, y: Self.inset + 5, width: 1, height: Self.button - 10))
         sep.wantsLayer = true
-        sep.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        sep.layer?.backgroundColor = GlassTokens.cg(GlassTokens.separator, for: self)
         glass.contentView.addSubview(sep)
+        separatorView = sep
 
         let cancel = makeButton(symbol: "xmark", tooltip: "Cancel (esc)")
         cancel.target = self
@@ -86,6 +88,11 @@ final class CaptureActionBar: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        separatorView?.layer?.backgroundColor = GlassTokens.cg(GlassTokens.separator, for: self)
+    }
 
     private func makeButton(symbol: String, tooltip: String) -> NSButton {
         let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)

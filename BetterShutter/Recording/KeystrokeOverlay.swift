@@ -103,7 +103,7 @@ final class KeystrokeOverlay {
 
         let pill = NSView()
         pill.wantsLayer = true
-        pill.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.75).cgColor
+        pill.layer?.backgroundColor = GlassTokens.Fixed.keystrokePill.cgColor
         pill.layer?.cornerRadius = 10
         pill.layer?.cornerCurve = .continuous
         pill.translatesAutoresizingMaskIntoConstraints = false

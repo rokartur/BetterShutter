@@ -60,8 +60,8 @@ final class ClickHighlighter {
         let ring = CAShapeLayer()
         ring.frame = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
         ring.path = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: radius * 2, height: radius * 2), transform: nil)
-        ring.fillColor = NSColor.systemYellow.withAlphaComponent(0.30).cgColor
-        ring.strokeColor = NSColor.systemYellow.cgColor
+        ring.fillColor = GlassTokens.Fixed.clickRingFill.cgColor
+        ring.strokeColor = GlassTokens.Fixed.clickRingStroke.cgColor
         ring.lineWidth = 2
         ring.opacity = 0
         host.addSublayer(ring)
