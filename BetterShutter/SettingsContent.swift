@@ -14,7 +14,11 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
                         iconStyle: .solid(SettingsColor(hex: 0x5E5CE6))),
             SettingsTab(id: "capture", title: "Capture", icon: "camera.viewfinder",
                         iconStyle: .solid(SettingsColor(hex: 0x0A84FF))),
-            SettingsTab(id: "annotation", title: "Annotation", icon: "pencil.tip.crop.circle",
+            SettingsTab(id: "overlay", title: "Overlay", icon: "viewfinder",
+                        iconStyle: .solid(SettingsColor(hex: 0x5AC8FA))),
+            SettingsTab(id: "recording", title: "Recording", icon: "video.fill",
+                        iconStyle: .solid(SettingsColor(hex: 0xFF453A))),
+            SettingsTab(id: "editor", title: "Editor", icon: "pencil.tip.crop.circle",
                         iconStyle: .solid(SettingsColor(hex: 0xFF375F))),
             SettingsTab(id: "beautify", title: "Beautify", icon: "wand.and.stars",
                         iconStyle: .solid(SettingsColor(hex: 0xBF5AF2))),
@@ -35,16 +39,30 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
             SettingsSearchItem(id: "shortcuts.region", tabID: "shortcuts", sectionAnchor: "shortcuts.capture",
                                title: "Capture Region shortcut", tabTitle: "Shortcuts", sectionTitle: "Capture",
                                keywords: ["hotkey", "shortcut", "region", "selection"]),
+            SettingsSearchItem(id: "overlay.magnifier", tabID: "overlay", sectionAnchor: "overlay.main",
+                               title: "Show magnifier loupe", tabTitle: "Overlay", sectionTitle: "Selection",
+                               keywords: ["zoom", "loupe", "pixel", "color"]),
+            SettingsSearchItem(id: "recording.audio", tabID: "recording", sectionAnchor: "recording.audio",
+                               title: "Record system audio", tabTitle: "Recording", sectionTitle: "Audio",
+                               keywords: ["sound", "audio", "system", "record"]),
+            SettingsSearchItem(id: "editor.tools", tabID: "editor", sectionAnchor: "editor.tools",
+                               title: "Editor tool shortcuts", tabTitle: "Editor", sectionTitle: "Tool Shortcuts",
+                               keywords: ["key", "tool", "shortcut", "single-key"]),
             SettingsSearchItem(id: "output.location", tabID: "output", sectionAnchor: "output.files",
                                title: "Save location", tabTitle: "Output", sectionTitle: "Files",
                                keywords: ["folder", "directory", "save", "location"]),
+            SettingsSearchItem(id: "output.quality", tabID: "output", sectionAnchor: "output.files",
+                               title: "Compression quality", tabTitle: "Output", sectionTitle: "Files",
+                               keywords: ["jpeg", "quality", "compression", "heic", "webp"]),
         ],
         contentProvider: { tab, _ in
             switch tab.id {
             case "general": return GeneralSettingsTab()
             case "shortcuts": return ShortcutsSettingsTab()
             case "capture": return CaptureSettingsTab()
-            case "annotation": return AnnotationSettingsTab()
+            case "overlay": return OverlaySettingsTab()
+            case "recording": return RecordingSettingsTab()
+            case "editor": return EditorSettingsTab()
             case "beautify": return BeautifySettingsTab()
             case "output": return OutputSettingsTab()
             case "advanced": return AdvancedSettingsTab()
@@ -142,25 +160,6 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: recording, title: "Record GIF",
                     subtitle: "Record the display to an animated GIF.", name: .recordGIF,
                     searchItemID: nil)
-
-        let tools = addSection(title: "Editor Tools", anchor: "shortcuts.tools")
-        for (index, tool) in ToolKind.allCases.enumerated() {
-            let field = NSTextField(string: String(tool.effectiveShortcutKey))
-            field.alignment = .center
-            field.tag = index
-            field.target = self
-            field.action = #selector(toolKeyChanged(_:))
-            field.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            addRow(to: tools, title: tool.label, subtitle: "Single-key shortcut in the editor.", accessory: field)
-        }
-    }
-
-    @objc private func toolKeyChanged(_ sender: NSTextField) {
-        guard ToolKind.allCases.indices.contains(sender.tag) else { return }
-        let tool = ToolKind.allCases[sender.tag]
-        let key = sender.stringValue.lowercased().first
-        Preferences.setEditorToolKey(key, for: tool)
-        sender.stringValue = String(tool.effectiveShortcutKey)
     }
 
     private func addRecorder(
@@ -192,14 +191,30 @@ final class CaptureSettingsTab: SettingsTabViewController {
         downscale.action = #selector(toggleDownscale(_:))
         addRow(to: behavior, title: "Downscale Retina to 1×",
                subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
+    }
 
-        let overlay = addSection(title: "Overlay", anchor: "capture.overlay")
+    @objc private func changeAfterAction(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if AfterCaptureAction.allCases.indices.contains(index) {
+            Preferences.afterCaptureAction = AfterCaptureAction.allCases[index]
+        }
+    }
+
+    @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
+}
+
+// MARK: - Overlay
+
+final class OverlaySettingsTab: SettingsTabViewController {
+    override func setupContent() {
+        let overlay = addSection(title: "Selection", anchor: "overlay.main")
         let magnifier = NSSwitch()
         magnifier.state = Preferences.magnifierEnabled ? .on : .off
         magnifier.target = self
         magnifier.action = #selector(toggleMagnifier(_:))
         addRow(to: overlay, title: "Show magnifier loupe",
-               subtitle: "Pixel-accurate zoom with a color readout while selecting.", accessory: magnifier)
+               subtitle: "Pixel-accurate zoom with a color readout while selecting.",
+               accessory: magnifier, searchItemID: "overlay.magnifier")
 
         let sound = NSSwitch()
         sound.state = Preferences.captureSoundEnabled ? .on : .off
@@ -213,56 +228,70 @@ final class CaptureSettingsTab: SettingsTabViewController {
         shadow.action = #selector(toggleWindowShadow(_:))
         addRow(to: overlay, title: "Include window shadow",
                subtitle: "Keep the drop shadow when capturing a single window.", accessory: shadow)
+    }
 
-        let recording = addSection(title: "Recording", anchor: "capture.recording")
-        let audio = NSSwitch()
-        audio.state = Preferences.recordSystemAudio ? .on : .off
-        audio.target = self
-        audio.action = #selector(toggleRecordAudio(_:))
-        addRow(to: recording, title: "Record system audio",
-               subtitle: "Include computer audio in screen recordings.", accessory: audio)
+    @objc private func toggleMagnifier(_ sender: NSSwitch) { Preferences.magnifierEnabled = (sender.state == .on) }
+    @objc private func toggleWindowShadow(_ sender: NSSwitch) { Preferences.includeWindowShadow = (sender.state == .on) }
+    @objc private func toggleSound(_ sender: NSSwitch) { Preferences.captureSoundEnabled = (sender.state == .on) }
+}
 
-        let clicks = NSSwitch()
-        clicks.state = Preferences.highlightClicks ? .on : .off
-        clicks.target = self
-        clicks.action = #selector(toggleHighlightClicks(_:))
-        addRow(to: recording, title: "Highlight mouse clicks",
-               subtitle: "Show an animated ring at each click in recordings.", accessory: clicks)
+// MARK: - Recording
 
-        let cursor = NSSwitch()
-        cursor.state = Preferences.showCursorInRecording ? .on : .off
-        cursor.target = self
-        cursor.action = #selector(toggleShowCursor(_:))
-        addRow(to: recording, title: "Show cursor",
-               subtitle: "Include the mouse pointer in recordings.", accessory: cursor)
+final class RecordingSettingsTab: SettingsTabViewController {
+    override func setupContent() {
+        let audio = addSection(title: "Audio", anchor: "recording.audio")
+        let systemAudio = NSSwitch()
+        systemAudio.state = Preferences.recordSystemAudio ? .on : .off
+        systemAudio.target = self
+        systemAudio.action = #selector(toggleRecordAudio(_:))
+        addRow(to: audio, title: "Record system audio",
+               subtitle: "Include computer audio in screen recordings.",
+               accessory: systemAudio, searchItemID: "recording.audio")
 
         let mic = NSSwitch()
         mic.state = Preferences.recordMicrophone ? .on : .off
         mic.target = self
         mic.action = #selector(toggleRecordMic(_:))
-        addRow(to: recording, title: "Record microphone",
+        addRow(to: audio, title: "Record microphone",
                subtitle: "Add narration from the mic as a second audio track.", accessory: mic)
 
+        let cursor = addSection(title: "Cursor & Clicks", anchor: "recording.cursor")
+        let showCursor = NSSwitch()
+        showCursor.state = Preferences.showCursorInRecording ? .on : .off
+        showCursor.target = self
+        showCursor.action = #selector(toggleShowCursor(_:))
+        addRow(to: cursor, title: "Show cursor",
+               subtitle: "Include the mouse pointer in recordings.", accessory: showCursor)
+
+        let clicks = NSSwitch()
+        clicks.state = Preferences.highlightClicks ? .on : .off
+        clicks.target = self
+        clicks.action = #selector(toggleHighlightClicks(_:))
+        addRow(to: cursor, title: "Highlight mouse clicks",
+               subtitle: "Show an animated ring at each click in recordings.", accessory: clicks)
+
+        let overlays = addSection(title: "Overlays", anchor: "recording.overlays")
         let webcam = NSSwitch()
         webcam.state = Preferences.showWebcam ? .on : .off
         webcam.target = self
         webcam.action = #selector(toggleWebcam(_:))
-        addRow(to: recording, title: "Webcam overlay",
+        addRow(to: overlays, title: "Webcam overlay",
                subtitle: "Float a round webcam bubble into the recording.", accessory: webcam)
 
         let keys = NSSwitch()
         keys.state = Preferences.showKeystrokes ? .on : .off
         keys.target = self
         keys.action = #selector(toggleKeystrokes(_:))
-        addRow(to: recording, title: "Show keystrokes",
+        addRow(to: overlays, title: "Show keystrokes",
                subtitle: "Display pressed keys (needs Input Monitoring permission).", accessory: keys)
 
+        let quality = addSection(title: "Quality", anchor: "recording.quality")
         let fps = NSPopUpButton()
         fps.addItems(withTitles: ["30 fps", "60 fps"])
         fps.selectItem(withTitle: Preferences.recordingFPS == 30 ? "30 fps" : "60 fps")
         fps.target = self
         fps.action = #selector(changeFPS(_:))
-        addRow(to: recording, title: "Frame rate",
+        addRow(to: quality, title: "Frame rate",
                subtitle: "Higher is smoother; lower makes smaller files.", accessory: fps)
     }
 
@@ -276,82 +305,13 @@ final class CaptureSettingsTab: SettingsTabViewController {
     @objc private func toggleKeystrokes(_ sender: NSSwitch) { Preferences.showKeystrokes = (sender.state == .on) }
     @objc private func toggleHighlightClicks(_ sender: NSSwitch) { Preferences.highlightClicks = (sender.state == .on) }
     @objc private func toggleShowCursor(_ sender: NSSwitch) { Preferences.showCursorInRecording = (sender.state == .on) }
-    @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
-
-    @objc private func changeAfterAction(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem
-        if AfterCaptureAction.allCases.indices.contains(index) {
-            Preferences.afterCaptureAction = AfterCaptureAction.allCases[index]
-        }
-    }
-
-    @objc private func toggleMagnifier(_ sender: NSSwitch) { Preferences.magnifierEnabled = (sender.state == .on) }
-    @objc private func toggleWindowShadow(_ sender: NSSwitch) { Preferences.includeWindowShadow = (sender.state == .on) }
-    @objc private func toggleSound(_ sender: NSSwitch) { Preferences.captureSoundEnabled = (sender.state == .on) }
 }
 
-// MARK: - Output
+// MARK: - Editor
 
-final class OutputSettingsTab: SettingsTabViewController {
-    private let folderButton = NSButton(title: "", target: nil, action: nil)
-    private let templateField = NSTextField()
-
+final class EditorSettingsTab: SettingsTabViewController {
     override func setupContent() {
-        let files = addSection(title: "Files", anchor: "output.files")
-
-        folderButton.bezelStyle = .rounded
-        folderButton.title = Preferences.saveDirectory.lastPathComponent
-        folderButton.target = self
-        folderButton.action = #selector(chooseFolder)
-        addRow(to: files, title: "Save location",
-               subtitle: "Where screenshots are written.", accessory: folderButton,
-               searchItemID: "output.location")
-
-        let formatPopup = NSPopUpButton()
-        for format in ImageFileFormat.allCases { formatPopup.addItem(withTitle: format.presentableName) }
-        formatPopup.selectItem(withTitle: Preferences.format.presentableName)
-        formatPopup.target = self
-        formatPopup.action = #selector(changeFormat(_:))
-        addRow(to: files, title: "Image format", subtitle: "PNG is lossless; JPEG is smaller.", accessory: formatPopup)
-
-        templateField.stringValue = Preferences.filenameTemplate
-        templateField.placeholderString = "Screenshot {date} at {time}"
-        templateField.target = self
-        templateField.action = #selector(changeTemplate(_:))
-        templateField.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        addRow(to: files, title: "Filename template",
-               subtitle: "Tokens: {date} {time} {datetime} {n} {mode}.", accessory: templateField)
-    }
-
-    @objc private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = Preferences.saveDirectory
-        if panel.runModal() == .OK, let url = panel.url {
-            Preferences.saveDirectory = url
-            folderButton.title = url.lastPathComponent
-        }
-    }
-
-    @objc private func changeFormat(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem
-        if ImageFileFormat.allCases.indices.contains(index) {
-            Preferences.format = ImageFileFormat.allCases[index]
-        }
-    }
-
-    @objc private func changeTemplate(_ sender: NSTextField) {
-        Preferences.filenameTemplate = sender.stringValue
-    }
-}
-
-// MARK: - Annotation
-
-final class AnnotationSettingsTab: SettingsTabViewController {
-    override func setupContent() {
-        let steps = addSection(title: "Step Badges", anchor: "annotation.steps")
+        let steps = addSection(title: "Step Badges", anchor: "editor.steps")
 
         let format = NSPopUpButton()
         for f in StepFormat.allCases { format.addItem(withTitle: f.presentableName) }
@@ -368,6 +328,23 @@ final class AnnotationSettingsTab: SettingsTabViewController {
         start.action = #selector(changeStepStart(_:))
         start.widthAnchor.constraint(equalToConstant: 56).isActive = true
         addRow(to: steps, title: "Start at", subtitle: "The first badge's number.", accessory: start)
+
+        let tools = addSection(title: "Tool Shortcuts", anchor: "editor.tools")
+        for (index, tool) in ToolKind.allCases.enumerated() {
+            let field = NSTextField(string: String(tool.effectiveShortcutKey))
+            field.alignment = .center
+            field.tag = index
+            field.target = self
+            field.action = #selector(toolKeyChanged(_:))
+            field.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            addRow(to: tools, title: tool.label, subtitle: "Single-key shortcut in the editor.", accessory: field)
+        }
+
+        let colors = addSection(title: "Colors", anchor: "editor.colors")
+        let clearColors = NSButton(title: "Clear", target: self, action: #selector(clearColors))
+        clearColors.bezelStyle = .rounded
+        addRow(to: colors, title: "Saved colors",
+               subtitle: "Forget the editor's saved color palette.", accessory: clearColors)
     }
 
     @objc private func changeStepFormat(_ sender: NSPopUpButton) {
@@ -378,6 +355,18 @@ final class AnnotationSettingsTab: SettingsTabViewController {
     @objc private func changeStepStart(_ sender: NSTextField) {
         Preferences.stepStart = max(1, sender.integerValue)
         sender.integerValue = Preferences.stepStart
+    }
+
+    @objc private func toolKeyChanged(_ sender: NSTextField) {
+        guard ToolKind.allCases.indices.contains(sender.tag) else { return }
+        let tool = ToolKind.allCases[sender.tag]
+        let key = sender.stringValue.lowercased().first
+        Preferences.setEditorToolKey(key, for: tool)
+        sender.stringValue = String(tool.effectiveShortcutKey)
+    }
+
+    @objc private func clearColors() {
+        Preferences.recentColors = []
     }
 }
 
@@ -416,25 +405,91 @@ final class BeautifySettingsTab: SettingsTabViewController {
     }
 }
 
+// MARK: - Output
+
+final class OutputSettingsTab: SettingsTabViewController {
+    private let folderButton = NSButton(title: "", target: nil, action: nil)
+    private let templateField = NSTextField()
+    private let qualitySlider = NSSlider()
+
+    override func setupContent() {
+        let files = addSection(title: "Files", anchor: "output.files")
+
+        folderButton.bezelStyle = .rounded
+        folderButton.title = Preferences.saveDirectory.lastPathComponent
+        folderButton.target = self
+        folderButton.action = #selector(chooseFolder)
+        addRow(to: files, title: "Save location",
+               subtitle: "Where screenshots are written.", accessory: folderButton,
+               searchItemID: "output.location")
+
+        let formatPopup = NSPopUpButton()
+        for format in ImageFileFormat.allCases { formatPopup.addItem(withTitle: format.presentableName) }
+        formatPopup.selectItem(withTitle: Preferences.format.presentableName)
+        formatPopup.target = self
+        formatPopup.action = #selector(changeFormat(_:))
+        addRow(to: files, title: "Image format", subtitle: "PNG is lossless; JPEG is smaller.", accessory: formatPopup)
+
+        qualitySlider.minValue = 0.1
+        qualitySlider.maxValue = 1.0
+        qualitySlider.doubleValue = Preferences.jpegQuality
+        qualitySlider.isContinuous = false
+        qualitySlider.isEnabled = Preferences.format.isLossy
+        qualitySlider.target = self
+        qualitySlider.action = #selector(changeQuality(_:))
+        qualitySlider.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        addRow(to: files, title: "Compression quality",
+               subtitle: "For JPEG, HEIC, and WebP. Higher keeps more detail; lower makes smaller files.",
+               accessory: qualitySlider, searchItemID: "output.quality")
+
+        templateField.stringValue = Preferences.filenameTemplate
+        templateField.placeholderString = "Screenshot {date} at {time}"
+        templateField.target = self
+        templateField.action = #selector(changeTemplate(_:))
+        templateField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        addRow(to: files, title: "Filename template",
+               subtitle: "Tokens: {date} {time} {datetime} {n} {mode}.", accessory: templateField)
+    }
+
+    @objc private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = Preferences.saveDirectory
+        if panel.runModal() == .OK, let url = panel.url {
+            Preferences.saveDirectory = url
+            folderButton.title = url.lastPathComponent
+        }
+    }
+
+    @objc private func changeFormat(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if ImageFileFormat.allCases.indices.contains(index) {
+            Preferences.format = ImageFileFormat.allCases[index]
+        }
+        qualitySlider.isEnabled = Preferences.format.isLossy
+    }
+
+    @objc private func changeQuality(_ sender: NSSlider) {
+        Preferences.jpegQuality = sender.doubleValue
+    }
+
+    @objc private func changeTemplate(_ sender: NSTextField) {
+        Preferences.filenameTemplate = sender.stringValue
+    }
+}
+
 // MARK: - Advanced
 
 final class AdvancedSettingsTab: SettingsTabViewController {
     override func setupContent() {
         let maintenance = addSection(title: "Maintenance", anchor: "advanced.maintenance")
 
-        let clearColors = NSButton(title: "Clear", target: self, action: #selector(clearColors))
-        clearColors.bezelStyle = .rounded
-        addRow(to: maintenance, title: "Saved colors",
-               subtitle: "Forget the editor's saved color palette.", accessory: clearColors)
-
         let reset = NSButton(title: "Reset…", target: self, action: #selector(resetAll))
         reset.bezelStyle = .rounded
         addRow(to: maintenance, title: "Reset all settings",
                subtitle: "Restore every preference to its default.", accessory: reset)
-    }
-
-    @objc private func clearColors() {
-        Preferences.recentColors = []
     }
 
     @objc private func resetAll() {

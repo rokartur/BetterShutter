@@ -281,7 +281,8 @@ nonisolated enum Preferences {
     }
 
     static var magnifierEnabled: Bool {
-        get { defaults.object(forKey: Key.magnifier) as? Bool ?? true }
+        // Off by default for a clean, Snapzy-style selection (no zoom loupe). Opt back in via Settings.
+        get { defaults.object(forKey: Key.magnifier) as? Bool ?? false }
         set { defaults.set(newValue, forKey: Key.magnifier) }
     }
 
