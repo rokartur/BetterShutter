@@ -16,6 +16,10 @@ struct AnnotationStyle {
     var arrowStyle: ArrowStyle = .straight
     /// Rounded-corner radius for rectangles, in image pixels (0 = square corners).
     var cornerRadius: CGFloat = 0
+    /// Redaction strength for pixelate/blur, normalized 0...1. Independent of the region's size —
+    /// the slider value alone drives the mosaic block size / blur radius (scaled to the image), so a
+    /// small and a large redaction respect the same chosen strength.
+    var redactionStrength: CGFloat = 0.5
 
     /// Dash pattern for the current style (empty = solid line).
     var dashPattern: [CGFloat] {

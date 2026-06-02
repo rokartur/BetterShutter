@@ -30,6 +30,7 @@ nonisolated struct CodableStyle: Codable, Sendable {
     var dash: String?
     var arrowStyle: String?
     var cornerRadius: Double?
+    var redactionStrength: Double?
 }
 
 /// One annotation, flattened to a tagged record. Only the fields relevant to `kind` are populated.
@@ -101,7 +102,8 @@ enum AnnotationProjectIO {
                                  fillMode: e.style.fillMode.rawValue,
                                  dash: e.style.dash.rawValue,
                                  arrowStyle: e.style.arrowStyle.rawValue,
-                                 cornerRadius: Double(e.style.cornerRadius))
+                                 cornerRadius: Double(e.style.cornerRadius),
+                                 redactionStrength: Double(e.style.redactionStrength))
         func twoPoint(_ kind: String, _ t: TwoPointElement) -> CodableAnnotation {
             CodableAnnotation(kind: kind, style: style, start: t.start, end: t.end)
         }
@@ -150,6 +152,7 @@ enum AnnotationProjectIO {
                                     dash: DashStyle(rawValue: c.style.dash ?? "solid") ?? .solid)
         style.arrowStyle = ArrowStyle(rawValue: c.style.arrowStyle ?? "straight") ?? .straight
         style.cornerRadius = CGFloat(c.style.cornerRadius ?? 0)
+        style.redactionStrength = CGFloat(c.style.redactionStrength ?? 0.5)
         func twoPoint<T: TwoPointElement>(_ type: T.Type) -> T {
             let e = T(start: c.start ?? .zero, style: style)
             e.end = c.end ?? c.start ?? .zero

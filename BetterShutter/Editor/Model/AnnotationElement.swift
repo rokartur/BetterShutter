@@ -356,11 +356,12 @@ final class MeasureElement: TwoPointElement {
 }
 
 final class PixelateElement: TwoPointElement {
-    /// Mosaic block size for a region. Uses a high floor (16px) and grows with the region so even a
-    /// thin text strip is averaged into blocks coarse enough to resist reconstruction — pixelate as
-    /// redaction, not decoration.
-    nonisolated static func secureScale(width: CGFloat, height: CGFloat) -> CGFloat {
-        max(16, min(width, height) / 6)
+    /// Mosaic block size, driven by the redaction-strength slider and scaled to the **image** (not the
+    /// region), so a small and a large pixelate respect the same chosen strength. Floored so even the
+    /// weakest setting still averages enough to resist reconstruction.
+    nonisolated static func blockSize(strength: CGFloat, imageSize: CGSize) -> CGFloat {
+        let maxBlock = max(40, min(imageSize.width, imageSize.height) / 8)
+        return max(8, strength * maxBlock)
     }
 
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
@@ -376,7 +377,7 @@ final class PixelateElement: TwoPointElement {
         let ci = CIImage(cgImage: crop)
         let filter = CIFilter.pixellate()
         filter.inputImage = ci
-        filter.scale = Float(Self.secureScale(width: r.width, height: r.height))
+        filter.scale = Float(Self.blockSize(strength: style.redactionStrength, imageSize: rc.imageSize))
         filter.center = CGPoint(x: ci.extent.midX, y: ci.extent.midY)
         guard let output = filter.outputImage?.cropped(to: ci.extent),
               let outCG = rc.ciContext.createCGImage(output, from: ci.extent) else { return }
@@ -400,7 +401,9 @@ final class BlurElement: TwoPointElement {
         let source = CIImage(cgImage: crop)
         let filter = CIFilter.gaussianBlur()
         filter.inputImage = source.clampedToExtent()
-        filter.radius = Float(max(8, min(r.width, r.height) / 8))
+        // Radius driven by the strength slider, scaled to the image — independent of region size.
+        let maxRadius = max(20, min(rc.imageSize.width, rc.imageSize.height) / 12)
+        filter.radius = Float(max(2, style.redactionStrength * maxRadius))
         guard let output = filter.outputImage?.cropped(to: source.extent),
               let outCG = rc.ciContext.createCGImage(output, from: source.extent) else { return }
         cg.draw(outCG, in: r)

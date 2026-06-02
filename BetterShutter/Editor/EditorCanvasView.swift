@@ -793,6 +793,18 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    /// Sets the pixelate/blur redaction strength (0...1). Updates a selected redaction element live so
+    /// its mosaic/blur re-renders at the new strength regardless of its size.
+    func applyRedactionStrength(_ value: CGFloat) {
+        style.redactionStrength = value
+        if let selected, selected is PixelateElement || selected is BlurElement {
+            let before = snapshot()
+            selected.style.redactionStrength = value
+            commit(before, "Strength")
+        }
+        needsDisplay = true
+    }
+
     func flattened() -> CGImage? {
         finishTextEditing()
         return AnnotationRenderer.flatten(base: baseImage, elements: elements, ciContext: ciContext, cropRect: cropRect)
