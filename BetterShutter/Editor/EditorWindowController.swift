@@ -4,26 +4,30 @@ import UniformTypeIdentifiers
 /// Hosts the annotation editor: a tool/style/action bar above the canvas. Copy and Save flatten
 /// the annotations onto the capture at full resolution.
 @MainActor
-final class EditorWindowController: NSWindowController, NSWindowDelegate {
+final class EditorWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
 
     private let canvas: EditorCanvasView
     private let mode: CaptureMode
     private var toolControl: NSSegmentedControl?
     private var colorWell: NSColorWell?
     private let swatches = NSPopUpButton(frame: .zero, pullsDown: true)
+    private var widthSlider: NSSlider?
+    private var strengthSlider: NSSlider?
+    private var transformControl: NSPopUpButton?
+    private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     var onClose: (() -> Void)?
 
     init(image: CapturedImage, mode: CaptureMode, elements: [AnnotationElement] = []) {
         self.canvas = EditorCanvasView(image: image, elements: elements)
         self.mode = mode
 
-        // Floor wide enough for the full tool segmented control (13 tools) + color/stroke + the
-        // Project/Share/Copy/Save/Done action buttons without the left and right stacks overlapping.
-        let minContentWidth: CGFloat = 1000
+        // Floor wide enough for the 13-tool picker plus the Project/Share/Copy/Save/Done actions in
+        // the top toolbar, so it never spills into an overflow (») menu.
+        let minContentWidth: CGFloat = 1240
         let canvasSize = EditorCanvasView.fittedSize(for: image.pixelSize)
         let contentRect = NSRect(x: 0, y: 0,
                                  width: max(canvasSize.width, minContentWidth),
-                                 height: canvasSize.height + 48)
+                                 height: canvasSize.height)
         let window = NSWindow(
             contentRect: contentRect,
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
@@ -31,7 +35,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         )
         window.title = "Edit Screenshot"
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: minContentWidth, height: 240)
+        window.contentMinSize = NSSize(width: minContentWidth, height: 320)
+        window.toolbarStyle = .unified
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -52,13 +57,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private func buildUI() {
         guard let content = window?.contentView else { return }
 
-        let bar = NSView()
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(bar)
-
-        canvas.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(canvas)
-
+        // Split the chrome so nothing has to overflow: the tool picker + file actions ride the top
+        // toolbar, the style controls (color / saved colors / stroke / transform) ride a bottom glass
+        // bar, and the canvas sits between them. Everything stays visible at once.
         let tools = makeToolControl()
         toolControl = tools
         canvas.onToolPicked = { [weak self] kind in
@@ -84,12 +85,56 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let widthSlider = NSSlider(value: Double(canvas.style.strokeWidth), minValue: 1, maxValue: 40,
                                    target: self, action: #selector(widthChanged(_:)))
         widthSlider.translatesAutoresizingMaskIntoConstraints = false
-        widthSlider.widthAnchor.constraint(equalToConstant: 90).isActive = true
+        widthSlider.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        self.widthSlider = widthSlider
 
-        let leftStack = NSStackView(views: [tools, colorWell, swatches, widthSlider, makeTransformControl()])
-        leftStack.spacing = 10
-        leftStack.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(leftStack)
+        // Pixelate/blur redaction strength — size-independent (see AnnotationStyle.redactionStrength).
+        let strengthSlider = NSSlider(value: Double(canvas.style.redactionStrength), minValue: 0, maxValue: 1,
+                                      target: self, action: #selector(strengthChanged(_:)))
+        strengthSlider.translatesAutoresizingMaskIntoConstraints = false
+        strengthSlider.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        strengthSlider.toolTip = "Pixelate / Blur strength"
+        self.strengthSlider = strengthSlider
+
+        let transform = makeTransformControl()
+        self.transformControl = transform
+
+        // Bottom glass style bar.
+        let styleStack = NSStackView(views: [
+            label("Color"), colorWell, swatches,
+            label("Stroke"), widthSlider,
+            label("Strength"), strengthSlider,
+            label("Transform"), transform,
+        ])
+        styleStack.orientation = .horizontal
+        styleStack.alignment = .centerY
+        styleStack.spacing = 8
+        styleStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let styleBar = GlassPanelView(cornerRadius: GlassTokens.Radius.bar)
+        styleBar.translatesAutoresizingMaskIntoConstraints = false
+        styleBar.contentView.addSubview(styleStack)
+        content.addSubview(styleBar)
+
+        canvas.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(canvas)
+
+        NSLayoutConstraint.activate([
+            canvas.topAnchor.constraint(equalTo: content.topAnchor),
+            canvas.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            canvas.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            canvas.bottomAnchor.constraint(equalTo: styleBar.topAnchor, constant: -10),
+
+            styleBar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            styleBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            styleBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
+            // Fixed height (not tied to the stack) avoids a layout-recursion loop with the glass
+            // view re-laying out its contentView.
+            styleBar.heightAnchor.constraint(equalToConstant: 44),
+            styleStack.centerXAnchor.constraint(equalTo: styleBar.contentView.centerXAnchor),
+            styleStack.centerYAnchor.constraint(equalTo: styleBar.contentView.centerYAnchor),
+            styleStack.leadingAnchor.constraint(greaterThanOrEqualTo: styleBar.contentView.leadingAnchor, constant: 14),
+        ])
 
         let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
         project.toolTip = "Save Re-editable Project (.bsproj)"
@@ -98,29 +143,37 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let copy = makeActionButton(title: "Copy", symbol: "doc.on.doc", action: #selector(copyTapped))
         let save = makeActionButton(title: "Save", symbol: "arrow.down.circle", action: #selector(saveTapped))
         let done = makeActionButton(title: "Done", symbol: nil, action: #selector(doneTapped))
-        done.keyEquivalent = "\r"
-        let rightStack = NSStackView(views: [project, share, copy, save, done])
-        rightStack.spacing = 8
-        rightStack.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(rightStack)
+        done.keyEquivalent = "\r"   // NSToolbarItem has no keyEquivalent — keep Done a real default button
 
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: content.topAnchor),
-            bar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            bar.heightAnchor.constraint(equalToConstant: 48),
+        register(.editorTools, tools, label: "Tools")
+        register(.editorProject, project, label: "Project")
+        register(.editorShare, share, label: "Share")
+        register(.editorCopy, copy, label: "Copy")
+        register(.editorSave, save, label: "Save")
+        register(.editorDone, done, label: "Done")
 
-            leftStack.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 12),
-            leftStack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            rightStack.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
-            rightStack.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            rightStack.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor, constant: 16),
+        let toolbar = NSToolbar(identifier: "EditorToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        window?.toolbar = toolbar
+    }
 
-            canvas.topAnchor.constraint(equalTo: bar.bottomAnchor),
-            canvas.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            canvas.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            canvas.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
+    private func label(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: 11)
+        field.textColor = .secondaryLabelColor
+        return field
+    }
+
+    /// Wraps an existing control as a toolbar item, carrying its tooltip. The control keeps its own
+    /// target/action, so all wiring is preserved across the NSToolbar migration.
+    private func register(_ id: NSToolbarItem.Identifier, _ view: NSView, label: String) {
+        let item = NSToolbarItem(itemIdentifier: id)
+        item.view = view
+        item.label = label
+        item.toolTip = view.toolTip ?? label
+        toolbarItems[id] = item
     }
 
     private func makeToolControl() -> NSSegmentedControl {
@@ -176,7 +229,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         image.lockFocus()
         let path = NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 3, yRadius: 3)
         color.setFill(); path.fill()
-        NSColor.black.withAlphaComponent(0.2).setStroke(); path.lineWidth = 0.5; path.stroke()
+        GlassTokens.Fixed.swatchStroke.setStroke(); path.lineWidth = 0.5; path.stroke()
         image.unlockFocus()
         return image
     }
@@ -233,7 +286,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     private func makeActionButton(title: String, symbol: String?, action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
-        button.bezelStyle = .rounded
+        if #available(macOS 26.0, *) {
+            button.bezelStyle = .glass
+        } else {
+            button.bezelStyle = .rounded
+        }
         if let symbol { button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title) }
         button.imagePosition = symbol == nil ? .noImage : .imageLeading
         return button
@@ -273,6 +330,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         if let hex = sender.color.hexString { Preferences.addRecentColor(hex); rebuildSwatches() }
     }
     @objc private func widthChanged(_ sender: NSSlider) { canvas.applyStrokeWidth(CGFloat(sender.doubleValue)) }
+    @objc private func strengthChanged(_ sender: NSSlider) { canvas.applyRedactionStrength(CGFloat(sender.doubleValue)) }
 
     @objc private func saveProjectTapped() {
         guard let window,
@@ -310,4 +368,28 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     @objc private func doneTapped() { close() }
 
     func windowWillClose(_ notification: Notification) { onClose?() }
+
+    // MARK: NSToolbarDelegate
+
+    private var orderedToolbarItems: [NSToolbarItem.Identifier] {
+        [.editorTools, .flexibleSpace,
+         .editorProject, .editorShare, .editorCopy, .editorSave, .editorDone]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { orderedToolbarItems }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { orderedToolbarItems }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        toolbarItems[itemIdentifier]
+    }
+}
+
+private extension NSToolbarItem.Identifier {
+    static let editorTools = NSToolbarItem.Identifier("editor.tools")
+    static let editorProject = NSToolbarItem.Identifier("editor.project")
+    static let editorShare = NSToolbarItem.Identifier("editor.share")
+    static let editorCopy = NSToolbarItem.Identifier("editor.copy")
+    static let editorSave = NSToolbarItem.Identifier("editor.save")
+    static let editorDone = NSToolbarItem.Identifier("editor.done")
 }

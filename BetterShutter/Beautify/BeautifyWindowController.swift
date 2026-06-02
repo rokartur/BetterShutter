@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// Beautify editor: drop a screenshot onto a gradient/solid background with padding, rounded
 /// corners, and a shadow. Live preview re-renders from a downscaled copy; export is full-res.
 @MainActor
-final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
+final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
 
     private let fullBase: CGImage
     private let previewBase: CGImage
@@ -20,6 +20,7 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
     private var framePopup: NSPopUpButton?
     private var aspectPopup: NSPopUpButton?
     private let presetButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
 
     init(image: CapturedImage, mode: CaptureMode) {
         self.fullBase = image.cgImage
@@ -33,6 +34,7 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
         )
         window.title = "Beautify Screenshot"
         window.isReleasedWhenClosed = false
+        window.toolbarStyle = .unified
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -52,11 +54,14 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
 
     private func buildUI() {
         guard let content = window?.contentView else { return }
-        let bar = NSView()
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(bar)
         preview.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(preview)
+        NSLayoutConstraint.activate([
+            preview.topAnchor.constraint(equalTo: content.topAnchor),
+            preview.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            preview.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            preview.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
 
         let presetPopup = NSPopUpButton()
         for preset in BackgroundPreset.all { presetPopup.addItem(withTitle: preset.name) }
@@ -96,42 +101,46 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
         self.framePopup = framePopup
         self.aspectPopup = aspectPopup
 
-        let left = NSStackView(views: [
-            label("Background"), presetPopup, colorWell, imageButton,
-            label("Aspect"), aspectPopup,
-            label("Frame"), framePopup,
-            label("Padding"), padding,
-            label("Corner"), corner,
-            label("Shadow"), shadowToggle,
-            presetButton,
-        ])
-        left.spacing = 8
-        left.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(left)
-
         let copy = makeButton("Copy", "doc.on.doc", #selector(copyTapped))
         let save = makeButton("Save", "arrow.down.circle", #selector(saveTapped))
         let done = makeButton("Done", nil, #selector(doneTapped))
-        done.keyEquivalent = "\r"
-        let right = NSStackView(views: [copy, save, done])
-        right.spacing = 8
-        right.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(right)
+        done.keyEquivalent = "\r"   // NSToolbarItem has no keyEquivalent — keep Done a real default button
 
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: content.topAnchor),
-            bar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            bar.heightAnchor.constraint(equalToConstant: 48),
-            left.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 12),
-            left.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            right.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
-            right.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            preview.topAnchor.constraint(equalTo: bar.bottomAnchor),
-            preview.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            preview.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            preview.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
+        register(.beautifyBackground, group([label("Background"), presetPopup, colorWell, imageButton]), label: "Background")
+        register(.beautifyAspect, group([label("Aspect"), aspectPopup]), label: "Aspect")
+        register(.beautifyFrame, group([label("Frame"), framePopup]), label: "Frame")
+        register(.beautifyPadding, group([label("Padding"), padding]), label: "Padding")
+        register(.beautifyCorner, group([label("Corner"), corner]), label: "Corner")
+        register(.beautifyShadow, group([label("Shadow"), shadowToggle]), label: "Shadow")
+        register(.beautifyPresets, presetButton, label: "Presets")
+        register(.beautifyCopy, copy, label: "Copy")
+        register(.beautifySave, save, label: "Save")
+        register(.beautifyDone, done, label: "Done")
+
+        let toolbar = NSToolbar(identifier: "BeautifyToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        window?.toolbar = toolbar
+    }
+
+    /// Packs a label and its control(s) into one toolbar-item view, preserving the inline pairing the
+    /// old control strip had.
+    private func group(_ views: [NSView]) -> NSView {
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.spacing = 6
+        stack.alignment = .centerY
+        return stack
+    }
+
+    /// Wraps a view as a toolbar item; the contained controls keep their own target/action.
+    private func register(_ id: NSToolbarItem.Identifier, _ view: NSView, label: String) {
+        let item = NSToolbarItem(itemIdentifier: id)
+        item.view = view
+        item.label = label
+        item.toolTip = view.toolTip ?? label
+        toolbarItems[id] = item
     }
 
     private func label(_ text: String) -> NSTextField {
@@ -149,7 +158,11 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
 
     private func makeButton(_ title: String, _ symbol: String?, _ action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
-        button.bezelStyle = .rounded
+        if #available(macOS 26.0, *) {
+            button.bezelStyle = .glass
+        } else {
+            button.bezelStyle = .rounded
+        }
         if let symbol { button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title) }
         button.imagePosition = symbol == nil ? .noImage : .imageLeading
         return button
@@ -350,4 +363,32 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate {
     @objc private func doneTapped() { close() }
 
     func windowWillClose(_ notification: Notification) { onClose?() }
+
+    // MARK: NSToolbarDelegate
+
+    private var orderedToolbarItems: [NSToolbarItem.Identifier] {
+        [.beautifyBackground, .beautifyAspect, .beautifyFrame, .beautifyPadding, .beautifyCorner,
+         .beautifyShadow, .beautifyPresets, .flexibleSpace, .beautifyCopy, .beautifySave, .beautifyDone]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { orderedToolbarItems }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { orderedToolbarItems }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        toolbarItems[itemIdentifier]
+    }
+}
+
+private extension NSToolbarItem.Identifier {
+    static let beautifyBackground = NSToolbarItem.Identifier("beautify.background")
+    static let beautifyAspect = NSToolbarItem.Identifier("beautify.aspect")
+    static let beautifyFrame = NSToolbarItem.Identifier("beautify.frame")
+    static let beautifyPadding = NSToolbarItem.Identifier("beautify.padding")
+    static let beautifyCorner = NSToolbarItem.Identifier("beautify.corner")
+    static let beautifyShadow = NSToolbarItem.Identifier("beautify.shadow")
+    static let beautifyPresets = NSToolbarItem.Identifier("beautify.presets")
+    static let beautifyCopy = NSToolbarItem.Identifier("beautify.copy")
+    static let beautifySave = NSToolbarItem.Identifier("beautify.save")
+    static let beautifyDone = NSToolbarItem.Identifier("beautify.done")
 }
