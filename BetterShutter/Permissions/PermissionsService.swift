@@ -14,13 +14,16 @@ final class PermissionsService {
     func requestAccess() -> Bool { CGRequestScreenCaptureAccess() }
 
     /// Ensures access, prompting / guiding the user if needed. Returns true if already authorized.
-    /// When not authorized it kicks off the request and shows guidance, returning false so the
-    /// caller aborts this capture.
+    /// When not authorized it returns false so the caller aborts this capture.
+    ///
+    /// `requestAccess()` shows the native TCC prompt only while the state is "not determined". Once
+    /// macOS has a stored decision it returns silently and never re-prompts (an app relaunch does
+    /// NOT reset this — only `tccutil reset ScreenCapture <bundleID>` does), so we fall back to our
+    /// own guidance alert pointing at System Settings + relaunch.
     @discardableResult
     func ensureAuthorizedOrGuide() -> Bool {
         if isAuthorized { return true }
-        // Fire the system prompt (first run) then show our guidance covering the relaunch caveat.
-        _ = requestAccess()
+        if requestAccess() { return true }   // native prompt if undetermined; silent if already decided
         presentDeniedAlert()
         return false
     }
