@@ -40,6 +40,44 @@ nonisolated enum AfterCaptureAction: String, CaseIterable, Sendable {
     }
 }
 
+/// How far back the Capture History bar shows past captures. Filters the saved-files view by
+/// modification date — it never deletes the user's files.
+nonisolated enum CaptureHistoryRetention: String, CaseIterable, Sendable {
+    case day1
+    case day3
+    case day7
+    case day14
+    case day30
+    case month3
+    case unlimited
+
+    /// Cutoff age in seconds; `nil` means keep everything.
+    var maxAge: TimeInterval? {
+        let day: TimeInterval = 86_400
+        switch self {
+        case .day1: return day
+        case .day3: return day * 3
+        case .day7: return day * 7
+        case .day14: return day * 14
+        case .day30: return day * 30
+        case .month3: return day * 90
+        case .unlimited: return nil
+        }
+    }
+
+    var presentableName: String {
+        switch self {
+        case .day1: return "1 day"
+        case .day3: return "3 days"
+        case .day7: return "7 days"
+        case .day14: return "14 days"
+        case .day30: return "30 days"
+        case .month3: return "3 months"
+        case .unlimited: return "Unlimited"
+        }
+    }
+}
+
 /// Output image format.
 nonisolated enum ImageFileFormat: String, CaseIterable, Sendable {
     case png
@@ -100,6 +138,13 @@ nonisolated enum Preferences {
         static let stepFormat = "stepFormat"
         static let stepStart = "stepStart"
         static let recentColors = "recentColors"
+        static let historyRetention = "captureHistoryRetention"
+    }
+
+    /// How far back the Capture History bar reaches. Defaults to 30 days.
+    static var captureHistoryRetention: CaptureHistoryRetention {
+        get { CaptureHistoryRetention(rawValue: defaults.string(forKey: Key.historyRetention) ?? "") ?? .day30 }
+        set { defaults.set(newValue.rawValue, forKey: Key.historyRetention) }
     }
 
     /// Recently used / saved editor colors as "#RRGGBB" hex, newest first.

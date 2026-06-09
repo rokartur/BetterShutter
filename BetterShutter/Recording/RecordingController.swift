@@ -112,7 +112,10 @@ final class RecordingController {
             await startTask?.value
             let url = await engine.stop()
             Preferences.recordingInProgressPath = nil
-            if let url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            if let url {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+                Task.detached(priority: .utility) { CaptureHistoryStore.add(fileURL: url) }
+            }
         }
     }
 

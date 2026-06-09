@@ -414,6 +414,11 @@ final class CaptureCoordinator {
         preview.show(item.image, mode: item.mode, savedURL: nil)
     }
 
+    /// Re-show a saved capture as a quick-access card (Capture History "Restore").
+    func reopenPreview(_ image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
+        preview.show(image, mode: mode, savedURL: savedURL)
+    }
+
     /// Restore the most recently dismissed quick-access card.
     func restoreClosedPreview() {
         preview.reopenLastClosed()

@@ -21,6 +21,8 @@ final class CaptureHistory {
         if items.count > limit {
             items.removeLast(items.count - limit)
         }
+        // Persist to the on-disk history archive (off the main thread — it encodes + writes PNG).
+        Task.detached(priority: .utility) { CaptureHistoryStore.add(image.cgImage, mode: mode, date: date) }
     }
 
     func clear() { items.removeAll() }

@@ -191,12 +191,29 @@ final class CaptureSettingsTab: SettingsTabViewController {
         downscale.action = #selector(toggleDownscale(_:))
         addRow(to: behavior, title: "Downscale Retina to 1×",
                subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
+
+        let history = addSection(title: "Capture History", anchor: "capture.history")
+        let retention = NSPopUpButton()
+        for option in CaptureHistoryRetention.allCases { retention.addItem(withTitle: option.presentableName) }
+        retention.selectItem(withTitle: Preferences.captureHistoryRetention.presentableName)
+        retention.target = self
+        retention.action = #selector(changeRetention(_:))
+        addRow(to: history, title: "Keep history for",
+               subtitle: "How far back the Capture History bar shows captures. Your saved files are never deleted.",
+               accessory: retention)
     }
 
     @objc private func changeAfterAction(_ sender: NSPopUpButton) {
         let index = sender.indexOfSelectedItem
         if AfterCaptureAction.allCases.indices.contains(index) {
             Preferences.afterCaptureAction = AfterCaptureAction.allCases[index]
+        }
+    }
+
+    @objc private func changeRetention(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if CaptureHistoryRetention.allCases.indices.contains(index) {
+            Preferences.captureHistoryRetention = CaptureHistoryRetention.allCases[index]
         }
     }
 

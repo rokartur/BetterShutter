@@ -26,7 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
     private var recordingItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
-    private var recentMenuItem: NSMenuItem?
     private var recordingTimer: Timer?
     private var trimController: VideoTrimWindowController?
 
@@ -99,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .recordGIF:            RecordingController.shared.toggleGIF()
         case .recordRegion:         CaptureCoordinator.shared.recordRegion()
         case .capturePreviousArea:  CaptureCoordinator.shared.captureLastRegion()
-        case .openBrowser:          CaptureBrowserWindowController.shared.show()
+        case .openBrowser:          CaptureHistoryPanel.shared.show()
         case .openSettings:         openSettings()
         case .pinLast:              pinLastCapture()
         case .unknown(let raw):     HUD.show("Unknown command: \(raw)")
@@ -201,16 +200,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let recent = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
-        recent.submenu = NSMenu()
-        recent.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "Recent")
-        menu.addItem(recent)
-        recentMenuItem = recent
-
-        let browse = NSMenuItem(title: "Browse Captures…", action: #selector(openBrowser), keyEquivalent: "")
-        browse.target = self
-        browse.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "Browse")
-        menu.addItem(browse)
+        let history = NSMenuItem(title: "Capture History", action: #selector(openHistory), keyEquivalent: "")
+        history.target = self
+        history.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Capture History")
+        menu.addItem(history)
 
         menu.addItem(.separator())
 
@@ -301,41 +294,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pauseItem.isHidden = !RecordingController.shared.isRecording
             pauseItem.title = RecordingController.shared.isPaused ? "Resume Recording" : "Pause Recording"
         }
-        rebuildRecentSubmenu()
-    }
-
-    private func rebuildRecentSubmenu() {
-        guard let submenu = recentMenuItem?.submenu else { return }
-        submenu.removeAllItems()
-        let items = CaptureHistory.shared.items
-        guard !items.isEmpty else {
-            let empty = NSMenuItem(title: "No Recent Captures", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            submenu.addItem(empty)
-            return
-        }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        for (index, item) in items.enumerated() {
-            let menuItem = NSMenuItem(
-                title: "\(item.mode.fileTag) · \(formatter.string(from: item.date))",
-                action: #selector(reopenRecent(_:)), keyEquivalent: ""
-            )
-            menuItem.target = self
-            menuItem.representedObject = index
-            menuItem.image = recentThumbnail(for: item.image)
-            submenu.addItem(menuItem)
-        }
-        submenu.addItem(.separator())
-        let clear = NSMenuItem(title: "Clear", action: #selector(clearRecent), keyEquivalent: "")
-        clear.target = self
-        submenu.addItem(clear)
-    }
-
-    private func recentThumbnail(for image: CapturedImage) -> NSImage {
-        let height: CGFloat = 16
-        let width = max(1, image.pixelSize.width / max(image.pixelSize.height, 1) * height)
-        return NSImage(cgImage: image.cgImage, size: NSSize(width: width, height: height))
     }
 
     private func applyShortcut(_ name: BetterShortcuts.Name, to item: NSMenuItem) {
@@ -359,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureCutout() { CaptureCoordinator.shared.captureCutout() }
     @objc private func captureScrolling() { CaptureCoordinator.shared.captureScrolling() }
     @objc private func capturePreviousArea() { CaptureCoordinator.shared.captureLastRegion() }
-    @objc private func openBrowser() { CaptureBrowserWindowController.shared.show() }
+    @objc private func openHistory() { CaptureHistoryPanel.shared.toggle() }
 
     @objc private func editFromClipboard() {
         guard let image = NSImage(pasteboard: .general), let cg = Self.cgImage(from: image) else {
@@ -430,14 +388,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func togglePauseRecording() { RecordingController.shared.togglePause() }
     @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
     @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
-
-    @objc private func reopenRecent(_ sender: NSMenuItem) {
-        guard let index = sender.representedObject as? Int,
-              CaptureHistory.shared.items.indices.contains(index) else { return }
-        CaptureCoordinator.shared.reopenPreview(CaptureHistory.shared.items[index])
-    }
-
-    @objc private func clearRecent() { CaptureHistory.shared.clear() }
 
     @objc private func openSettings() {
         let controller = settingsController ?? SettingsWindowController(
