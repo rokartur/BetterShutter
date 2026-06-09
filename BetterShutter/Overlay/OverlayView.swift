@@ -143,11 +143,17 @@ final class OverlayView: NSView {
 
     // MARK: Mouse
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateCursor()
+    }
+
     override func mouseMoved(with event: NSEvent) {
         mousePoint = convert(event.locationInWindow, from: nil)
         if phase == .idle {
             hoveredWindow = WindowHighlighter.window(at: mousePoint, in: windowHits)
         }
+        updateCursor()
         needsDisplay = true
     }
 
@@ -171,9 +177,9 @@ final class OverlayView: NSView {
             hideActionBar()
         }
 
-        setCursorHidden?(true)
         dragAnchor = mousePoint
         phase = .dragging
+        updateCursor()
         needsDisplay = true
     }
 
@@ -200,6 +206,7 @@ final class OverlayView: NSView {
             break
         }
         mousePoint = p
+        updateCursor()
         needsDisplay = true
     }
 
@@ -218,7 +225,7 @@ final class OverlayView: NSView {
             if r.width < minSelectionSide || r.height < minSelectionSide {
                 // Treated as a click: capture the window under the cursor, if any.
                 phase = .idle
-                setCursorHidden?(false)
+                updateCursor()
                 if let hit = WindowHighlighter.window(at: mousePoint, in: windowHits) {
                     onWindowSelected?(hit.id)
                 } else {
@@ -277,9 +284,43 @@ final class OverlayView: NSView {
 
     private func enterPending() {
         phase = .pending
-        setCursorHidden?(false)
+        updateCursor()
         showActionBar()
         needsDisplay = true
+    }
+
+    // MARK: Cursor
+
+    /// Sets a context-appropriate pointer. With the magnifier on, the loupe stands in for the cursor,
+    /// so the system cursor stays hidden instead.
+    private func updateCursor() {
+        if magnifierEnabled { setCursorHidden?(true); return }
+        setCursorHidden?(false)
+        let cursor: NSCursor
+        switch phase {
+        case .idle:
+            cursor = WindowHighlighter.window(at: mousePoint, in: windowHits) != nil ? .pointingHand : .crosshair
+        case .dragging:
+            cursor = .crosshair
+        case .moving:
+            cursor = .closedHand
+        case .resizing(let h):
+            cursor = Self.resizeCursor(for: h)
+        case .pending:
+            if let h = handle(at: mousePoint, in: selectionRect) { cursor = Self.resizeCursor(for: h) }
+            else if selectionRect.contains(mousePoint) { cursor = .openHand }
+            else { cursor = .crosshair }
+        }
+        cursor.set()
+    }
+
+    /// Public NSCursor lacks diagonal-resize variants, so corners fall back to the nearest axis cursor.
+    private static func resizeCursor(for handle: Handle) -> NSCursor {
+        switch handle {
+        case .l, .r: return .resizeLeftRight
+        case .t, .b: return .resizeUpDown
+        case .tl, .br, .tr, .bl: return .crosshair
+        }
     }
 
     private func confirm(_ action: OverlayAction) {

@@ -20,5 +20,6 @@ final class OverlayWindow: NSWindow {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         ignoresMouseEvents = false
         isReleasedWhenClosed = false
+        animationBehavior = .none   // no system zoom-in when the fullscreen overlay orders front
     }
 }

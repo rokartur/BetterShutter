@@ -33,8 +33,10 @@ final class CaptureCoordinator {
         switch mode {
         case .fullDisplay:
             captureFullDisplay()
-        case .region, .window:
-            beginRegionCapture()
+        case .region:
+            beginRegionCapture(windowSelection: false)
+        case .window:
+            beginRegionCapture(windowSelection: true)
         }
     }
 
@@ -81,6 +83,7 @@ final class CaptureCoordinator {
     /// plus its global rect + display; `onWindow` fires when the user clicks a window instead.
     private func presentRegion(
         magnifier: Bool,
+        windowSelection: Bool = false,
         onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID) -> Void,
         onWindow: @escaping (CGWindowID) -> Void
     ) {
@@ -93,6 +96,7 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: magnifier,
+                    windowSelection: windowSelection,
                     instantCapture: true,   // release the drag = capture immediately, no extra confirm
                     onRegion: { image, rect, displayID, _ in onRegion(image, rect, displayID) },
                     onWindow: onWindow,
@@ -259,7 +263,7 @@ final class CaptureCoordinator {
     /// Region / window capture with the CleanShot-style action bar. The bar lets the user pick the
     /// outcome (capture / annotate / copy / save / record) per selection instead of always running
     /// the configured default. A window click has no bar and uses the configured after-action.
-    private func beginRegionCapture() {
+    private func beginRegionCapture(windowSelection: Bool) {
         isCapturing = true
         Task {
             do {
@@ -269,6 +273,7 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: Preferences.magnifierEnabled,
+                    windowSelection: windowSelection,
                     toolbarActions: [.capture, .annotate, .copy, .save, .record],
                     onRegion: { [weak self] image, globalRect, displayID, action in
                         self?.handleRegionAction(image, globalRect: globalRect, displayID: displayID, action: action)

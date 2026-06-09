@@ -15,6 +15,7 @@ final class OverlayController {
     private var panes: [Pane] = []
     private var cursorHidden = false
     private var screenObserver: NSObjectProtocol?
+    private var escMonitor: Any?
 
     private var onRegion: ((CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void)?
     private var onWindow: ((CGWindowID) -> Void)?
@@ -28,6 +29,7 @@ final class OverlayController {
         frozen: [CapturedImage],
         windows: [WindowInfo],
         magnifierEnabled: Bool,
+        windowSelection: Bool = true,
         toolbarActions: [OverlayAction] = [],
         instantCapture: Bool = false,
         onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void,
@@ -71,9 +73,10 @@ final class OverlayController {
             view.toolbarActions = toolbarActions
             view.instantCapture = instantCapture
             view.setCursorHidden = { [weak self] hidden in hidden ? self?.hideCursor() : self?.showCursor() }
-            view.windowHits = WindowHighlighter.viewRects(
-                windows: windows, primaryHeight: primaryHeight, screenGlobalFrame: frame
-            )
+            // Empty hits → no window hover-highlight and no click-to-pick (region-only flows).
+            view.windowHits = windowSelection
+                ? WindowHighlighter.viewRects(windows: windows, primaryHeight: primaryHeight, screenGlobalFrame: frame)
+                : []
             container.addSubview(view)
 
             let pane = Pane(window: window, view: view, screenFrame: frame, image: image)
@@ -100,7 +103,14 @@ final class OverlayController {
         }
 
         NSApp.activate(ignoringOtherApps: true)
-        hideCursor()
+        // The magnifier draws its own loupe in place of the pointer, so hide the system cursor then.
+        // Otherwise the OverlayView sets a context-appropriate cursor (crosshair / pointing hand / …).
+        if magnifierEnabled { hideCursor() }
+
+        // Esc must always cancel, even if the key window / first responder isn't the pane the user
+        // expects (wrong display, lost focus). A local monitor catches Esc anywhere in the app for the
+        // whole presentation; a global one catches it if focus slipped to another app.
+        installEscMonitor()
 
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -151,9 +161,31 @@ final class OverlayController {
         onCancel?()
     }
 
+    // MARK: Esc-always-cancels
+
+    private func installEscMonitor() {
+        removeEscMonitor()
+        let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }   // Esc
+            MainActor.assumeIsolated { self?.handleCancel() }
+            return nil   // swallow
+        }
+        let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return }
+            MainActor.assumeIsolated { self?.handleCancel() }
+        }
+        escMonitor = [local, global].compactMap { $0 }
+    }
+
+    private func removeEscMonitor() {
+        if let monitors = escMonitor as? [Any] { monitors.forEach { NSEvent.removeMonitor($0) } }
+        escMonitor = nil
+    }
+
     // MARK: Teardown
 
     func dismiss() {
+        removeEscMonitor()
         if let screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
             self.screenObserver = nil
