@@ -13,12 +13,17 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     private(set) var elements: [AnnotationElement] = []
     private var selected: AnnotationElement?
+    /// Elements captured by an area (marquee) drag. Empty for single/no selection; a single hit goes
+    /// into `selected` instead so all the per-element edits (resize, rotate, restyle) keep working.
+    private var groupSelection: [AnnotationElement] = []
+    private var marqueeRect: CGRect?     // image space, live during a marquee drag
+    private var marqueeAnchor: CGPoint?
     private var creating: AnnotationElement?
     private var stepCounter = 1
 
     var tool: ToolKind = .arrow {
         didSet {
-            if tool != .select { selected = nil; needsDisplay = true }
+            if tool != .select { selected = nil; groupSelection = []; needsDisplay = true }
             if tool == .highlighter { ensureTextLines() }
         }
     }
@@ -36,7 +41,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     /// Fired on ⌘P to print the flattened result.
     var onPrint: (() -> Void)?
 
-    private enum DragMode { case none, creating, moving, resizing, cropping }
+    private enum DragMode { case none, creating, moving, resizing, cropping, marquee }
     private var dragMode: DragMode = .none
     private var lastImagePoint: CGPoint = .zero
     private var didMove = false
@@ -90,6 +95,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         baseImage = snap.baseImage
         imageSize = snap.imageSize
         selected = nil
+        groupSelection = []
+        marqueeRect = nil
         creating = nil
         dragMode = .none
         needsDisplay = true
@@ -106,6 +113,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         for element in elements { element.transform(t) }
         if let crop = cropRect { cropRect = crop.applying(t) }
         selected = nil
+        groupSelection = []
         commit(before, kind.actionName)
         needsDisplay = true
     }
@@ -126,6 +134,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let frame = CGRect(x: imageSize.width / 2 - w / 2, y: imageSize.height / 2 - h / 2, width: w, height: h)
         let element = ImageElement(image: cg, frame: frame, style: style)
         elements.append(element)
+        groupSelection = []
         selected = element
         tool = .select
         onToolPicked?(.select)
@@ -261,7 +270,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if let selected, selected !== editingElement {
             drawSelectionHandles(for: selected)
         }
+        for el in groupSelection where el !== editingElement { drawSelectionOutline(for: el) }
+        if let marqueeRect { drawMarquee(marqueeRect) }
         if let cropRect { drawCropOverlay(cropRect) }
+    }
+
+    /// Translucent rectangle drawn while dragging an area (marquee) selection.
+    private func drawMarquee(_ imageRect: CGRect) {
+        let r = CGRect(origin: viewPoint(imageRect.origin),
+                       size: CGSize(width: imageRect.width * scale, height: imageRect.height * scale))
+        NSColor.controlAccentColor.withAlphaComponent(0.12).setFill()
+        NSBezierPath(rect: r).fill()
+        NSColor.controlAccentColor.setStroke()
+        let border = NSBezierPath(rect: r)
+        border.lineWidth = 1
+        border.setLineDash([4, 3], count: 2, phase: 0)
+        border.stroke()
     }
 
     private func drawCropOverlay(_ imageRect: CGRect) {
@@ -291,10 +315,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         border.stroke()
     }
 
-    private func drawSelectionHandles(for element: AnnotationElement) {
+    /// Dashed bounding box that follows the element's rotation. Shared by single and group selection.
+    private func drawSelectionOutline(for element: AnnotationElement) {
         let box = element.boundingBox
         let t = element.rotationTransform
-        // Dashed outline follows rotation (rotate the four local corners into view space).
         let corners = [
             CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
             CGPoint(x: box.maxX, y: box.maxY), CGPoint(x: box.minX, y: box.maxY),
@@ -307,6 +331,11 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         for c in corners.dropFirst() { path.line(to: c) }
         path.close()
         path.stroke()
+    }
+
+    private func drawSelectionHandles(for element: AnnotationElement) {
+        let t = element.rotationTransform
+        drawSelectionOutline(for: element)
 
         // Grab squares at each resize handle.
         for hp in element.handlePoints() {
@@ -349,9 +378,21 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
                 resizeHandle = hi
                 dragMode = .resizing
                 if sel.rotation != 0 { sel.resizePivot = sel.rotationCenter }  // pin pivot for the gesture
+            } else if let hit = elements.last(where: { $0.hitTest($0.localPoint(p)) }) {
+                if groupSelection.contains(where: { $0 === hit }) {
+                    dragMode = .moving   // grab anywhere inside a marquee group to move it as one
+                } else {
+                    groupSelection = []
+                    selected = hit
+                    dragMode = .moving
+                }
             } else {
-                selected = elements.last { $0.hitTest($0.localPoint(p)) }
-                dragMode = selected == nil ? .none : .moving
+                // Empty space → start an area (marquee) selection.
+                selected = nil
+                groupSelection = []
+                marqueeAnchor = p
+                marqueeRect = nil
+                dragMode = .marquee
             }
         case .text:
             beginText(at: p)
@@ -402,9 +443,16 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             creating?.updateDrag(to: target)
         case .moving:
             let delta = CGSize(width: p.x - lastImagePoint.x, height: p.y - lastImagePoint.y)
-            selected?.translate(by: delta)
+            if groupSelection.isEmpty { selected?.translate(by: delta) }
+            else { for el in groupSelection { el.translate(by: delta) } }
             lastImagePoint = p
             if delta.width != 0 || delta.height != 0 { didMove = true }
+        case .marquee:
+            if let anchor = marqueeAnchor {
+                let r = SelectionModel.rect(from: anchor, to: p)
+                marqueeRect = r
+                groupSelection = elements.filter { $0.boundingBox.intersects(r) }
+            }
         case .resizing:
             selected.map { $0.moveHandle(resizeHandle, to: $0.localPoint(p)) }
             didMove = true
@@ -446,6 +494,12 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             if let r = cropRect, r.width < 5 || r.height < 5 { cropRect = nil }
             cropAnchor = nil
             if cropRect != pending?.cropRect { commit(pending, "Crop") }
+        }
+        if dragMode == .marquee {
+            marqueeAnchor = nil
+            marqueeRect = nil
+            // Collapse a one-element marquee into a normal single selection.
+            if groupSelection.count == 1 { selected = groupSelection.removeFirst() }
         }
         pending = nil
         creating = nil
@@ -674,9 +728,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case 51, 117: // delete / forward-delete
             deleteSelected()
         case 53: // esc
-            if editingField != nil { finishTextEditing() } else { selected = nil; needsDisplay = true }
+            if editingField != nil { finishTextEditing() }
+            else { selected = nil; groupSelection = []; needsDisplay = true }
         case 123, 124, 125, 126: // arrows nudge the selection
-            if selected != nil {
+            if selected != nil || !groupSelection.isEmpty {
                 nudgeSelected(keyCode: event.keyCode, large: event.modifierFlags.contains(.shift))
             } else {
                 super.keyDown(with: event)
@@ -688,7 +743,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     /// Move the selection by 1px (10px with Shift). Image space is bottom-left, so Up = +y.
     private func nudgeSelected(keyCode: UInt16, large: Bool) {
-        guard let selected else { return }
+        let targets = groupSelection.isEmpty ? [selected].compactMap { $0 } : groupSelection
+        guard !targets.isEmpty else { return }
         let step: CGFloat = large ? 10 : 1
         var delta = CGSize.zero
         switch keyCode {
@@ -699,12 +755,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         default: break
         }
         let before = snapshot()
-        selected.translate(by: delta)
+        for el in targets { el.translate(by: delta) }
         commit(before, "Nudge")
         needsDisplay = true
     }
 
     func deleteSelected() {
+        if !groupSelection.isEmpty {
+            let before = snapshot()
+            elements.removeAll { e in groupSelection.contains { $0 === e } }
+            groupSelection = []
+            selected = nil
+            resequenceSteps()
+            commit(before, "Delete")
+            needsDisplay = true
+            return
+        }
         guard let selected, let index = elements.firstIndex(where: { $0 === selected }) else { return }
         let before = snapshot()
         elements.remove(at: index)
