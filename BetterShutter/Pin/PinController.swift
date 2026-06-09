@@ -84,14 +84,20 @@ final class PinWindow: NSPanel {
             guard let self else { return }
             self.setFrameOrigin(CGPoint(x: self.frame.minX + dx, y: self.frame.minY + dy))
         }
-        view.onLockClickThrough = { [weak self] in
-            self?.ignoresMouseEvents = true
-            HUD.show("Pin locked — use “Close All Pins” to remove")
-        }
+        view.onGhost = { [weak self] in self?.enterGhostMode() }
         contentView = view
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// Ghost mode: fade the pin to a translucent reference and let mouse events pass through to
+    /// whatever is underneath, so you can work below it. Reversible only via "Close All Pins"
+    /// (a click-through window can no longer receive a click to toggle itself back).
+    private func enterGhostMode() {
+        alphaValue = PinGeometry.clampOpacity(0.45)
+        ignoresMouseEvents = true
+        HUD.show("Pin ghosted — click through it. Use “Close All Pins” to remove")
+    }
 
     func closePin() {
         onClosed(self)
@@ -107,7 +113,12 @@ private final class PinImageView: NSView {
     var onEdit: (() -> Void)?
     var onAdjustOpacity: ((CGFloat) -> Void)?
     var onNudge: ((CGFloat, CGFloat) -> Void)?
-    var onLockClickThrough: (() -> Void)?
+    var onGhost: (() -> Void)?
+
+    // Hover controls, hidden until the pointer enters the pin.
+    private lazy var closeButton = makeOverlayButton("xmark", "Close", #selector(closeAction))
+    private lazy var ghostButton = makeOverlayButton("eye.slash", "Ghost (transparent, click-through)",
+                                                     #selector(ghostAction))
 
     init(image: CapturedImage) {
         super.init(frame: .zero)
@@ -119,9 +130,48 @@ private final class PinImageView: NSView {
         layer?.masksToBounds = true
         layer?.borderWidth = 1
         layer?.borderColor = GlassTokens.cg(GlassTokens.pinBorder, for: self)
+
+        addSubview(closeButton)
+        addSubview(ghostButton)
+        setControls(visible: false)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func makeOverlayButton(_ symbol: String, _ tip: String, _ action: Selector) -> NSButton {
+        let b = NSButton(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
+        b.bezelStyle = .circular
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+        b.imagePosition = .imageOnly
+        b.toolTip = tip
+        b.target = self
+        b.action = action
+        return b
+    }
+
+    /// Close top-left, ghost top-right — both 6pt inset from the corners.
+    override func layout() {
+        super.layout()
+        let s: CGFloat = 24, m: CGFloat = 6
+        closeButton.frame = NSRect(x: m, y: bounds.height - s - m, width: s, height: s)
+        ghostButton.frame = NSRect(x: bounds.width - s - m, y: bounds.height - s - m, width: s, height: s)
+    }
+
+    private func setControls(visible: Bool) {
+        closeButton.isHidden = !visible
+        ghostButton.isHidden = !visible
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { setControls(visible: true) }
+    override func mouseExited(with event: NSEvent) { setControls(visible: false) }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -162,7 +212,7 @@ private final class PinImageView: NSView {
         item(menu, "Copy", #selector(copyAction))
         item(menu, "Open in Editor", #selector(editAction))
         menu.addItem(.separator())
-        item(menu, "Lock (Click-Through)", #selector(lockAction))
+        item(menu, "Ghost (Transparent, Click-Through)", #selector(ghostAction))
         item(menu, "Close", #selector(closeAction))
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
@@ -175,6 +225,6 @@ private final class PinImageView: NSView {
 
     @objc private func copyAction() { onCopy?() }
     @objc private func editAction() { onEdit?() }
-    @objc private func lockAction() { onLockClickThrough?() }
+    @objc private func ghostAction() { onGhost?() }
     @objc private func closeAction() { onClose?() }
 }
