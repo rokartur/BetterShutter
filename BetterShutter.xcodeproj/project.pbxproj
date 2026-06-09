@@ -331,7 +331,8 @@
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_CFBundleDisplayName = "BetterShutter Debug";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "BetterShutter shows your webcam as an overlay in screen recordings.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 rokartur. All rights reserved.";
@@ -368,7 +369,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GCC_OPTIMIZATION_LEVEL = s;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_CFBundleDisplayName = BetterShutter;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "BetterShutter shows your webcam as an overlay in screen recordings.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 rokartur. All rights reserved.";
@@ -467,7 +469,7 @@
 			repositoryURL = "https://github.com/rokartur/BetterSettings";
 			requirement = {
 				kind = upToNextMinorVersion;
-				minimumVersion = 0.1.2;
+				minimumVersion = 0.2.7;
 			};
 		};
 		BE570000000000000000001B /* XCRemoteSwiftPackageReference "BetterUpdater" */ = {
