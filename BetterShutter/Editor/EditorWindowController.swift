@@ -21,8 +21,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         self.canvas = EditorCanvasView(image: image, elements: elements)
         self.mode = mode
 
-        // Floor wide enough for the 13-tool picker plus the Project/Share/Copy/Save/Done actions in
-        // the top toolbar, so it never spills into an overflow (») menu.
+        // Floor wide enough for the bottom bar's style controls plus the Project/Share/Copy/Save/Done
+        // actions side by side, so nothing spills into an overflow menu.
         let minContentWidth: CGFloat = 1240
         let canvasSize = EditorCanvasView.fittedSize(for: image.pixelSize)
         let contentRect = NSRect(x: 0, y: 0,
@@ -57,9 +57,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     private func buildUI() {
         guard let content = window?.contentView else { return }
 
-        // Split the chrome so nothing has to overflow: the tool picker + file actions ride the top
-        // toolbar, the style controls (color / saved colors / stroke / transform) ride a bottom glass
-        // bar, and the canvas sits between them. Everything stays visible at once.
+        // Split the chrome so nothing has to overflow: the tool picker rides the top toolbar, the
+        // style controls (color / saved colors / stroke / transform) and file actions
+        // (project / share / copy / save / done) ride a bottom glass bar, and the canvas sits between
+        // them. Everything stays visible at once.
         let tools = makeToolControl()
         toolControl = tools
         canvas.onToolPicked = { [weak self] kind in
@@ -99,7 +100,17 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         let transform = makeTransformControl()
         self.transformControl = transform
 
-        // Bottom glass style bar.
+        // Action buttons (project / share / copy / save / done) ride the bottom bar, right side.
+        let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
+        project.toolTip = "Save Re-editable Project (.bsproj)"
+        let share = makeActionButton(title: "", symbol: "square.and.arrow.up", action: #selector(shareTapped(_:)))
+        share.toolTip = "Share"
+        let copy = makeActionButton(title: "Copy", symbol: "doc.on.doc", action: #selector(copyTapped))
+        let save = makeActionButton(title: "Save", symbol: "arrow.down.circle", action: #selector(saveTapped))
+        let done = makeActionButton(title: "Done", symbol: nil, action: #selector(doneTapped))
+        done.keyEquivalent = "\r"   // default button — fires on Return
+
+        // Bottom glass bar: style controls on the left, file actions on the right.
         let styleStack = NSStackView(views: [
             label("Color"), colorWell, swatches,
             label("Stroke"), widthSlider,
@@ -111,9 +122,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         styleStack.spacing = 8
         styleStack.translatesAutoresizingMaskIntoConstraints = false
 
+        let actionStack = NSStackView(views: [project, share, copy, save, done])
+        actionStack.orientation = .horizontal
+        actionStack.alignment = .centerY
+        actionStack.spacing = 8
+        actionStack.translatesAutoresizingMaskIntoConstraints = false
+
         let styleBar = GlassPanelView(cornerRadius: GlassTokens.Radius.bar)
         styleBar.translatesAutoresizingMaskIntoConstraints = false
         styleBar.contentView.addSubview(styleStack)
+        styleBar.contentView.addSubview(actionStack)
         content.addSubview(styleBar)
 
         canvas.translatesAutoresizingMaskIntoConstraints = false
@@ -131,26 +149,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
             // Fixed height (not tied to the stack) avoids a layout-recursion loop with the glass
             // view re-laying out its contentView.
             styleBar.heightAnchor.constraint(equalToConstant: 44),
-            styleStack.centerXAnchor.constraint(equalTo: styleBar.contentView.centerXAnchor),
+
+            styleStack.leadingAnchor.constraint(equalTo: styleBar.contentView.leadingAnchor, constant: 14),
             styleStack.centerYAnchor.constraint(equalTo: styleBar.contentView.centerYAnchor),
-            styleStack.leadingAnchor.constraint(greaterThanOrEqualTo: styleBar.contentView.leadingAnchor, constant: 14),
+
+            actionStack.trailingAnchor.constraint(equalTo: styleBar.contentView.trailingAnchor, constant: -14),
+            actionStack.centerYAnchor.constraint(equalTo: styleBar.contentView.centerYAnchor),
+            actionStack.leadingAnchor.constraint(greaterThanOrEqualTo: styleStack.trailingAnchor, constant: 16),
         ])
 
-        let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
-        project.toolTip = "Save Re-editable Project (.bsproj)"
-        let share = makeActionButton(title: "", symbol: "square.and.arrow.up", action: #selector(shareTapped(_:)))
-        share.toolTip = "Share"
-        let copy = makeActionButton(title: "Copy", symbol: "doc.on.doc", action: #selector(copyTapped))
-        let save = makeActionButton(title: "Save", symbol: "arrow.down.circle", action: #selector(saveTapped))
-        let done = makeActionButton(title: "Done", symbol: nil, action: #selector(doneTapped))
-        done.keyEquivalent = "\r"   // NSToolbarItem has no keyEquivalent — keep Done a real default button
-
         register(.editorTools, tools, label: "Tools")
-        register(.editorProject, project, label: "Project")
-        register(.editorShare, share, label: "Share")
-        register(.editorCopy, copy, label: "Copy")
-        register(.editorSave, save, label: "Save")
-        register(.editorDone, done, label: "Done")
 
         let toolbar = NSToolbar(identifier: "EditorToolbar")
         toolbar.delegate = self
@@ -372,8 +380,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     // MARK: NSToolbarDelegate
 
     private var orderedToolbarItems: [NSToolbarItem.Identifier] {
-        [.editorTools, .flexibleSpace,
-         .editorProject, .editorShare, .editorCopy, .editorSave, .editorDone]
+        [.editorTools]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { orderedToolbarItems }
@@ -387,9 +394,4 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
 
 private extension NSToolbarItem.Identifier {
     static let editorTools = NSToolbarItem.Identifier("editor.tools")
-    static let editorProject = NSToolbarItem.Identifier("editor.project")
-    static let editorShare = NSToolbarItem.Identifier("editor.share")
-    static let editorCopy = NSToolbarItem.Identifier("editor.copy")
-    static let editorSave = NSToolbarItem.Identifier("editor.save")
-    static let editorDone = NSToolbarItem.Identifier("editor.done")
 }
