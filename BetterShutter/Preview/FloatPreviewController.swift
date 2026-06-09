@@ -42,7 +42,7 @@ final class FloatPreviewController {
         panel.contentView = view
         let id = ObjectIdentifier(panel)
 
-        view.onCopy = { PasteboardWriter.copy(image.cgImage) }
+        view.onCopy = { [weak view] in PasteboardWriter.copy(image.cgImage); view?.showCopyFeedback() }
         view.onSave = { Task.detached { _ = try? FileSaver.save(image.cgImage, mode: mode) } }
         view.onClose = { [weak self, weak panel] in if let panel { self?.remove(panel, animated: true) } }
         view.onAnnotate = { [weak self, weak panel] in
@@ -179,6 +179,7 @@ final class FloatPreviewController {
         panels.remove(at: index)
 
         if animated {
+            panel.order(.below, relativeTo: 0)   // don't obscure survivors sliding into its slot
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.16
                 panel.animator().alphaValue = 0
@@ -188,8 +189,10 @@ final class FloatPreviewController {
         }
 
         if panels.isEmpty { removeKeyMonitor() }
-        repositionAll(animated: true)
+        // Reconcile hover first (it may makeKeyAndOrderFront a survivor, which can cancel an in-flight
+        // frame animation), THEN run the slide so the remaining cards reliably animate down.
         reconcileHoverUnderPointer()
+        repositionAll(animated: true)
     }
 
     // MARK: Hover / focus
@@ -269,13 +272,20 @@ final class FloatPreviewController {
             let key = event.charactersIgnoringModifiers?.lowercased()
             let isCmdW = mods == .command && key == "w"
             let isCmdE = mods == .command && key == "e"
+            let isCmdC = mods == .command && key == "c"
             let isSpace = mods.isEmpty && event.keyCode == 49
-            guard isCmdW || isCmdE || isSpace else { return event }
+            guard isCmdW || isCmdE || isCmdC || isSpace else { return event }
             var consumed = false
             MainActor.assumeIsolated {
-                guard let self, let panel = self.panelUnderPointer() else { return }
+                guard let self else { return }
+                // Prefer the card under the pointer; fall back to the top card so a keyboard shortcut
+                // still works even if pointer hit-testing missed.
+                guard let panel = self.panelUnderPointer() ?? self.panels.last else { return }
                 if isCmdW {
                     self.remove(panel, animated: true)
+                    consumed = true
+                } else if isCmdC {
+                    self.cardViews[ObjectIdentifier(panel)]?.onCopy?()
                     consumed = true
                 } else if isCmdE {
                     // Open the hovered capture in the editor (the card removes itself first).

@@ -11,8 +11,8 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     /// Every quick-access card is a fixed 16:9 tile so the bottom-right stack reads as a clean,
     /// uniform column. The capture is aspect-fit inside (centered, with a thin dark frame for shots
     /// that aren't 16:9).
-    static let cardWidth: CGFloat = 240
-    static let cardHeight: CGFloat = 135   // 240 × 9/16 = exact 16:9
+    static let cardWidth: CGFloat = 224
+    static let cardHeight: CGFloat = 126   // 224 × 9/16 = exact 16:9
     static let cardSize = NSSize(width: cardWidth, height: cardHeight)
 
     /// Fixed 16:9 regardless of the capture's own aspect (kept as a function for call-site clarity).
@@ -42,6 +42,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     private var closeButton: NSView!
     private let scrim = CAGradientLayer()
     private var controlsVisible = false
+    private var copyBadge: NSView?
 
     init(image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
         self.image = image
@@ -214,6 +215,56 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         }
     }
 
+    /// Brief in-card confirmation when the capture is copied — a centered "Copied" pill that fades.
+    func showCopyFeedback() {
+        copyBadge?.removeFromSuperview()
+
+        let pill = NSView()
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = GlassTokens.Fixed.dimensionPill.cgColor
+        pill.layer?.cornerRadius = 13
+        pill.layer?.cornerCurve = .continuous
+        pill.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Copied")?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
+        icon.contentTintColor = .white
+        let label = NSTextField(labelWithString: "Copied")
+        label.font = .systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .white
+        let stack = NSStackView(views: [icon, label])
+        stack.orientation = .horizontal
+        stack.spacing = 5
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        pill.addSubview(stack)
+        addSubview(pill)
+        copyBadge = pill
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: pill.topAnchor, constant: 6),
+            stack.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -6),
+            pill.centerXAnchor.constraint(equalTo: centerXAnchor),
+            pill.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
+        pill.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            pill.animator().alphaValue = 1
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak pill, weak self] in
+            guard let pill, self?.copyBadge === pill else { return }
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.25
+                pill.animator().alphaValue = 0
+            }, completionHandler: { MainActor.assumeIsolated { pill.removeFromSuperview() } })
+        }
+    }
+
     @objc private func copyTapped() { onCopy?() }
     @objc private func saveTapped() { onSave?() }
     @objc private func closeTapped() { onClose?() }
@@ -330,15 +381,22 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     private func beginDragOut(with event: NSEvent) {
-        guard let png = ImageEncoder.encode(image.cgImage, as: .png) else { return }
-        let filename = FilenameTemplate.render(
-            Preferences.filenameTemplate, mode: mode, format: .png, counter: 0
-        )
-        let delegate = ImageFilePromiseDelegate(pngData: png, filename: filename)
-        activePromiseDelegate = delegate
-
-        let provider = NSFilePromiseProvider(fileType: UTType.png.identifier, delegate: delegate)
-        let item = NSDraggingItem(pasteboardWriter: provider)
+        let item: NSDraggingItem
+        // Prefer the real saved file — a plain file URL drops into Finder, text inputs, image wells,
+        // and chat apps alike. A file promise (the fallback for unsaved cards) is accepted by far
+        // fewer targets.
+        if let savedURL, FileManager.default.fileExists(atPath: savedURL.path) {
+            item = NSDraggingItem(pasteboardWriter: savedURL as NSURL)
+        } else {
+            guard let png = ImageEncoder.encode(image.cgImage, as: .png) else { return }
+            let filename = FilenameTemplate.render(
+                Preferences.filenameTemplate, mode: mode, format: .png, counter: 0
+            )
+            let delegate = ImageFilePromiseDelegate(pngData: png, filename: filename)
+            activePromiseDelegate = delegate
+            let provider = NSFilePromiseProvider(fileType: UTType.png.identifier, delegate: delegate)
+            item = NSDraggingItem(pasteboardWriter: provider)
+        }
         let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds)
         item.setDraggingFrame(fit, contents: thumbnail)
         beginDraggingSession(with: [item], event: event, source: self)
