@@ -825,6 +825,31 @@ struct BeautifyPresetTests {
     }
 }
 
+struct ImageAdjustmentsTests {
+    @Test
+    func identityFlag() {
+        #expect(ImageAdjustments().isIdentity)
+        var a = ImageAdjustments(); a.saturation = 0.5
+        #expect(!a.isIdentity)
+    }
+
+    @Test @MainActor
+    func identityReturnsInputUnchangedSize() {
+        let base = makeSolidTestImage(width: 20, height: 10)
+        let out = ImageAdjustments().apply(to: base, ciContext: CIContext())
+        #expect(out.width == 20 && out.height == 10)
+    }
+
+    @Test @MainActor
+    func adjustmentPreservesSize() {
+        let base = makeSolidTestImage(width: 32, height: 24)
+        var a = ImageAdjustments()
+        a.brightness = 0.2; a.contrast = 1.3; a.saturation = 1.5; a.sharpness = 0.5
+        let out = a.apply(to: base, ciContext: CIContext())
+        #expect(out.width == 32 && out.height == 24)
+    }
+}
+
 @MainActor
 struct WatermarkElementTests {
     private let style = AnnotationStyle.makeDefault(imageWidth: 120)

@@ -15,6 +15,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var strengthSlider: NSSlider?
     private var transformControl: NSPopUpButton?
     private var zoomControl: NSSegmentedControl?
+    private var adjustPopover: NSPopover?
+    private var adjustSliders: [String: NSSlider] = [:]
     private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     var onClose: (() -> Void)?
 
@@ -111,6 +113,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         zoom.toolTip = "Zoom (⌘− / ⌘0 / ⌘+, or pinch)"
         self.zoomControl = zoom
 
+        let adjustButton = NSButton(
+            image: NSImage(systemSymbolName: "slider.horizontal.below.square.filled.and.square", accessibilityDescription: "Adjust") ?? NSImage(),
+            target: self, action: #selector(adjustTapped(_:)))
+        adjustButton.bezelStyle = .texturedRounded
+        adjustButton.imagePosition = .imageOnly
+        adjustButton.toolTip = "Image Adjustments (brightness / contrast / saturation / sharpness)"
+
         // Action buttons (project / share / copy / save / done) ride the bottom bar, right side.
         let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
         project.toolTip = "Save Re-editable Project (.bsproj)"
@@ -127,6 +136,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
             label("Stroke"), widthSlider,
             label("Strength"), strengthSlider,
             label("Transform"), transform,
+            label("Adjust"), adjustButton,
             label("Zoom"), zoom,
         ])
         styleStack.orientation = .horizontal
@@ -328,6 +338,76 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func transformPicked(_ sender: NSMenuItem) {
         guard let kind = sender.representedObject as? ImageTransform else { return }
         canvas.applyImageTransform(kind)
+    }
+
+    // MARK: Image adjustments
+
+    @objc private func adjustTapped(_ sender: NSButton) {
+        let popover = adjustPopover ?? makeAdjustPopover()
+        adjustPopover = popover
+        if popover.isShown { popover.close() }
+        else { popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY) }
+    }
+
+    private func makeAdjustPopover() -> NSPopover {
+        let a = canvas.currentAdjustments
+        adjustSliders = [:]
+        func row(_ key: String, _ title: String, min: Double, max: Double, value: Double) -> NSStackView {
+            let slider = NSSlider(value: value, minValue: min, maxValue: max,
+                                  target: self, action: #selector(adjustSliderChanged))
+            slider.isContinuous = true
+            slider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+            adjustSliders[key] = slider
+            let caption = NSTextField(labelWithString: title)
+            caption.font = .systemFont(ofSize: 11)
+            caption.textColor = .secondaryLabelColor
+            caption.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            let stack = NSStackView(views: [caption, slider])
+            stack.orientation = .horizontal
+            stack.spacing = 8
+            return stack
+        }
+        let reset = NSButton(title: "Reset", target: self, action: #selector(resetAdjustTapped))
+        reset.bezelStyle = .rounded
+        let content = NSStackView(views: [
+            row("brightness", "Brightness", min: -0.5, max: 0.5, value: a.brightness),
+            row("contrast", "Contrast", min: 0.5, max: 1.5, value: a.contrast),
+            row("saturation", "Saturation", min: 0, max: 2, value: a.saturation),
+            row("sharpness", "Sharpness", min: 0, max: 1, value: a.sharpness),
+            reset,
+        ])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 10
+        content.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        let vc = NSViewController()
+        vc.view = content
+
+        let popover = NSPopover()
+        popover.contentViewController = vc
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 300, height: 190)
+        return popover
+    }
+
+    @objc private func adjustSliderChanged() {
+        var a = ImageAdjustments()
+        a.brightness = adjustSliders["brightness"]?.doubleValue ?? 0
+        a.contrast = adjustSliders["contrast"]?.doubleValue ?? 1
+        a.saturation = adjustSliders["saturation"]?.doubleValue ?? 1
+        a.sharpness = adjustSliders["sharpness"]?.doubleValue ?? 0
+        // Coalesce a whole slider drag into one undo step: commit only on mouse-up.
+        canvas.setAdjustments(a, commit: NSApp.currentEvent?.type == .leftMouseUp)
+    }
+
+    @objc private func resetAdjustTapped() {
+        canvas.resetAdjustments()
+        adjustSliders["brightness"]?.doubleValue = 0
+        adjustSliders["contrast"]?.doubleValue = 1
+        adjustSliders["saturation"]?.doubleValue = 1
+        adjustSliders["sharpness"]?.doubleValue = 0
     }
 
     @objc private func zoomTapped(_ sender: NSSegmentedControl) {

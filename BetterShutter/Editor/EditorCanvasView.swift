@@ -11,6 +11,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     private var imageSize: CGSize
     private let ciContext = CIContext()
 
+    /// Non-destructive photo adjustments layered over `baseImage` for display and export.
+    private var adjust = ImageAdjustments()
+    private var adjustedCache: CGImage?
+    private var adjustGesturePending: EditorSnapshot?
+
+    /// The base bitmap with live adjustments applied (cached); falls back to `baseImage` when neutral.
+    private var renderBase: CGImage {
+        if adjust.isIdentity { return baseImage }
+        if let cached = adjustedCache { return cached }
+        let result = adjust.apply(to: baseImage, ciContext: ciContext)
+        adjustedCache = result
+        return result
+    }
+
+    var currentAdjustments: ImageAdjustments { adjust }
+
     private(set) var elements: [AnnotationElement] = []
     private var selected: AnnotationElement?
     /// Elements captured by an area (marquee) drag. Empty for single/no selection; a single hit goes
@@ -68,13 +84,14 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let cropRect: CGRect?
         let baseImage: CGImage
         let imageSize: CGSize
+        let adjust: ImageAdjustments
     }
 
     override var undoManager: UndoManager? { undoMgr }
 
     private func snapshot() -> EditorSnapshot {
         EditorSnapshot(elements: elements.map { $0.clone() }, cropRect: cropRect,
-                       baseImage: baseImage, imageSize: imageSize)
+                       baseImage: baseImage, imageSize: imageSize, adjust: adjust)
     }
 
     /// Register `before` as the state to return to, naming the action for the Edit menu.
@@ -94,6 +111,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         cropRect = snap.cropRect
         baseImage = snap.baseImage
         imageSize = snap.imageSize
+        adjust = snap.adjust
+        adjustedCache = nil
+        adjustGesturePending = nil
         selected = nil
         groupSelection = []
         marqueeRect = nil
@@ -112,6 +132,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let before = snapshot()
         baseImage = newBase
         imageSize = newSize
+        adjustedCache = nil
         for element in elements { element.transform(t) }
         if let crop = cropRect { cropRect = crop.applying(t) }
         selected = nil
@@ -124,9 +145,25 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         guard let inverted = ImageTransformer.inverted(baseImage) else { return }
         let before = snapshot()
         baseImage = inverted
+        adjustedCache = nil
         commit(before, "Invert Colors")
         needsDisplay = true
     }
+
+    /// Apply non-destructive photo adjustments live. `doCommit` registers one undo step at the end
+    /// of a slider drag (caller passes true on mouse-up), coalescing the whole drag into one action.
+    func setAdjustments(_ adjustments: ImageAdjustments, commit doCommit: Bool) {
+        if adjustGesturePending == nil { adjustGesturePending = snapshot() }
+        adjust = adjustments
+        adjustedCache = nil
+        needsDisplay = true
+        if doCommit {
+            commit(adjustGesturePending, "Adjust")
+            adjustGesturePending = nil
+        }
+    }
+
+    func resetAdjustments() { setAdjustments(ImageAdjustments(), commit: true) }
 
     /// Add another image onto the canvas, centered and scaled to fit, selected for repositioning.
     func addComposedImage(_ cg: CGImage) {
@@ -212,6 +249,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
               let cg = ciContext.createCGImage(output, from: source.extent) else { return }
         let before = snapshot()
         baseImage = cg
+        adjustedCache = nil
         commit(before, "Filter")
         needsDisplay = true
     }
@@ -365,12 +403,13 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         NSColor(calibratedWhite: 0.16, alpha: 1).setFill()
         bounds.fill()
 
-        cg.draw(baseImage, in: displayRect)
+        let display = renderBase
+        cg.draw(display, in: displayRect)
 
         cg.saveGState()
         cg.translateBy(x: displayRect.minX, y: displayRect.minY)
         cg.scaleBy(x: scale, y: scale)
-        let rc = AnnotationRenderContext(baseImage: baseImage, imageSize: imageSize, ciContext: ciContext)
+        let rc = AnnotationRenderContext(baseImage: display, imageSize: imageSize, ciContext: ciContext)
         for element in elements { element.drawRotated(in: cg, context: rc) }
         cg.restoreGState()
 
@@ -990,6 +1029,6 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     func flattened() -> CGImage? {
         finishTextEditing()
-        return AnnotationRenderer.flatten(base: baseImage, elements: elements, ciContext: ciContext, cropRect: cropRect)
+        return AnnotationRenderer.flatten(base: renderBase, elements: elements, ciContext: ciContext, cropRect: cropRect)
     }
 }
