@@ -1017,6 +1017,37 @@ struct SelectionAspectTests {
 }
 
 @MainActor
+struct PerspectiveMockupTests {
+    @Test
+    func tiltRendersOutput() {
+        let base = makeSolidTestImage(width: 80, height: 60)
+        var style = BeautifyStyle.makeDefault()
+        style.perspective = .right
+        #expect(BeautifyRenderer.render(base: base, style: style) != nil)
+    }
+
+    @Test
+    func presetRoundTripPreservesPerspective() throws {
+        var style = BeautifyStyle.makeDefault()
+        style.perspective = .left
+        let preset = BeautifyPreset(name: "Tilt", style: style)
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: JSONEncoder().encode(preset))
+        #expect(decoded.applied(to: .makeDefault()).perspective == .left)
+    }
+
+    @Test
+    func legacyPresetWithoutPerspectiveDecodesFlat() throws {
+        // Presets saved before 3D existed lack the key; the optional must still decode to flat.
+        let json = """
+        {"name":"Old","paddingFraction":0.08,"cornerFraction":0.03,"shadow":true,\
+        "shadowFraction":0.05,"windowFrame":0}
+        """
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: Data(json.utf8))
+        #expect(decoded.applied(to: .makeDefault()).perspective == .none)
+    }
+}
+
+@MainActor
 struct MeshGradientTests {
     @Test
     func meshPresetRoundTrips() throws {

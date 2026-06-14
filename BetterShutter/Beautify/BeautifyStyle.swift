@@ -94,6 +94,21 @@ struct BackgroundPreset: Identifiable {
     }
 }
 
+/// Optional 3D perspective tilt applied to the screenshot card for a mockup look.
+enum BeautifyPerspective: Int, CaseIterable, Sendable {
+    case none
+    case left
+    case right
+
+    var presentableName: String {
+        switch self {
+        case .none: return "Flat"
+        case .left: return "Tilt Left"
+        case .right: return "Tilt Right"
+        }
+    }
+}
+
 /// Optional macOS window-chrome mockup drawn above the screenshot.
 enum WindowFrame: Int, CaseIterable, Sendable {
     case none
@@ -122,6 +137,8 @@ struct BeautifyStyle {
     /// Output aspect ratio (width / height). Nil keeps the natural padded size; otherwise the canvas
     /// is enlarged on one axis and the card centered ("auto-balanced" composition).
     var targetAspect: CGFloat?
+    /// 3D tilt applied to the card (Snapzy-style mockup). `.none` keeps it flat.
+    var perspective: BeautifyPerspective
 
     static func makeDefault() -> BeautifyStyle {
         BeautifyStyle(
@@ -131,7 +148,8 @@ struct BeautifyStyle {
             shadow: true,
             shadowFraction: 0.05,
             windowFrame: .none,
-            targetAspect: nil
+            targetAspect: nil,
+            perspective: .none
         )
     }
 }

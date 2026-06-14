@@ -21,6 +21,8 @@ nonisolated struct BeautifyPreset: Codable, Identifiable, Sendable {
     var shadowFraction: CGFloat
     var windowFrame: Int
     var targetAspect: CGFloat?
+    /// Optional; absent in presets saved before 3D mockups existed (decodes to flat).
+    var perspective: Int?
 
     var id: String { name }
 }
@@ -73,6 +75,7 @@ extension BeautifyPreset {
         self.shadowFraction = style.shadowFraction
         self.windowFrame = style.windowFrame.rawValue
         self.targetAspect = style.targetAspect
+        self.perspective = style.perspective.rawValue
     }
 
     /// A copy of `style` with this preset's parameters applied. The background is replaced only when
@@ -86,6 +89,7 @@ extension BeautifyPreset {
         s.shadowFraction = shadowFraction
         s.windowFrame = WindowFrame(rawValue: windowFrame) ?? .none
         s.targetAspect = targetAspect
+        s.perspective = BeautifyPerspective(rawValue: perspective ?? 0) ?? .none
         return s
     }
 }

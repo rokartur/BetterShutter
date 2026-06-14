@@ -18,6 +18,7 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var cornerSlider: NSSlider?
     private var shadowSwitch: NSSwitch?
     private var framePopup: NSPopUpButton?
+    private var perspectivePopup: NSPopUpButton?
     private var aspectPopup: NSPopUpButton?
     private let presetButton = NSPopUpButton(frame: .zero, pullsDown: true)
     private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
@@ -80,6 +81,12 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
         framePopup.target = self
         framePopup.action = #selector(frameChanged(_:))
 
+        let perspectivePopup = NSPopUpButton()
+        for option in BeautifyPerspective.allCases { perspectivePopup.addItem(withTitle: option.presentableName) }
+        perspectivePopup.selectItem(at: style.perspective.rawValue)
+        perspectivePopup.target = self
+        perspectivePopup.action = #selector(perspectiveChanged(_:))
+
         let padding = makeSlider(min: 0, max: 0.25, value: style.paddingFraction, action: #selector(paddingChanged(_:)))
         let corner = makeSlider(min: 0, max: 0.12, value: style.cornerFraction, action: #selector(cornerChanged(_:)))
         let shadowToggle = NSSwitch()
@@ -99,6 +106,7 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
         self.cornerSlider = corner
         self.shadowSwitch = shadowToggle
         self.framePopup = framePopup
+        self.perspectivePopup = perspectivePopup
         self.aspectPopup = aspectPopup
 
         let copy = makeButton("Copy", "doc.on.doc", #selector(copyTapped))
@@ -109,6 +117,7 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
         register(.beautifyBackground, group([label("Background"), presetPopup, colorWell, imageButton]), label: "Background")
         register(.beautifyAspect, group([label("Aspect"), aspectPopup]), label: "Aspect")
         register(.beautifyFrame, group([label("Frame"), framePopup]), label: "Frame")
+        register(.beautifyPerspective, group([label("3D"), perspectivePopup]), label: "3D")
         register(.beautifyPadding, group([label("Padding"), padding]), label: "Padding")
         register(.beautifyCorner, group([label("Corner"), corner]), label: "Corner")
         register(.beautifyShadow, group([label("Shadow"), shadowToggle]), label: "Shadow")
@@ -225,6 +234,11 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
         renderPreview()
     }
 
+    @objc private func perspectiveChanged(_ sender: NSPopUpButton) {
+        style.perspective = BeautifyPerspective(rawValue: sender.indexOfSelectedItem) ?? .none
+        renderPreview()
+    }
+
     @objc private func frameChanged(_ sender: NSPopUpButton) {
         style.windowFrame = WindowFrame(rawValue: sender.indexOfSelectedItem) ?? .none
         renderPreview()
@@ -338,6 +352,7 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
         cornerSlider?.doubleValue = Double(style.cornerFraction)
         shadowSwitch?.state = style.shadow ? .on : .off
         framePopup?.selectItem(at: style.windowFrame.rawValue)
+        perspectivePopup?.selectItem(at: style.perspective.rawValue)
         aspectPopup?.selectItem(at: aspectIndex(for: style.targetAspect))
     }
 
@@ -367,8 +382,9 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
     // MARK: NSToolbarDelegate
 
     private var orderedToolbarItems: [NSToolbarItem.Identifier] {
-        [.beautifyBackground, .beautifyAspect, .beautifyFrame, .beautifyPadding, .beautifyCorner,
-         .beautifyShadow, .beautifyPresets, .flexibleSpace, .beautifyCopy, .beautifySave, .beautifyDone]
+        [.beautifyBackground, .beautifyAspect, .beautifyFrame, .beautifyPerspective, .beautifyPadding,
+         .beautifyCorner, .beautifyShadow, .beautifyPresets, .flexibleSpace,
+         .beautifyCopy, .beautifySave, .beautifyDone]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { orderedToolbarItems }
@@ -384,6 +400,7 @@ private extension NSToolbarItem.Identifier {
     static let beautifyBackground = NSToolbarItem.Identifier("beautify.background")
     static let beautifyAspect = NSToolbarItem.Identifier("beautify.aspect")
     static let beautifyFrame = NSToolbarItem.Identifier("beautify.frame")
+    static let beautifyPerspective = NSToolbarItem.Identifier("beautify.perspective")
     static let beautifyPadding = NSToolbarItem.Identifier("beautify.padding")
     static let beautifyCorner = NSToolbarItem.Identifier("beautify.corner")
     static let beautifyShadow = NSToolbarItem.Identifier("beautify.shadow")
