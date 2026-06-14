@@ -25,9 +25,20 @@ final class CaptureCoordinator {
         preview.onBeautify = { [weak self] image, mode in self?.beautify(image, mode: mode) }
     }
 
-    func capture(_ mode: CaptureMode) {
-        guard !isCapturing, !overlay.isPresenting else { return }
+    /// If a self-timer delay is configured, show the countdown and return `true` so the caller aborts;
+    /// `resume` re-invokes the capture (with the delay already consumed) when the countdown elapses.
+    /// Returns `false` when no delay is set, so the caller proceeds immediately.
+    private func startCountdownIfNeeded(_ resume: @escaping () -> Void) -> Bool {
+        let seconds = Preferences.captureDelaySeconds
+        guard seconds > 0 else { return false }
+        CaptureCountdown.shared.run(seconds: seconds, onComplete: resume)
+        return true
+    }
+
+    func capture(_ mode: CaptureMode, afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.capture(mode, afterDelay: false) }) { return }
         sampleBypass()
 
         switch mode {
@@ -42,9 +53,10 @@ final class CaptureCoordinator {
 
     /// Quick screenshot: select a region (or click a window) and deliver it straight to the normal
     /// output (quick-access card + clipboard per settings) with NO action-bar step — the fastest path.
-    func captureQuick() {
-        guard !isCapturing, !overlay.isPresenting else { return }
+    func captureQuick(afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureQuick(afterDelay: false) }) { return }
         sampleBypass()
         presentRegion(
             magnifier: Preferences.magnifierEnabled,
@@ -61,9 +73,10 @@ final class CaptureCoordinator {
 
     /// Screenshot & markup (macshot-style): select a region (or click a window), then open the full
     /// editor with every annotation / drawing tool ready, instead of parking a quick-access card.
-    func captureAndEdit() {
-        guard !isCapturing, !overlay.isPresenting else { return }
+    func captureAndEdit(afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureAndEdit(afterDelay: false) }) { return }
         sampleBypass()
         presentRegion(
             magnifier: Preferences.magnifierEnabled,

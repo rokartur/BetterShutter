@@ -139,6 +139,14 @@ nonisolated enum Preferences {
         static let stepStart = "stepStart"
         static let recentColors = "recentColors"
         static let historyRetention = "captureHistoryRetention"
+        static let captureDelay = "captureDelaySeconds"
+    }
+
+    /// Self-timer delay (seconds) before a capture fires; 0 = off. Lets the user arrange the screen
+    /// (open menus, hover tooltips) first. Allowed values: 0 / 3 / 5 / 10.
+    static var captureDelaySeconds: Int {
+        get { defaults.integer(forKey: Key.captureDelay) }
+        set { defaults.set(newValue, forKey: Key.captureDelay) }
     }
 
     /// How far back the Capture History bar reaches. Defaults to 30 days.

@@ -192,6 +192,16 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: behavior, title: "Downscale Retina to 1×",
                subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
 
+        let timer = addSection(title: "Self-Timer", anchor: "capture.timer")
+        let delay = NSPopUpButton()
+        for option in Self.delayOptions { delay.addItem(withTitle: Self.delayTitle(option)) }
+        delay.selectItem(withTitle: Self.delayTitle(Preferences.captureDelaySeconds))
+        delay.target = self
+        delay.action = #selector(changeDelay(_:))
+        addRow(to: timer, title: "Countdown before capture",
+               subtitle: "Wait before a screenshot fires so you can open menus or arrange windows. Press Esc to cancel.",
+               accessory: delay)
+
         let history = addSection(title: "Capture History", anchor: "capture.history")
         let retention = NSPopUpButton()
         for option in CaptureHistoryRetention.allCases { retention.addItem(withTitle: option.presentableName) }
@@ -218,6 +228,14 @@ final class CaptureSettingsTab: SettingsTabViewController {
     }
 
     @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
+
+    static let delayOptions = [0, 3, 5, 10]
+    static func delayTitle(_ seconds: Int) -> String { seconds == 0 ? "Off" : "\(seconds) seconds" }
+
+    @objc private func changeDelay(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if Self.delayOptions.indices.contains(index) { Preferences.captureDelaySeconds = Self.delayOptions[index] }
+    }
 }
 
 // MARK: - Overlay

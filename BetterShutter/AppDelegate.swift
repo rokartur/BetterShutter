@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var settingsController: SettingsWindowController?
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
+    private var timerMenuItems: [NSMenuItem] = []
     private var recordingItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
     private var recordingTimer: Timer?
@@ -178,6 +179,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         previous.image = NSImage(systemSymbolName: "arrow.counterclockwise.circle", accessibilityDescription: "Previous Area")
         menu.addItem(previous)
 
+        let timer = NSMenuItem(title: "Capture Timer", action: nil, keyEquivalent: "")
+        timer.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Capture Timer")
+        let timerMenu = NSMenu()
+        timerMenuItems.removeAll()
+        for seconds in [0, 3, 5, 10] {
+            let title = seconds == 0 ? "Off" : "\(seconds) seconds"
+            let sub = NSMenuItem(title: title, action: #selector(changeCaptureTimer(_:)), keyEquivalent: "")
+            sub.target = self
+            sub.tag = seconds
+            timerMenu.addItem(sub)
+            timerMenuItems.append(sub)
+        }
+        timer.submenu = timerMenu
+        menu.addItem(timer)
+
         menu.addItem(.separator())
 
         let record = NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: "")
@@ -294,6 +310,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pauseItem.isHidden = !RecordingController.shared.isRecording
             pauseItem.title = RecordingController.shared.isPaused ? "Resume Recording" : "Pause Recording"
         }
+        let delay = Preferences.captureDelaySeconds
+        for item in timerMenuItems { item.state = item.tag == delay ? .on : .off }
     }
 
     private func applyShortcut(_ name: BetterShortcuts.Name, to item: NSMenuItem) {
@@ -317,6 +335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureCutout() { CaptureCoordinator.shared.captureCutout() }
     @objc private func captureScrolling() { CaptureCoordinator.shared.captureScrolling() }
     @objc private func capturePreviousArea() { CaptureCoordinator.shared.captureLastRegion() }
+    @objc private func changeCaptureTimer(_ sender: NSMenuItem) { Preferences.captureDelaySeconds = sender.tag }
     @objc private func openHistory() { CaptureHistoryPanel.shared.toggle() }
 
     @objc private func editFromClipboard() {
