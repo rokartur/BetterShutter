@@ -15,6 +15,7 @@ struct BetterShutterTests {
         #expect(configuration.tabs.contains { $0.id == "capture" })
         #expect(configuration.tabs.contains { $0.id == "editor" })
         #expect(configuration.tabs.contains { $0.id == "beautify" })
+        #expect(configuration.tabs.contains { $0.id == "cloud" })
         #expect(configuration.tabs.contains { $0.id == "advanced" })
     }
 }
@@ -451,6 +452,7 @@ struct URLCommandTests {
         #expect(URLCommand.parse(URL(string: "bettershutter://record-gif")!) == .recordGIF)
         #expect(URLCommand.parse(URL(string: "bettershutter://record-window")!) == .recordWindow)
         #expect(URLCommand.parse(URL(string: "bettershutter://pin")!) == .pinLast)
+        #expect(URLCommand.parse(URL(string: "bettershutter://upload-last")!) == .uploadLast)
     }
 
     @Test

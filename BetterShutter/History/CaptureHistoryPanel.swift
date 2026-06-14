@@ -431,6 +431,7 @@ final class CaptureHistoryPanel: NSObject {
             ("Restore", #selector(menuRestore)),
             ("Reveal in Finder", #selector(menuReveal)),
             ("Copy", #selector(menuCopy)),
+            ("Upload & Copy Link", #selector(menuUpload)),
             ("Share…", #selector(menuShare)),
             ("Delete", #selector(menuDelete)),
         ] {
@@ -443,6 +444,7 @@ final class CaptureHistoryPanel: NSObject {
 
     @objc private func menuRestore() { if let selected { restore(selected) } }
     @objc private func menuReveal() { if let selected { NSWorkspace.shared.activateFileViewerSelecting([selected]) } }
+    @objc private func menuUpload() { if let selected { CloudUploadService.uploadFile(selected) } }
 
     @objc private func menuCopy() {
         guard let selected, let kind = HistoryKind(extension: selected.pathExtension) else { return }

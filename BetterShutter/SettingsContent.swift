@@ -24,6 +24,8 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
                         iconStyle: .solid(SettingsColor(hex: 0xBF5AF2))),
             SettingsTab(id: "output", title: "Output", icon: "square.and.arrow.down",
                         iconStyle: .solid(SettingsColor(hex: 0x30D158))),
+            SettingsTab(id: "cloud", title: "Cloud", icon: "icloud.and.arrow.up",
+                        iconStyle: .solid(SettingsColor(hex: 0x64D2FF))),
             SettingsTab(id: "advanced", title: "Advanced", icon: "slider.horizontal.3",
                         iconStyle: .solid(SettingsColor(hex: 0x8E8E93))),
             SettingsTab(id: "about", title: "About", icon: "info.circle.fill",
@@ -65,11 +67,87 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
             case "editor": return EditorSettingsTab()
             case "beautify": return BeautifySettingsTab()
             case "output": return OutputSettingsTab()
+            case "cloud": return CloudSettingsTab()
             case "advanced": return AdvancedSettingsTab()
             default: return AboutSettingsTab()
             }
         }
     )
+}
+
+// MARK: - Cloud
+
+final class CloudSettingsTab: SettingsTabViewController {
+    override func setupContent() {
+        let providerSection = addSection(title: "Provider", anchor: "cloud.provider")
+        let provider = NSPopUpButton()
+        for p in CloudProvider.allCases { provider.addItem(withTitle: p.presentableName) }
+        provider.selectItem(at: CloudProvider.allCases.firstIndex(of: Preferences.cloudProvider) ?? 0)
+        provider.target = self
+        provider.action = #selector(changeProvider(_:))
+        addRow(to: providerSection, title: "Upload to",
+               subtitle: "CleanShot Cloud is proprietary; bring your own S3-compatible storage or use imgbb.",
+               accessory: provider)
+
+        let auto = NSSwitch()
+        auto.state = Preferences.uploadAfterCapture ? .on : .off
+        auto.target = self
+        auto.action = #selector(toggleAuto(_:))
+        addRow(to: providerSection, title: "Upload after capture",
+               subtitle: "Automatically upload every capture and copy the link.", accessory: auto)
+
+        let s3 = addSection(title: "S3 / R2", anchor: "cloud.s3")
+        addRow(to: s3, title: "Access Key ID", subtitle: "Your S3/R2 access key.",
+               accessory: field(Preferences.s3Config.accessKey, #selector(s3AccessKey(_:)), secure: false))
+        addRow(to: s3, title: "Secret Access Key", subtitle: "Stored in the Keychain.",
+               accessory: field(Preferences.s3SecretKey, #selector(s3Secret(_:)), secure: true))
+        addRow(to: s3, title: "Bucket", subtitle: "Destination bucket name.",
+               accessory: field(Preferences.s3Config.bucket, #selector(s3Bucket(_:)), secure: false))
+        addRow(to: s3, title: "Region", subtitle: "e.g. us-east-1 (S3) or auto (R2).",
+               accessory: field(Preferences.s3Config.region, #selector(s3Region(_:)), secure: false))
+        addRow(to: s3, title: "Endpoint host", subtitle: "e.g. s3.amazonaws.com or <acct>.r2.cloudflarestorage.com.",
+               accessory: field(Preferences.s3Config.endpointHost, #selector(s3Endpoint(_:)), secure: false))
+        addRow(to: s3, title: "Public base URL", subtitle: "Optional, e.g. https://cdn.example.com — the share link uses this.",
+               accessory: field(Preferences.s3Config.publicBaseURL, #selector(s3PublicURL(_:)), secure: false))
+        let pathStyle = NSSwitch()
+        pathStyle.state = Preferences.s3Config.usePathStyle ? .on : .off
+        pathStyle.target = self
+        pathStyle.action = #selector(s3PathStyle(_:))
+        addRow(to: s3, title: "Path-style URLs", subtitle: "On for R2 / MinIO; off for AWS virtual-hosted.", accessory: pathStyle)
+        let acl = NSSwitch()
+        acl.state = Preferences.s3Config.setPublicACL ? .on : .off
+        acl.target = self
+        acl.action = #selector(s3ACL(_:))
+        addRow(to: s3, title: "Set public-read ACL", subtitle: "On for AWS S3 public objects; off for R2.", accessory: acl)
+
+        let imgbb = addSection(title: "imgbb", anchor: "cloud.imgbb")
+        addRow(to: imgbb, title: "API Key", subtitle: "From your imgbb.com account.",
+               accessory: field(Preferences.imgbbAPIKey, #selector(imgbbKey(_:)), secure: true))
+    }
+
+    private func field(_ value: String, _ action: Selector, secure: Bool) -> NSTextField {
+        let f = secure ? NSSecureTextField() : NSTextField()
+        f.stringValue = value
+        f.target = self
+        f.action = action
+        f.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        return f
+    }
+
+    @objc private func changeProvider(_ sender: NSPopUpButton) {
+        let i = sender.indexOfSelectedItem
+        if CloudProvider.allCases.indices.contains(i) { Preferences.cloudProvider = CloudProvider.allCases[i] }
+    }
+    @objc private func toggleAuto(_ sender: NSSwitch) { Preferences.uploadAfterCapture = (sender.state == .on) }
+    @objc private func s3AccessKey(_ s: NSTextField) { var c = Preferences.s3Config; c.accessKey = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3Secret(_ s: NSTextField) { Preferences.s3SecretKey = s.stringValue }
+    @objc private func s3Bucket(_ s: NSTextField) { var c = Preferences.s3Config; c.bucket = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3Region(_ s: NSTextField) { var c = Preferences.s3Config; c.region = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3Endpoint(_ s: NSTextField) { var c = Preferences.s3Config; c.endpointHost = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3PublicURL(_ s: NSTextField) { var c = Preferences.s3Config; c.publicBaseURL = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3PathStyle(_ s: NSSwitch) { var c = Preferences.s3Config; c.usePathStyle = (s.state == .on); Preferences.s3Config = c }
+    @objc private func s3ACL(_ s: NSSwitch) { var c = Preferences.s3Config; c.setPublicACL = (s.state == .on); Preferences.s3Config = c }
+    @objc private func imgbbKey(_ s: NSTextField) { Preferences.imgbbAPIKey = s.stringValue }
 }
 
 // MARK: - General

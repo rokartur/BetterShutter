@@ -12,7 +12,7 @@ nonisolated enum URLCommand: Equatable {
     case captureRegion, captureWindow, captureFullScreen, captureText, captureScrolling, captureCutout
     case record, recordGIF, recordRegion, recordWindow
     case capturePreviousArea
-    case openBrowser, openSettings, pinLast
+    case openBrowser, openSettings, pinLast, uploadLast
     case unknown(String)
 
     static func parse(_ url: URL) -> URLCommand? {
@@ -35,6 +35,7 @@ nonisolated enum URLCommand: Equatable {
         case "browse", "browser":                return .openBrowser
         case "settings":                         return .openSettings
         case "pin-last", "pin":                  return .pinLast
+        case "upload-last", "upload":            return .uploadLast
         case "":                                 return nil
         default:                                 return .unknown(raw)
         }

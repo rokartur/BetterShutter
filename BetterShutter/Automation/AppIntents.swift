@@ -122,6 +122,18 @@ struct PinLastCaptureIntent: AppIntent {
 }
 
 @available(macOS 13.0, *)
+struct UploadLastCaptureIntent: AppIntent {
+    static let title: LocalizedStringResource = "Upload Last Capture & Copy Link"
+    static let openAppWhenRun = true
+    func perform() async throws -> some IntentResult {
+        await runOnMain {
+            if let item = CaptureHistory.shared.items.first { CloudUploadService.upload(item.image.cgImage) }
+        }
+        return .result()
+    }
+}
+
+@available(macOS 13.0, *)
 struct BetterShutterShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: AllInOneCaptureIntent(),
@@ -139,5 +151,8 @@ struct BetterShutterShortcuts: AppShortcutsProvider {
         AppShortcut(intent: ToggleRecordingIntent(),
                     phrases: ["Start recording with \(.applicationName)"],
                     shortTitle: "Start or Stop Recording", systemImageName: "record.circle")
+        AppShortcut(intent: UploadLastCaptureIntent(),
+                    phrases: ["Upload last capture with \(.applicationName)"],
+                    shortTitle: "Upload Last Capture", systemImageName: "icloud.and.arrow.up")
     }
 }

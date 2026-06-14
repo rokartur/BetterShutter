@@ -491,6 +491,8 @@ final class CaptureCoordinator {
         let action = Preferences.afterCaptureAction
         if action.copies { PasteboardWriter.copy(output.cgImage) }
         if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+        // Auto-upload + copy the share link (overwrites the image on the pasteboard, CleanShot-style).
+        if Preferences.uploadAfterCapture, CloudUploadService.isEnabled { CloudUploadService.upload(output.cgImage) }
 
         Task {
             // Always persist a durable file; reveal it from the preview.

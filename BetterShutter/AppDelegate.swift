@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .openBrowser:          CaptureHistoryPanel.shared.show()
         case .openSettings:         openSettings()
         case .pinLast:              pinLastCapture()
+        case .uploadLast:           uploadLast()
         case .unknown(let raw):     HUD.show("Unknown command: \(raw)")
         }
     }
@@ -262,6 +263,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         closePins.image = NSImage(systemSymbolName: "pin.slash", accessibilityDescription: "Close Pins")
         menu.addItem(closePins)
 
+        let upload = NSMenuItem(title: "Upload Last & Copy Link", action: #selector(uploadLast), keyEquivalent: "")
+        upload.target = self
+        upload.image = NSImage(systemSymbolName: "icloud.and.arrow.up", accessibilityDescription: "Upload")
+        menu.addItem(upload)
+
         let reopen = NSMenuItem(title: "Reopen Last Capture", action: #selector(reopenLast), keyEquivalent: "")
         reopen.target = self
         reopen.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Reopen")
@@ -377,6 +383,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func restoreClosed() { CaptureCoordinator.shared.restoreClosedPreview() }
+
+    @objc private func uploadLast() {
+        guard let item = CaptureHistory.shared.items.first else { HUD.show("No recent capture"); return }
+        CloudUploadService.upload(item.image.cgImage)
+    }
 
     @objc private func trimVideo() {
         let panel = NSOpenPanel()

@@ -19,15 +19,26 @@ enum CloudUploadService {
         "\(stamp)-\(random).\(ext)"
     }
 
-    /// Upload an image and copy the resulting link to the clipboard.
+    /// Upload an in-memory image (PNG) and copy the resulting link.
     static func upload(_ image: CGImage) {
         guard let uploader = uploader() else { HUD.show("Set up Cloud in Settings"); return }
         guard let data = ImageEncoder.encode(image, as: .png) else { HUD.show("Encode failed"); return }
-        let key = currentKey(ext: "png")
+        send(data, key: currentKey(ext: "png"), contentType: "image/png", using: uploader)
+    }
+
+    /// Upload an existing file (preserves the original format — GIF animation, video, etc.).
+    static func uploadFile(_ fileURL: URL) {
+        guard let uploader = uploader() else { HUD.show("Set up Cloud in Settings"); return }
+        guard let data = try? Data(contentsOf: fileURL) else { HUD.show("Couldn't read file"); return }
+        let ext = fileURL.pathExtension.isEmpty ? "png" : fileURL.pathExtension.lowercased()
+        send(data, key: currentKey(ext: ext), contentType: contentType(forExtension: ext), using: uploader)
+    }
+
+    private static func send(_ data: Data, key: String, contentType: String, using uploader: Uploader) {
         HUD.show("Uploading…", duration: 1.0)
         Task {
             do {
-                let url = try await uploader.upload(data, key: key, contentType: "image/png")
+                let url = try await uploader.upload(data, key: key, contentType: contentType)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url.absoluteString, forType: .string)
                 Preferences.cloudLinkHistory = [url.absoluteString] + Preferences.cloudLinkHistory
@@ -35,6 +46,19 @@ enum CloudUploadService {
             } catch {
                 HUD.show(error.localizedDescription)
             }
+        }
+    }
+
+    private static func contentType(forExtension ext: String) -> String {
+        switch ext {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "heic": return "image/heic"
+        case "webp": return "image/webp"
+        case "mp4", "m4v": return "video/mp4"
+        case "mov": return "video/quicktime"
+        default: return "application/octet-stream"
         }
     }
 
