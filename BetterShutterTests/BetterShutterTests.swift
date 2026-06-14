@@ -13,7 +13,7 @@ struct BetterShutterTests {
         #expect(configuration.tabs.contains { $0.id == "general" })
         #expect(configuration.tabs.contains { $0.id == "shortcuts" })
         #expect(configuration.tabs.contains { $0.id == "capture" })
-        #expect(configuration.tabs.contains { $0.id == "annotation" })
+        #expect(configuration.tabs.contains { $0.id == "editor" })
         #expect(configuration.tabs.contains { $0.id == "beautify" })
         #expect(configuration.tabs.contains { $0.id == "advanced" })
     }
@@ -672,18 +672,26 @@ struct MeasureElementTests {
     }
 }
 
+@MainActor
 struct PixelateScaleTests {
+    // NOTE: re-pointed from a removed `secureScale(width:height:)` API to the current
+    // `blockSize(strength:imageSize:)`, which drives mosaic coarseness from the strength slider
+    // scaled to the image (not the region) with an 8px floor.
     @Test
-    func thinStripGetsCoarseFloor() {
-        // A 200×20 text strip must still be averaged into ≥16px blocks (not the old 8px).
-        #expect(PixelateElement.secureScale(width: 200, height: 20) == 16)
+    func weakestStrengthStillFloorsToEightPx() {
+        // Even strength 0 averages into at least an 8px block so faint text can't be reconstructed.
+        #expect(PixelateElement.blockSize(strength: 0, imageSize: CGSize(width: 200, height: 20)) == 8)
     }
 
     @Test
-    func largeRegionScalesUp() {
-        let scale = PixelateElement.secureScale(width: 600, height: 480)
-        #expect(scale == 80)            // min dim 480 / 6
-        #expect(scale > 16)
+    func blockScalesWithStrengthAndImage() {
+        // Small image: min dim 160/8 = 20 < 40 floor → 40 at full strength.
+        let small = PixelateElement.blockSize(strength: 1, imageSize: CGSize(width: 200, height: 160))
+        #expect(small == 40)
+        // Large image: min dim 480/8 = 60 → 60 at full strength, and coarser than the small image.
+        let large = PixelateElement.blockSize(strength: 1, imageSize: CGSize(width: 800, height: 480))
+        #expect(large == 60)
+        #expect(large > small)
     }
 }
 
@@ -812,6 +820,38 @@ struct BeautifyPresetTests {
         } else {
             Issue.record("expected solid background")
         }
+    }
+}
+
+struct SelectionAspectTests {
+    @Test
+    func squareLockFromWidthDominantDrag() {
+        // Drag right-and-up, wider than tall → height grows to match width (1:1).
+        let r = SelectionModel.rect(from: .zero, to: CGPoint(x: 100, y: 40), aspect: 1)
+        #expect(r == CGRect(x: 0, y: 0, width: 100, height: 100))
+    }
+
+    @Test
+    func sixteenNineLockFromHeightDominantDrag() {
+        // Tall drag with 16:9 lock → width derived from height.
+        let r = SelectionModel.rect(from: .zero, to: CGPoint(x: 10, y: 90), aspect: 16.0 / 9.0)
+        #expect(abs(r.width - 160) < 1e-6)
+        #expect(abs(r.height - 90) < 1e-6)
+    }
+
+    @Test
+    func anchorPinnedWhenDraggingUpLeft() {
+        // Dragging toward negative x/y keeps the anchor corner pinned at the far edge.
+        let r = SelectionModel.rect(from: CGPoint(x: 200, y: 200), to: CGPoint(x: 100, y: 190), aspect: 1)
+        #expect(r.maxX == 200)
+        #expect(r.maxY == 200)
+        #expect(r.width == 100 && r.height == 100)
+    }
+
+    @Test
+    func nonPositiveAspectFallsBackToFree() {
+        let r = SelectionModel.rect(from: .zero, to: CGPoint(x: 30, y: 70), aspect: 0)
+        #expect(r == CGRect(x: 0, y: 0, width: 30, height: 70))
     }
 }
 

@@ -32,6 +32,7 @@ final class OverlayController {
         windowSelection: Bool = true,
         toolbarActions: [OverlayAction] = [],
         instantCapture: Bool = false,
+        lockedAspect: CGFloat? = nil,
         onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void,
         onWindow: @escaping (CGWindowID) -> Void,
         onCancel: @escaping () -> Void
@@ -72,6 +73,7 @@ final class OverlayController {
             view.magnifierEnabled = magnifierEnabled
             view.toolbarActions = toolbarActions
             view.instantCapture = instantCapture
+            view.lockedAspect = lockedAspect
             view.setCursorHidden = { [weak self] hidden in hidden ? self?.hideCursor() : self?.showCursor() }
             // Empty hits → no window hover-highlight and no click-to-pick (region-only flows).
             view.windowHits = windowSelection
