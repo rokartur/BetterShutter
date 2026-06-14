@@ -71,6 +71,29 @@ enum BeautifyRenderer {
         return ctx.makeImage()
     }
 
+    /// Mesh gradient: fill with the first color, then blend soft radial blobs of each color at
+    /// scattered anchors. Pure CoreGraphics, so it renders identically on every macOS version.
+    private static func drawMesh(_ colors: [NSColor], in ctx: CGContext, rect: CGRect) {
+        guard let base = colors.first else { return }
+        ctx.setFillColor((base.usingColorSpace(.sRGB) ?? base).cgColor)
+        ctx.fill(rect)
+        let anchors = [
+            CGPoint(x: 0.18, y: 0.22), CGPoint(x: 0.82, y: 0.18),
+            CGPoint(x: 0.80, y: 0.82), CGPoint(x: 0.20, y: 0.80), CGPoint(x: 0.5, y: 0.5),
+        ]
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let radius = max(rect.width, rect.height) * 0.78
+        for (index, color) in colors.enumerated() {
+            let a = anchors[index % anchors.count]
+            let center = CGPoint(x: rect.minX + rect.width * a.x, y: rect.minY + rect.height * a.y)
+            let c = color.usingColorSpace(.sRGB) ?? color
+            let cgColors = [c.withAlphaComponent(0.95).cgColor, c.withAlphaComponent(0).cgColor] as CFArray
+            guard let g = CGGradient(colorsSpace: space, colors: cgColors, locations: [0, 1]) else { continue }
+            ctx.drawRadialGradient(g, startCenter: center, startRadius: 0,
+                                   endCenter: center, endRadius: radius, options: [])
+        }
+    }
+
     private static func drawTrafficLights(in ctx: CGContext, barRect: CGRect) {
         let r = max(4, barRect.height * 0.16)
         let gap = r * 2.8
@@ -101,6 +124,8 @@ enum BeautifyRenderer {
             let start = CGPoint(x: rect.midX - dx * rect.width / 2, y: rect.midY - dy * rect.height / 2)
             let end = CGPoint(x: rect.midX + dx * rect.width / 2, y: rect.midY + dy * rect.height / 2)
             ctx.drawLinearGradient(gradient, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        case .mesh(let colors):
+            drawMesh(colors, in: ctx, rect: rect)
         case .image(let cg):
             // Aspect-fill the custom image into the background rect.
             let imageAspect = CGFloat(cg.width) / CGFloat(max(cg.height, 1))

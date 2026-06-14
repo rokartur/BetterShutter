@@ -1017,6 +1017,36 @@ struct SelectionAspectTests {
 }
 
 @MainActor
+struct MeshGradientTests {
+    @Test
+    func meshPresetRoundTrips() throws {
+        var style = BeautifyStyle.makeDefault()
+        style.background = .mesh([.systemPink, .systemBlue, .systemGreen])
+        let preset = BeautifyPreset(name: "Mesh", style: style)
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: JSONEncoder().encode(preset))
+        let applied = decoded.applied(to: .makeDefault())
+        if case .mesh(let colors) = applied.background { #expect(colors.count == 3) }
+        else { Issue.record("expected mesh background") }
+    }
+
+    @Test
+    func meshRendersLargerThanInput() {
+        let base = makeSolidTestImage(width: 80, height: 60)
+        var style = BeautifyStyle.makeDefault()
+        style.background = .mesh([.systemPink, .systemBlue])
+        let out = BeautifyRenderer.render(base: base, style: style)
+        #expect(out != nil)
+        #expect((out?.width ?? 0) > 80)
+    }
+
+    @Test
+    func presetLibraryIsExpandedAndHasMesh() {
+        #expect(BackgroundPreset.all.count >= 28)
+        #expect(BackgroundPreset.all.contains { if case .mesh = $0.fill { return true }; return false })
+    }
+}
+
+@MainActor
 struct FloatPreviewCardSizeTests {
     @Test
     func cardIsAlways16x9() {
