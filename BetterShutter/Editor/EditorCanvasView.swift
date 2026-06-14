@@ -234,6 +234,31 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    /// Detect faces and blur each one (one undo step) — privacy redaction for people in a shot.
+    func autoRedactFaces() {
+        let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
+        let size = imageSize
+        let currentStyle = style
+        Task {
+            let faces = await FaceDetector.detect(image)
+            guard !faces.isEmpty else { HUD.show("No faces found"); return }
+            let before = snapshot()
+            for box in faces {
+                // Vision box is normalized bottom-left → image-pixel bottom-left, padded to the head.
+                let rect = CGRect(x: box.minX * size.width, y: box.minY * size.height,
+                                  width: box.width * size.width, height: box.height * size.height)
+                    .insetBy(dx: -box.width * size.width * 0.12, dy: -box.height * size.height * 0.12)
+                let blur = BlurElement(start: CGPoint(x: rect.minX, y: rect.minY), style: currentStyle)
+                blur.end = CGPoint(x: rect.maxX, y: rect.maxY)
+                blur.style.redactionStrength = 0.9
+                elements.append(blur)
+            }
+            commit(before, "Redact Faces")
+            HUD.show("Redacted \(faces.count) face\(faces.count == 1 ? "" : "s")")
+            needsDisplay = true
+        }
+    }
+
     /// Find PII via OCR and cover each matching line with a black-out box (one undo step).
     func autoRedactPII() {
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
@@ -862,6 +887,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case .pixelate: return PixelateElement(start: p, style: style)
         case .blur: return BlurElement(start: p, style: style)
         case .blackout: return BlackoutElement(start: p, style: style)
+        case .erase: return SmartEraseElement(start: p, style: style)
         case .spotlight: return SpotlightElement(start: p, style: style)
         default: return RectangleElement(start: p, style: style)
         }

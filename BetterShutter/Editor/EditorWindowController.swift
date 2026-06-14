@@ -304,6 +304,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         let redact = NSMenuItem(title: "Auto-Redact PII", action: #selector(autoRedactPicked), keyEquivalent: "")
         redact.target = self
         popup.menu?.addItem(redact)
+        let redactFaces = NSMenuItem(title: "Redact Faces", action: #selector(autoRedactFacesPicked), keyEquivalent: "")
+        redactFaces.target = self
+        popup.menu?.addItem(redactFaces)
         let addImage = NSMenuItem(title: "Add Image…", action: #selector(addImagePicked), keyEquivalent: "")
         addImage.target = self
         popup.menu?.addItem(addImage)
@@ -441,6 +444,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     @objc private func invertPicked() { canvas.invertColors() }
     @objc private func autoRedactPicked() { canvas.autoRedactPII() }
+    @objc private func autoRedactFacesPicked() { canvas.autoRedactFaces() }
     @objc private func addWatermarkPicked() { canvas.addWatermark() }
 
     @objc private func addImagePicked() {

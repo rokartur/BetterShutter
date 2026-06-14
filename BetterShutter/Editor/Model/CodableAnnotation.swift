@@ -122,6 +122,7 @@ enum AnnotationProjectIO {
         case let x as PixelateElement:  return twoPoint("pixelate", x)
         case let x as BlurElement:      return twoPoint("blur", x)
         case let x as BlackoutElement:  return twoPoint("blackout", x)
+        case let x as SmartEraseElement: return twoPoint("erase", x)
         case let x as SpotlightElement: return twoPoint("spotlight", x)
         case let x as MarkerElement:
             return CodableAnnotation(kind: "marker", style: style, points: x.points)
@@ -194,6 +195,7 @@ enum AnnotationProjectIO {
         case "pixelate":  return twoPoint(PixelateElement.self)
         case "blur":      return twoPoint(BlurElement.self)
         case "blackout":  return twoPoint(BlackoutElement.self)
+        case "erase":     return twoPoint(SmartEraseElement.self)
         case "spotlight": return twoPoint(SpotlightElement.self)
         case "pen", "marker":
             let pts = c.points ?? []

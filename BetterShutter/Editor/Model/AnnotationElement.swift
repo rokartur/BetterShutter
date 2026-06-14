@@ -530,6 +530,55 @@ final class BlackoutElement: TwoPointElement {
     }
 }
 
+/// Smart erase: fills the region with the average color of a thin ring just outside it, so the
+/// content "disappears" into a near-uniform background — a lightweight content-aware erase (macshot's
+/// fourth censor mode). Best on flat / gradient backgrounds; degrades to a flat patch on busy ones.
+final class SmartEraseElement: TwoPointElement {
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        let r = rect.integral
+        guard r.width >= 2, r.height >= 2 else { return }
+        cg.setFillColor(Self.borderAverageColor(of: rc.baseImage, region: r,
+                                                imageSize: rc.imageSize, ciContext: rc.ciContext))
+        cg.fill(r)
+    }
+
+    /// Average color of the ring of pixels just outside `region` (image bottom-left coords).
+    static func borderAverageColor(of image: CGImage, region: CGRect, imageSize: CGSize,
+                                   ciContext: CIContext) -> CGColor {
+        let ci = CIImage(cgImage: image)
+        let m = max(4, min(region.width, region.height) * 0.15)
+        let full = CGRect(origin: .zero, size: imageSize)
+        let strips = [
+            CGRect(x: region.minX, y: region.maxY, width: region.width, height: m),      // top
+            CGRect(x: region.minX, y: region.minY - m, width: region.width, height: m),  // bottom
+            CGRect(x: region.minX - m, y: region.minY, width: m, height: region.height), // left
+            CGRect(x: region.maxX, y: region.minY, width: m, height: region.height),     // right
+        ].map { $0.intersection(full) }.filter { !$0.isNull && $0.width >= 1 && $0.height >= 1 }
+
+        var (rT, gT, bT, n) = (0.0, 0.0, 0.0, 0.0)
+        for strip in strips {
+            if let c = averageColor(ci, extent: strip, ciContext: ciContext) {
+                rT += c.0; gT += c.1; bT += c.2; n += 1
+            }
+        }
+        guard n > 0 else { return CGColor(gray: 0.5, alpha: 1) }
+        return CGColor(srgbRed: rT / n, green: gT / n, blue: bT / n, alpha: 1)
+    }
+
+    private static func averageColor(_ ci: CIImage, extent: CGRect,
+                                     ciContext: CIContext) -> (Double, Double, Double)? {
+        let filter = CIFilter.areaAverage()
+        filter.inputImage = ci
+        filter.extent = extent
+        guard let out = filter.outputImage else { return nil }
+        var px = [UInt8](repeating: 0, count: 4)
+        ciContext.render(out, toBitmap: &px, rowBytes: 4,
+                         bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                         format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        return (Double(px[0]) / 255, Double(px[1]) / 255, Double(px[2]) / 255)
+    }
+}
+
 /// Spotlight: dims the whole image except the dragged region, to direct attention without arrows.
 /// The bounding box is the bright (clear) area, so selection/hit-testing targets the focus rect.
 final class SpotlightElement: TwoPointElement {

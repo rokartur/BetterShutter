@@ -826,6 +826,34 @@ struct BeautifyPresetTests {
 }
 
 @MainActor
+struct SmartEraseTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func flattenKeepsSizeAndClones() {
+        let base = makeSolidTestImage(width: 60, height: 50)
+        let erase = SmartEraseElement(start: CGPoint(x: 10, y: 10), style: style)
+        erase.updateDrag(to: CGPoint(x: 40, y: 35))
+        let out = AnnotationRenderer.flatten(base: base, elements: [erase], ciContext: CIContext())
+        #expect(out?.width == 60 && out?.height == 50)
+        #expect(erase.clone() is SmartEraseElement)
+    }
+
+    @Test
+    func borderAverageMatchesSolidBackground() {
+        // makeSolidTestImage paints solid blue → the border ring averages to blue.
+        let base = makeSolidTestImage(width: 40, height: 40)
+        let color = SmartEraseElement.borderAverageColor(
+            of: base, region: CGRect(x: 12, y: 12, width: 16, height: 16),
+            imageSize: CGSize(width: 40, height: 40), ciContext: CIContext())
+        let comps = color.components ?? []
+        #expect(comps.count >= 3)
+        #expect(comps[2] > 0.8)   // blue dominant
+        #expect(comps[0] < 0.2)   // little red
+    }
+}
+
+@MainActor
 struct TextFormattingTests {
     private let style = AnnotationStyle.makeDefault(imageWidth: 100)
 
