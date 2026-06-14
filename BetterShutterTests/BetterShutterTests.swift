@@ -1016,6 +1016,66 @@ struct SelectionAspectTests {
     }
 }
 
+struct CloudConfigTests {
+    @Test
+    func pathStyleObjectURL() {
+        var c = S3Config()
+        c.bucket = "shots"; c.endpointHost = "s3.amazonaws.com"; c.usePathStyle = true
+        #expect(c.objectURL(key: "a.png")?.absoluteString == "https://s3.amazonaws.com/shots/a.png")
+    }
+
+    @Test
+    func virtualHostedObjectURL() {
+        var c = S3Config()
+        c.bucket = "shots"; c.endpointHost = "s3.amazonaws.com"; c.usePathStyle = false
+        #expect(c.objectURL(key: "a.png")?.absoluteString == "https://shots.s3.amazonaws.com/a.png")
+    }
+
+    @Test
+    func publicBaseURLOverridesAndTrimsSlash() {
+        var c = S3Config()
+        c.bucket = "shots"; c.endpointHost = "s3.amazonaws.com"; c.publicBaseURL = "https://cdn.example.com/"
+        #expect(c.objectURL(key: "a.png")?.absoluteString == "https://cdn.example.com/a.png")
+    }
+
+    @Test @MainActor
+    func keyFormat() {
+        #expect(CloudUploadService.makeKey(stamp: "2026-06-14-090000", random: "ab12cd34", ext: "png")
+                == "2026-06-14-090000-ab12cd34.png")
+    }
+}
+
+struct SigV4Tests {
+    @Test
+    func derivesKnownSigningKey() {
+        // AWS's published "derive a signing key" example vector.
+        let key = SigV4.signingKey(secret: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+                                   dateStamp: "20120215", region: "us-east-1", service: "iam")
+        #expect(SigV4.hex(key) == "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d")
+    }
+
+    @Test
+    func sha256OfEmptyPayload() {
+        #expect(SigV4.sha256Hex(Data()) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    }
+
+    @Test
+    func authorizationHeaderHasExpectedShape() {
+        let r = SigV4.Request(
+            method: "PUT", host: "bucket.s3.us-east-1.amazonaws.com", path: "/key.png", query: "",
+            headers: ["host": "bucket.s3.us-east-1.amazonaws.com",
+                      "x-amz-date": "20240101T000000Z",
+                      "x-amz-content-sha256": SigV4.sha256Hex(Data())],
+            payloadHashHex: SigV4.sha256Hex(Data()),
+            date: Date(timeIntervalSince1970: 1_704_067_200), region: "us-east-1", service: "s3",
+            secretKey: "secret", accessKey: "AKIDEXAMPLE")
+        let header = SigV4.authorizationHeader(r)
+        #expect(header.hasPrefix("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"))
+        #expect(header.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"))
+        #expect(header.contains("Signature="))
+    }
+}
+
 struct CursorTrackTests {
     @Test
     func interpolatesBetweenSamples() {
