@@ -99,6 +99,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         marqueeRect = nil
         creating = nil
         dragMode = .none
+        zoomFactor = 1
+        panOffset = .zero
         needsDisplay = true
     }
 
@@ -265,25 +267,95 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         return NSSize(width: pixelSize.width * scale, height: pixelSize.height * scale)
     }
 
+    /// Zoom relative to the aspect-fit baseline: 1 = fit-to-window, up to `maxZoom` zoomed in.
+    private var zoomFactor: CGFloat = 1
+    /// Pan in view points while zoomed in; always 0 at fit.
+    private var panOffset: CGSize = .zero
+    private let maxZoom: CGFloat = 16
+    var isZoomed: Bool { zoomFactor > 1.0001 }
+
+    /// The scale that fits the whole image into the inset bounds (zoom 1).
+    private var fitScale: CGFloat {
+        let inset = bounds.insetBy(dx: 16, dy: 16)
+        guard imageSize.width > 0, imageSize.height > 0 else { return 1 }
+        return min(inset.width / imageSize.width, inset.height / imageSize.height)
+    }
+
     private var displayRect: CGRect {
         let inset = bounds.insetBy(dx: 16, dy: 16)
         guard imageSize.width > 0, imageSize.height > 0 else { return inset }
-        let scale = min(inset.width / imageSize.width, inset.height / imageSize.height)
-        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-        return CGRect(x: inset.midX - size.width / 2, y: inset.midY - size.height / 2,
+        let s = fitScale * zoomFactor
+        let size = CGSize(width: imageSize.width * s, height: imageSize.height * s)
+        return CGRect(x: inset.midX - size.width / 2 + panOffset.width,
+                      y: inset.midY - size.height / 2 + panOffset.height,
                       width: size.width, height: size.height)
     }
 
     private var scale: CGFloat { displayRect.width / max(imageSize.width, 1) }
 
     private func imagePoint(_ p: CGPoint) -> CGPoint {
-        let x = (p.x - displayRect.minX) / scale
-        let y = (p.y - displayRect.minY) / scale
-        return CGPoint(x: min(max(0, x), imageSize.width), y: min(max(0, y), imageSize.height))
+        let u = imagePointUnclamped(p)
+        return CGPoint(x: min(max(0, u.x), imageSize.width), y: min(max(0, u.y), imageSize.height))
+    }
+
+    /// Image-space point without clamping to the bitmap, so zoom-around-cursor tracks points that
+    /// momentarily fall outside the image.
+    private func imagePointUnclamped(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: (p.x - displayRect.minX) / scale, y: (p.y - displayRect.minY) / scale)
     }
 
     private func viewPoint(_ p: CGPoint) -> CGPoint {
         CGPoint(x: displayRect.minX + p.x * scale, y: displayRect.minY + p.y * scale)
+    }
+
+    // MARK: Zoom & pan
+
+    /// Set the zoom (clamped to 1…maxZoom), keeping the image point under `pivot` (view coords) fixed.
+    private func setZoom(_ newZoom: CGFloat, around pivot: CGPoint) {
+        let clamped = min(max(newZoom, 1), maxZoom)
+        guard abs(clamped - zoomFactor) > 0.0001 else { return }
+        let imgPt = imagePointUnclamped(pivot)
+        zoomFactor = clamped
+        if clamped <= 1.0001 {
+            panOffset = .zero
+        } else {
+            let landed = viewPoint(imgPt)   // where that image point is now, before re-panning
+            panOffset.width += pivot.x - landed.x
+            panOffset.height += pivot.y - landed.y
+            clampPan()
+        }
+        needsDisplay = true
+    }
+
+    /// Keep the (possibly zoomed) image from being dragged entirely out of the inset.
+    private func clampPan() {
+        let inset = bounds.insetBy(dx: 16, dy: 16)
+        let s = fitScale * zoomFactor
+        let size = CGSize(width: imageSize.width * s, height: imageSize.height * s)
+        func clamp(_ offset: CGFloat, _ imgExtent: CGFloat, _ box: CGFloat) -> CGFloat {
+            guard imgExtent > box else { return 0 }    // smaller than the box → stay centered
+            let maxOff = (imgExtent - box) / 2
+            return min(max(offset, -maxOff), maxOff)
+        }
+        panOffset.width = clamp(panOffset.width, size.width, inset.width)
+        panOffset.height = clamp(panOffset.height, size.height, inset.height)
+    }
+
+    func zoomIn() { setZoom(zoomFactor * 1.25, around: CGPoint(x: bounds.midX, y: bounds.midY)) }
+    func zoomOut() { setZoom(zoomFactor / 1.25, around: CGPoint(x: bounds.midX, y: bounds.midY)) }
+    func zoomToFit() { zoomFactor = 1; panOffset = .zero; needsDisplay = true }
+
+    override func magnify(with event: NSEvent) {
+        let pivot = convert(event.locationInWindow, from: nil)
+        setZoom(zoomFactor * (1 + event.magnification), around: pivot)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard isZoomed else { super.scrollWheel(with: event); return }
+        panOffset.width += event.scrollingDeltaX
+        panOffset.height += event.scrollingDeltaY
+        clampPan()
+        needsDisplay = true
     }
 
     // MARK: Drawing
@@ -751,6 +823,14 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "p" {
             onPrint?()
             return
+        }
+        if event.modifierFlags.contains(.command), let ch = event.charactersIgnoringModifiers {
+            switch ch {
+            case "=", "+": zoomIn(); return
+            case "-", "_": zoomOut(); return
+            case "0": zoomToFit(); return
+            default: break
+            }
         }
         // Single-key tool shortcuts (no ⌘/⌥/⌃). A text field, when editing, is the first responder
         // instead of the canvas, so these never fire mid-typing.

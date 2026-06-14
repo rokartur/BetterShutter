@@ -14,6 +14,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var widthSlider: NSSlider?
     private var strengthSlider: NSSlider?
     private var transformControl: NSPopUpButton?
+    private var zoomControl: NSSegmentedControl?
     private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     var onClose: (() -> Void)?
 
@@ -100,6 +101,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         let transform = makeTransformControl()
         self.transformControl = transform
 
+        let zoom = NSSegmentedControl(
+            images: [
+                NSImage(systemSymbolName: "minus.magnifyingglass", accessibilityDescription: "Zoom out") ?? NSImage(),
+                NSImage(systemSymbolName: "arrow.up.left.and.down.right.magnifyingglass", accessibilityDescription: "Fit") ?? NSImage(),
+                NSImage(systemSymbolName: "plus.magnifyingglass", accessibilityDescription: "Zoom in") ?? NSImage(),
+            ],
+            trackingMode: .momentary, target: self, action: #selector(zoomTapped(_:)))
+        zoom.toolTip = "Zoom (⌘− / ⌘0 / ⌘+, or pinch)"
+        self.zoomControl = zoom
+
         // Action buttons (project / share / copy / save / done) ride the bottom bar, right side.
         let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
         project.toolTip = "Save Re-editable Project (.bsproj)"
@@ -116,6 +127,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
             label("Stroke"), widthSlider,
             label("Strength"), strengthSlider,
             label("Transform"), transform,
+            label("Zoom"), zoom,
         ])
         styleStack.orientation = .horizontal
         styleStack.alignment = .centerY
@@ -316,6 +328,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func transformPicked(_ sender: NSMenuItem) {
         guard let kind = sender.representedObject as? ImageTransform else { return }
         canvas.applyImageTransform(kind)
+    }
+
+    @objc private func zoomTapped(_ sender: NSSegmentedControl) {
+        switch sender.selectedSegment {
+        case 0: canvas.zoomOut()
+        case 1: canvas.zoomToFit()
+        default: canvas.zoomIn()
+        }
     }
 
     @objc private func invertPicked() { canvas.invertColors() }
