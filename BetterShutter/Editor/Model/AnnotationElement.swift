@@ -232,6 +232,118 @@ final class LineElement: TwoPointElement {
     }
 }
 
+// MARK: - Freehand
+
+/// Freehand pen stroke: a smoothed path through the points sampled while dragging. Plugs into the
+/// canvas's `.creating` drag mode via `updateDrag`, which appends points instead of moving an end.
+class PenElement: AnnotationElement {
+    var points: [CGPoint]
+
+    required init(start: CGPoint, style: AnnotationStyle) {
+        points = [start]
+        super.init(style: style)
+    }
+
+    /// Stroke opacity (1 for the pen; the marker overrides to a translucent highlighter wash).
+    var strokeAlpha: CGFloat { 1 }
+    /// Stroke-width multiplier (the marker is much broader than the pen).
+    var widthScale: CGFloat { 1 }
+
+    override func updateDrag(to point: CGPoint) {
+        // Drop near-duplicate samples so the smoothing stays stable on slow drags.
+        if let last = points.last, hypot(point.x - last.x, point.y - last.y) < 1.5 { return }
+        points.append(point)
+    }
+
+    override var boundingBox: CGRect {
+        guard let first = points.first else { return .zero }
+        var (minX, maxX, minY, maxY) = (first.x, first.x, first.y, first.y)
+        for p in points {
+            minX = min(minX, p.x); maxX = max(maxX, p.x)
+            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        }
+        let pad = style.strokeWidth * widthScale / 2 + 1
+        return CGRect(x: minX - pad, y: minY - pad,
+                      width: (maxX - minX) + pad * 2, height: (maxY - minY) + pad * 2)
+    }
+
+    override var isDegenerate: Bool {
+        guard points.count >= 2 else { return true }
+        let b = boundingBox
+        return b.width < 3 && b.height < 3
+    }
+
+    override func translate(by delta: CGSize) {
+        for i in points.indices { points[i].x += delta.width; points[i].y += delta.height }
+    }
+
+    override func transform(_ t: CGAffineTransform) {
+        for i in points.indices { points[i] = points[i].applying(t) }
+    }
+
+    override func hitTest(_ point: CGPoint) -> Bool {
+        guard points.count >= 2 else { return boundingBox.contains(point) }
+        let tol = max(8, style.strokeWidth * widthScale / 2 + 6)
+        for i in 1..<points.count where Self.distance(point, segA: points[i - 1], segB: points[i]) <= tol {
+            return true
+        }
+        return false
+    }
+
+    override func clone() -> AnnotationElement {
+        let copy = Self(start: points.first ?? .zero, style: style)
+        copy.points = points
+        copy.rotation = rotation
+        return copy
+    }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        guard !points.isEmpty else { return }
+        cg.addPath(Self.smoothedPath(points))
+        cg.setLineWidth(style.strokeWidth * widthScale)
+        cg.setLineCap(.round)
+        cg.setLineJoin(.round)
+        cg.setStrokeColor(style.color.withAlphaComponent(strokeAlpha).cgColor)
+        cg.strokePath()
+    }
+
+    /// Catmull-Rom → cubic Bézier smoothing through the sampled points.
+    static func smoothedPath(_ pts: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        guard let first = pts.first else { return path }
+        path.move(to: first)
+        guard pts.count >= 3 else {
+            for p in pts.dropFirst() { path.addLine(to: p) }
+            return path
+        }
+        for i in 0..<(pts.count - 1) {
+            let p0 = pts[max(i - 1, 0)]
+            let p1 = pts[i]
+            let p2 = pts[i + 1]
+            let p3 = pts[min(i + 2, pts.count - 1)]
+            let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+            path.addCurve(to: p2, control1: c1, control2: c2)
+        }
+        return path
+    }
+
+    /// Shortest distance from `p` to the segment a–b (for hit-testing the thin stroke).
+    static func distance(_ p: CGPoint, segA a: CGPoint, segB b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lenSq = dx * dx + dy * dy
+        guard lenSq > 0 else { return hypot(p.x - a.x, p.y - a.y) }
+        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
+}
+
+/// Highlighter-style freehand marker: a broad, translucent stroke that layers like a real marker.
+final class MarkerElement: PenElement {
+    override var strokeAlpha: CGFloat { 0.4 }
+    override var widthScale: CGFloat { 2.8 }
+}
+
 final class ArrowElement: TwoPointElement {
     override var isDegenerate: Bool { hypot(end.x - start.x, end.y - start.y) < 6 }
     // Tail (start) and head (end) are the resize handles.

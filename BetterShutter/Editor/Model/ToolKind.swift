@@ -7,6 +7,8 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
     case rectangle
     case ellipse
     case line
+    case pen
+    case marker
     case measure
     case loupe
     case text
@@ -27,6 +29,8 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .rectangle: return "rectangle"
         case .ellipse: return "circle"
         case .line: return "line.diagonal"
+        case .pen: return "scribble.variable"
+        case .marker: return "paintbrush.pointed.fill"
         case .measure: return "ruler"
         case .loupe: return "plus.magnifyingglass"
         case .text: return "textformat"
@@ -49,6 +53,8 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .rectangle: return "Rectangle"
         case .ellipse: return "Ellipse"
         case .line: return "Line"
+        case .pen: return "Pen"
+        case .marker: return "Marker"
         case .measure: return "Measure"
         case .loupe: return "Loupe"
         case .text: return "Text"
@@ -72,6 +78,8 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         case .rectangle: return "r"
         case .ellipse: return "o"
         case .line: return "l"
+        case .pen: return "d"
+        case .marker: return "e"
         case .measure: return "m"
         case .loupe: return "z"
         case .text: return "t"
@@ -97,7 +105,7 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
     /// Tools that draw by dragging from a start point to an end point.
     var isDragCreated: Bool {
         switch self {
-        case .arrow, .rectangle, .ellipse, .line, .measure, .loupe, .highlighter, .pixelate, .blur, .blackout, .spotlight:
+        case .arrow, .rectangle, .ellipse, .line, .pen, .marker, .measure, .loupe, .highlighter, .pixelate, .blur, .blackout, .spotlight:
             return true
         case .select, .text, .step, .crop, .eyedropper, .stamp:
             return false

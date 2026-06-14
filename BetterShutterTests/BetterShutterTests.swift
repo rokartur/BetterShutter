@@ -825,6 +825,51 @@ struct BeautifyPresetTests {
     }
 }
 
+@MainActor
+struct PenElementTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func updateDragAppendsDistinctPoints() {
+        let pen = PenElement(start: CGPoint(x: 0, y: 0), style: style)
+        pen.updateDrag(to: CGPoint(x: 0, y: 0.5))   // too close → dropped
+        pen.updateDrag(to: CGPoint(x: 10, y: 0))
+        pen.updateDrag(to: CGPoint(x: 20, y: 5))
+        #expect(pen.points.count == 3)
+    }
+
+    @Test
+    func cloneIsIndependentAndKeepsType() {
+        let marker = MarkerElement(start: CGPoint(x: 1, y: 1), style: style)
+        marker.updateDrag(to: CGPoint(x: 30, y: 10))
+        let copy = marker.clone()
+        #expect(copy is MarkerElement)
+        marker.translate(by: CGSize(width: 100, height: 0))
+        #expect((copy as? MarkerElement)?.points.first?.x == 1)
+        // The marker is broader and more translucent than a plain pen.
+        #expect(MarkerElement(start: .zero, style: style).widthScale > PenElement(start: .zero, style: style).widthScale)
+    }
+
+    @Test
+    func hitTestMatchesNearStrokeNotFar() {
+        let pen = PenElement(start: CGPoint(x: 0, y: 0), style: style)
+        pen.updateDrag(to: CGPoint(x: 100, y: 0))
+        #expect(pen.hitTest(CGPoint(x: 50, y: 2)))      // on the line
+        #expect(!pen.hitTest(CGPoint(x: 50, y: 80)))    // far away
+    }
+
+    @Test
+    func projectRoundTripPreservesPenPoints() throws {
+        let base = makeSolidTestImage(width: 50, height: 40)
+        let pen = PenElement(start: CGPoint(x: 2, y: 2), style: style)
+        pen.updateDrag(to: CGPoint(x: 20, y: 18))
+        let project = try #require(AnnotationProjectIO.make(base: base, elements: [pen]))
+        let decoded = try JSONDecoder().decode(AnnotationProject.self, from: JSONEncoder().encode(project))
+        let els = AnnotationProjectIO.elements(decoded)
+        #expect((els.first as? PenElement)?.points.count == 2)
+    }
+}
+
 struct SelectionAspectTests {
     @Test
     func squareLockFromWidthDominantDrag() {
