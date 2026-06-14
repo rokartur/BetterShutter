@@ -268,6 +268,39 @@ final class CaptureCoordinator {
         }
     }
 
+    /// Click a window to record just that window (it's followed across the screen). A drag instead
+    /// records that region, so the one flow covers both.
+    func recordWindow() {
+        guard !isCapturing, !overlay.isPresenting, !RecordingController.shared.isRecording else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        isCapturing = true
+        Task {
+            do {
+                let frozen = try await frozenDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: false,
+                    windowSelection: true,
+                    onRegion: { [weak self] _, globalRect, displayID, _ in
+                        self?.startRegionRecording(globalRect: globalRect, displayID: displayID)
+                    },
+                    onWindow: { [weak self] id in self?.startWindowRecording(id) },
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
+    private func startWindowRecording(_ id: CGWindowID) {
+        isCapturing = false
+        RecordingController.shared.startWindow(windowID: id, displayID: Self.displayUnderMouse())
+    }
+
     private func startRegionRecording(globalRect: CGRect, displayID: CGDirectDisplayID) {
         isCapturing = false
         lastRegion = (globalRect, displayID)

@@ -9,7 +9,7 @@ import Foundation
 /// auto-generated Info.plist and risking the LSUIElement / mic-usage keys).
 nonisolated enum URLCommand: Equatable {
     case captureRegion, captureWindow, captureFullScreen, captureText, captureScrolling, captureCutout
-    case record, recordGIF, recordRegion
+    case record, recordGIF, recordRegion, recordWindow
     case capturePreviousArea
     case openBrowser, openSettings, pinLast
     case unknown(String)
@@ -28,6 +28,7 @@ nonisolated enum URLCommand: Equatable {
         case "record":                           return .record
         case "record-gif", "gif":                return .recordGIF
         case "record-region":                    return .recordRegion
+        case "record-window":                    return .recordWindow
         case "capture-previous-area", "previous": return .capturePreviousArea
         case "browse", "browser":                return .openBrowser
         case "settings":                         return .openSettings

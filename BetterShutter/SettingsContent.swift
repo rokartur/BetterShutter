@@ -157,6 +157,9 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: recording, title: "Record Region",
                     subtitle: "Select an area and record just that.", name: .recordRegion,
                     searchItemID: nil)
+        addRecorder(to: recording, title: "Record Window",
+                    subtitle: "Click a window to record just that window.", name: .recordWindow,
+                    searchItemID: nil)
         addRecorder(to: recording, title: "Record GIF",
                     subtitle: "Record the display to an animated GIF.", name: .recordGIF,
                     searchItemID: nil)

@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .record:               RecordingController.shared.toggle()
         case .recordGIF:            RecordingController.shared.toggleGIF()
         case .recordRegion:         CaptureCoordinator.shared.recordRegion()
+        case .recordWindow:         CaptureCoordinator.shared.recordWindow()
         case .capturePreviousArea:  CaptureCoordinator.shared.captureLastRegion()
         case .openBrowser:          CaptureHistoryPanel.shared.show()
         case .openSettings:         openSettings()
@@ -211,6 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         addCaptureItem(to: menu, title: "Record Region", symbol: "rectangle.dashed",
                        action: #selector(recordRegion), name: .recordRegion)
+        addCaptureItem(to: menu, title: "Record Window", symbol: "macwindow.badge.plus",
+                       action: #selector(recordWindow), name: .recordWindow)
         addCaptureItem(to: menu, title: "Record GIF", symbol: "square.stack.3d.forward.dottedline",
                        action: #selector(recordGIF), name: .recordGIF)
 
@@ -406,6 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
     @objc private func togglePauseRecording() { RecordingController.shared.togglePause() }
     @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
+    @objc private func recordWindow() { CaptureCoordinator.shared.recordWindow() }
     @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
 
     @objc private func openSettings() {

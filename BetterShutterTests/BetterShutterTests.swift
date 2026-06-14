@@ -448,6 +448,7 @@ struct URLCommandTests {
         #expect(URLCommand.parse(URL(string: "bettershutter://capture-region")!) == .captureRegion)
         #expect(URLCommand.parse(URL(string: "bettershutter://scrolling-capture")!) == .captureScrolling)
         #expect(URLCommand.parse(URL(string: "bettershutter://record-gif")!) == .recordGIF)
+        #expect(URLCommand.parse(URL(string: "bettershutter://record-window")!) == .recordWindow)
         #expect(URLCommand.parse(URL(string: "bettershutter://pin")!) == .pinLast)
     }
 

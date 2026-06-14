@@ -36,6 +36,9 @@ enum HotKeyBridge {
         BetterShortcuts.onKeyDown(for: .recordRegion) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.recordRegion() }
         }
+        BetterShortcuts.onKeyDown(for: .recordWindow) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.recordWindow() }
+        }
         BetterShortcuts.onKeyDown(for: .recordGIF) {
             MainActor.assumeIsolated { RecordingController.shared.toggleGIF() }
         }
@@ -52,6 +55,7 @@ enum HotKeyBridge {
             if name == .captureScrolling { return "Scrolling Capture" }
             if name == .toggleRecording { return "Start / Stop Recording" }
             if name == .recordRegion { return "Record Region" }
+            if name == .recordWindow { return "Record Window" }
             if name == .recordGIF { return "Record GIF" }
             return name.rawValue
         }

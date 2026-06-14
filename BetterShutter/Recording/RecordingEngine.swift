@@ -66,10 +66,36 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         let height = even(Int((regionPoints.height * scale).rounded()))
         guard width > 0, height > 0 else { throw CaptureError.emptyCapture }
 
+        let config = makeConfiguration(width: width, height: height, sourceRect: sourceRect)
+        let excluded = content.windows.filter { excludedWindowIDs.contains($0.windowID) }
+        let filter = SCContentFilter(display: display, excludingWindows: excluded)
+        try await beginWriting(filter: filter, config: config, width: width, height: height, to: url)
+    }
+
+    /// Record a single window (CleanShot/macshot-style), following it across the screen at its native
+    /// resolution. Uses a desktop-independent window filter so only that window's pixels are recorded.
+    func start(windowID: CGWindowID, to url: URL) async throws {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
+            throw CaptureError.emptyCapture
+        }
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let scale = CGFloat(filter.pointPixelScale)
+        let width = even(Int((filter.contentRect.width * scale).rounded()))
+        let height = even(Int((filter.contentRect.height * scale).rounded()))
+        guard width > 0, height > 0 else { throw CaptureError.emptyCapture }
+
+        let config = makeConfiguration(width: width, height: height, sourceRect: nil)
+        config.scalesToFit = true
+        try await beginWriting(filter: filter, config: config, width: width, height: height, to: url)
+    }
+
+    /// Shared SCStream configuration for the display / region / window paths.
+    private func makeConfiguration(width: Int, height: Int, sourceRect: CGRect?) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
         config.width = width
         config.height = height
-        if sourceRect != nil { config.sourceRect = regionPoints }
+        if let sourceRect { config.sourceRect = sourceRect }
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.minimumFrameInterval = CMTime(value: 1, timescale: gifMode ? 15 : Int32(max(1, fps)))
         config.queueDepth = 6
@@ -77,10 +103,13 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         config.capturesAudio = captureSystemAudio && !gifMode
         config.sampleRate = 48_000
         config.channelCount = 2
+        return config
+    }
 
-        let excluded = content.windows.filter { excludedWindowIDs.contains($0.windowID) }
-        let filter = SCContentFilter(display: display, excludingWindows: excluded)
-
+    /// Set up the writer (video + optional system/mic audio tracks) and start the SCStream for the
+    /// given filter/config. Shared by the display, region, and window capture paths.
+    private func beginWriting(filter: SCContentFilter, config: SCStreamConfiguration,
+                              width: Int, height: Int, to url: URL) async throws {
         // Only commit a mic track if a device is present and authorized, so we never strand an empty
         // audio track when the mic is unavailable.
         let micAvailable = captureMicrophone && !gifMode

@@ -39,6 +39,12 @@ final class RecordingController {
         beginRecording(displayID: displayID, sourceRect: sourceRectPoints, gif: false)
     }
 
+    /// Record a single window, following it across the screen. `displayID` is just for the overlays
+    /// (click highlight / webcam / keystrokes); the recording itself tracks the window.
+    func startWindow(windowID: CGWindowID, displayID: CGDirectDisplayID) {
+        beginRecording(displayID: displayID, sourceRect: nil, gif: false, windowID: windowID)
+    }
+
     func startGIF() {
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         beginRecording(displayID: displayUnderMouse(), sourceRect: nil, gif: true)
@@ -47,7 +53,8 @@ final class RecordingController {
     /// Stop if recording, otherwise start a GIF recording.
     func toggleGIF() { isRecording ? stop() : startGIF() }
 
-    private func beginRecording(displayID: CGDirectDisplayID, sourceRect: CGRect?, gif: Bool) {
+    private func beginRecording(displayID: CGDirectDisplayID, sourceRect: CGRect?, gif: Bool,
+                                windowID: CGWindowID? = nil) {
         guard !isRecording else { return }
         let url = Self.recordingURL(ext: gif ? "gif" : "mp4")
         if !gif { Preferences.recordingInProgressPath = url.path } // for crash recovery
@@ -78,7 +85,11 @@ final class RecordingController {
                 if !granted { engine.captureMicrophone = false }
             }
             do {
-                try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
+                if let windowID {
+                    try await engine.start(windowID: windowID, to: url)
+                } else {
+                    try await engine.start(displayID: displayID, sourceRect: sourceRect, to: url)
+                }
             } catch {
                 isRecording = false
                 isPaused = false
