@@ -20,6 +20,8 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     // Background options offered for video framing (a curated subset of the beautify library).
     private let bgPresets = BackgroundPreset.all
     private let sizeOptions: [(String, CGFloat?)] = [("Original", nil), ("720p", 720), ("1080p", 1080), ("1440p", 1440)]
+    private let followMouseToggle = NSButton(checkboxWithTitle: "Follow Mouse", target: nil, action: nil)
+    private var cursorTrack: CursorTrack?
 
     init(url: URL) {
         self.url = url
@@ -28,6 +30,7 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        cursorTrack = CursorTrack.load(for: url)
         Task {
             let asset = AVURLAsset(url: url)
             duration = (try? await asset.load(.duration).seconds) ?? 0
@@ -69,8 +72,13 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         for (title, _) in sizeOptions { sizePopup.addItem(withTitle: title) }
         paddingSlider.translatesAutoresizingMaskIntoConstraints = false
         paddingSlider.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        followMouseToggle.isEnabled = (cursorTrack != nil)
+        followMouseToggle.toolTip = cursorTrack == nil
+            ? "Available for full-screen recordings (no cursor track found)"
+            : "Auto-zoom toward the cursor"
         let bgRow = NSStackView(views: [
             label2("Background"), bgPopup, label2("Padding"), paddingSlider, label2("Size"), sizePopup,
+            followMouseToggle,
         ])
         bgRow.spacing = 6
         bgRow.translatesAutoresizingMaskIntoConstraints = false
@@ -172,9 +180,12 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         let background = bgPresets[bgIndex].fill
         let sizeIndex = sizePopup.indexOfSelectedItem
         let targetHeight = sizeOptions.indices.contains(sizeIndex) ? sizeOptions[sizeIndex].1 : nil
+        let follow = (followMouseToggle.state == .on) && (cursorTrack != nil)
         let options = VideoBeautify.Options(background: background,
                                             paddingFraction: CGFloat(paddingSlider.doubleValue),
-                                            targetHeight: targetHeight)
+                                            targetHeight: targetHeight,
+                                            cursorTrack: cursorTrack,
+                                            followZoom: follow ? 2.0 : 1)
         let range = CMTimeRange(
             start: CMTime(seconds: startSlider.doubleValue, preferredTimescale: 600),
             end: CMTime(seconds: endSlider.doubleValue, preferredTimescale: 600)

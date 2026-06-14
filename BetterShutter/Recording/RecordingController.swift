@@ -14,6 +14,11 @@ final class RecordingController {
     private(set) var isPaused = false
     private(set) var startDate: Date?
     private var iconsHidden = false
+
+    // Cursor-track capture for the editor's Follow-Mouse auto-zoom (full-display recordings only).
+    private var cursorSamples: [CursorSample] = []
+    private var cursorTimer: Timer?
+    private var cursorDisplayFrame: CGRect = .zero
     var onStateChange: (() -> Void)?
 
     private init() {
@@ -71,6 +76,13 @@ final class RecordingController {
         controlBar.show(canPause: !gif)
         // Hide desktop icons for the whole recording (kept in the capture, removed on stop).
         if Preferences.hideDesktopIcons { DesktopIconHider.shared.hide(); iconsHidden = true }
+        // Capture a cursor track for full-display recordings (region/window coords wouldn't map).
+        cursorSamples = []
+        if sourceRect == nil, windowID == nil, !gif,
+           let screen = NSScreen.screens.first(where: { $0.displayID == displayID }) {
+            cursorDisplayFrame = screen.frame
+            startCursorSampling()
+        }
         // Keep our own control bar out of the recording (overlays stay in deliberately).
         engine.excludedWindowIDs = [controlBar.windowID].compactMap { $0 }
         if Preferences.highlightClicks { ClickHighlighter.shared.start(displayID: displayID) }
@@ -99,6 +111,7 @@ final class RecordingController {
                 ClickHighlighter.shared.stop()
                 WebcamOverlay.shared.stop()
                 KeystrokeOverlay.shared.stop()
+                stopCursorSampling()
                 if iconsHidden { DesktopIconHider.shared.show(); iconsHidden = false }
                 self.engine = nil
                 onStateChange?()
@@ -116,12 +129,14 @@ final class RecordingController {
         ClickHighlighter.shared.stop()
         WebcamOverlay.shared.stop()
         KeystrokeOverlay.shared.stop()
+        stopCursorSampling()
         if iconsHidden { DesktopIconHider.shared.show(); iconsHidden = false }
         self.engine = nil
         onStateChange?()
 
         let startTask = self.startTask
         self.startTask = nil
+        let track = cursorSamples.isEmpty ? nil : CursorTrack(samples: cursorSamples)
         Task {
             // Ensure start() (and its startCapture) finished before stopping, so the SCStream
             // is actually torn down and never leaks.
@@ -129,11 +144,29 @@ final class RecordingController {
             let url = await engine.stop()
             Preferences.recordingInProgressPath = nil
             if let url {
+                track?.write(for: url)
                 NSWorkspace.shared.activateFileViewerSelecting([url])
                 Task.detached(priority: .utility) { CaptureHistoryStore.add(fileURL: url) }
             }
         }
     }
+
+    private func startCursorSampling() {
+        let start = startDate ?? Date()
+        cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.cursorDisplayFrame.width > 0 else { return }
+                let m = NSEvent.mouseLocation
+                let f = self.cursorDisplayFrame
+                let x = min(max(0, (m.x - f.minX) / f.width), 1)
+                let y = min(max(0, (m.y - f.minY) / f.height), 1)
+                self.cursorSamples.append(CursorSample(t: Date().timeIntervalSince(start),
+                                                       x: Double(x), y: Double(y)))
+            }
+        }
+    }
+
+    private func stopCursorSampling() { cursorTimer?.invalidate(); cursorTimer = nil }
 
     // MARK: Helpers
 

@@ -29,6 +29,25 @@ enum VideoBeautify {
         var background: BackgroundFill
         var paddingFraction: CGFloat
         var targetHeight: CGFloat?   // nil = native (padded) size
+        var cursorTrack: CursorTrack?  // for Follow-Mouse auto-zoom
+        var followZoom: CGFloat = 1    // 1 = off
+    }
+
+    /// Zoom into `image` by `zoom`, centered on the normalized `focus` (0…1, bottom-left), keeping
+    /// the crop inside the frame so no empty edges appear. Used for Follow-Mouse auto-zoom.
+    nonisolated static func zoomed(_ image: CIImage, focus: CGPoint, zoom: CGFloat) -> CIImage {
+        let ext = image.extent
+        guard ext.width > 0, ext.height > 0, zoom > 1 else { return image }
+        let cropW = ext.width / zoom, cropH = ext.height / zoom
+        var cx = ext.minX + focus.x * ext.width
+        var cy = ext.minY + focus.y * ext.height
+        cx = min(max(ext.minX + cropW / 2, cx), ext.maxX - cropW / 2)
+        cy = min(max(ext.minY + cropH / 2, cy), ext.maxY - cropH / 2)
+        let crop = CGRect(x: cx - cropW / 2, y: cy - cropH / 2, width: cropW, height: cropH)
+        return image.cropped(to: crop)
+            .transformed(by: CGAffineTransform(scaleX: zoom, y: zoom))
+            .transformed(by: CGAffineTransform(translationX: ext.minX - crop.minX * zoom,
+                                               y: ext.minY - crop.minY * zoom))
     }
 
     /// Composite + export. Returns the output URL on success, nil on failure.
@@ -46,8 +65,14 @@ enum VideoBeautify {
         let background = CIImage(cgImage: bgCG)
         let renderRect = CGRect(origin: .zero, size: renderSize)
 
+        let cursorTrack = options.cursorTrack
+        let followZoom = options.followZoom
         let composition = AVMutableVideoComposition(asset: asset) { request in
-            let source = request.sourceImage.clampedToExtent()
+            var frame = request.sourceImage
+            if followZoom > 1, let cursorTrack, let p = cursorTrack.point(at: request.compositionTime.seconds) {
+                frame = zoomed(frame, focus: p, zoom: followZoom)
+            }
+            let source = frame.clampedToExtent()
             let placed = source
                 .transformed(by: CGAffineTransform(scaleX: innerScale, y: innerScale))
                 .transformed(by: CGAffineTransform(translationX: inset, y: inset))

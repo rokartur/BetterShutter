@@ -1016,6 +1016,52 @@ struct SelectionAspectTests {
     }
 }
 
+struct CursorTrackTests {
+    @Test
+    func interpolatesBetweenSamples() {
+        let track = CursorTrack(samples: [
+            CursorSample(t: 0, x: 0, y: 0),
+            CursorSample(t: 1, x: 1, y: 0.5),
+        ])
+        let p = track.point(at: 0.5)
+        #expect(abs((p?.x ?? -1) - 0.5) < 1e-9)
+        #expect(abs((p?.y ?? -1) - 0.25) < 1e-9)
+    }
+
+    @Test
+    func clampsToEnds() {
+        let track = CursorTrack(samples: [
+            CursorSample(t: 1, x: 0.2, y: 0.3), CursorSample(t: 2, x: 0.8, y: 0.9),
+        ])
+        #expect(track.point(at: 0)?.x == 0.2)
+        #expect(track.point(at: 5)?.x == 0.8)
+    }
+
+    @Test
+    func emptyTrackReturnsNil() {
+        #expect(CursorTrack(samples: []).point(at: 1) == nil)
+    }
+}
+
+@MainActor
+struct VideoZoomTests {
+    @Test
+    func zoomCropReturnsFullFrameSize() {
+        let img = CIImage(cgImage: makeSolidTestImage(width: 200, height: 100))
+        // Focus at the corner; the clamp must keep the crop inside and rescale to the full frame.
+        let out = VideoBeautify.zoomed(img, focus: CGPoint(x: 1, y: 1), zoom: 2)
+        #expect(abs(out.extent.width - 200) < 1)
+        #expect(abs(out.extent.height - 100) < 1)
+    }
+
+    @Test
+    func zoomOneIsIdentity() {
+        let img = CIImage(cgImage: makeSolidTestImage(width: 50, height: 50))
+        let out = VideoBeautify.zoomed(img, focus: CGPoint(x: 0.5, y: 0.5), zoom: 1)
+        #expect(out.extent == img.extent)
+    }
+}
+
 struct VideoBeautifyLayoutTests {
     @Test
     func paddingAddsEvenBorder() {
