@@ -25,6 +25,18 @@ final class CaptureCoordinator {
         preview.onBeautify = { [weak self] image, mode in self?.beautify(image, mode: mode) }
     }
 
+    /// Freeze all displays, momentarily hiding desktop icons first when the user enabled it, so the
+    /// frozen bitmap (and thus the selection and capture) shows a clean desktop.
+    private func frozenDisplays() async throws -> [CapturedImage] {
+        let hideIcons = Preferences.hideDesktopIcons
+        if hideIcons {
+            DesktopIconHider.shared.hide()
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        defer { if hideIcons { DesktopIconHider.shared.show() } }
+        return try await engine.freezeAllDisplays()
+    }
+
     /// If a self-timer delay is configured, show the countdown and return `true` so the caller aborts;
     /// `resume` re-invokes the capture (with the delay already consumed) when the countdown elapses.
     /// Returns `false` when no delay is set, so the caller proceeds immediately.
@@ -103,7 +115,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -144,7 +156,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -168,7 +180,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -237,7 +249,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -280,7 +292,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -363,7 +375,15 @@ final class CaptureCoordinator {
         let displayID = Self.displayUnderMouse()
         Task {
             do {
-                let image = try await engine.captureDisplay(displayID)
+                let hideIcons = Preferences.hideDesktopIcons
+                if hideIcons {
+                    DesktopIconHider.shared.hide()
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                let image: CapturedImage
+                do { image = try await engine.captureDisplay(displayID) }
+                catch { if hideIcons { DesktopIconHider.shared.show() }; throw error }
+                if hideIcons { DesktopIconHider.shared.show() }
                 finish(image, mode: .fullDisplay)
             } catch {
                 isCapturing = false

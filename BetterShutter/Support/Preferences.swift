@@ -140,6 +140,13 @@ nonisolated enum Preferences {
         static let recentColors = "recentColors"
         static let historyRetention = "captureHistoryRetention"
         static let captureDelay = "captureDelaySeconds"
+        static let hideDesktopIcons = "hideDesktopIcons"
+    }
+
+    /// Hide desktop icons during captures and recordings (seamless wallpaper cover, no Finder relaunch).
+    static var hideDesktopIcons: Bool {
+        get { defaults.bool(forKey: Key.hideDesktopIcons) }
+        set { defaults.set(newValue, forKey: Key.hideDesktopIcons) }
     }
 
     /// Self-timer delay (seconds) before a capture fires; 0 = off. Lets the user arrange the screen

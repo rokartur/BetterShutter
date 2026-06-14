@@ -192,6 +192,14 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: behavior, title: "Downscale Retina to 1×",
                subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
 
+        let hideIcons = NSSwitch()
+        hideIcons.state = Preferences.hideDesktopIcons ? .on : .off
+        hideIcons.target = self
+        hideIcons.action = #selector(toggleHideDesktopIcons(_:))
+        addRow(to: behavior, title: "Hide desktop icons",
+               subtitle: "Cover desktop icons with the wallpaper during captures and recordings (no Finder relaunch).",
+               accessory: hideIcons)
+
         let timer = addSection(title: "Self-Timer", anchor: "capture.timer")
         let delay = NSPopUpButton()
         for option in Self.delayOptions { delay.addItem(withTitle: Self.delayTitle(option)) }
@@ -228,6 +236,7 @@ final class CaptureSettingsTab: SettingsTabViewController {
     }
 
     @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
+    @objc private func toggleHideDesktopIcons(_ sender: NSSwitch) { Preferences.hideDesktopIcons = (sender.state == .on) }
 
     static let delayOptions = [0, 3, 5, 10]
     static func delayTitle(_ seconds: Int) -> String { seconds == 0 ? "Off" : "\(seconds) seconds" }

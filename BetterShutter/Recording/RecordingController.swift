@@ -13,6 +13,7 @@ final class RecordingController {
     private(set) var isRecording = false
     private(set) var isPaused = false
     private(set) var startDate: Date?
+    private var iconsHidden = false
     var onStateChange: (() -> Void)?
 
     private init() {
@@ -61,6 +62,8 @@ final class RecordingController {
         isPaused = false
         startDate = Date()
         controlBar.show(canPause: !gif)
+        // Hide desktop icons for the whole recording (kept in the capture, removed on stop).
+        if Preferences.hideDesktopIcons { DesktopIconHider.shared.hide(); iconsHidden = true }
         // Keep our own control bar out of the recording (overlays stay in deliberately).
         engine.excludedWindowIDs = [controlBar.windowID].compactMap { $0 }
         if Preferences.highlightClicks { ClickHighlighter.shared.start(displayID: displayID) }
@@ -85,6 +88,7 @@ final class RecordingController {
                 ClickHighlighter.shared.stop()
                 WebcamOverlay.shared.stop()
                 KeystrokeOverlay.shared.stop()
+                if iconsHidden { DesktopIconHider.shared.show(); iconsHidden = false }
                 self.engine = nil
                 onStateChange?()
                 showError(error)
@@ -101,6 +105,7 @@ final class RecordingController {
         ClickHighlighter.shared.stop()
         WebcamOverlay.shared.stop()
         KeystrokeOverlay.shared.stop()
+        if iconsHidden { DesktopIconHider.shared.show(); iconsHidden = false }
         self.engine = nil
         onStateChange?()
 
