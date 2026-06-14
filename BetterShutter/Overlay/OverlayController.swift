@@ -33,6 +33,7 @@ final class OverlayController {
         toolbarActions: [OverlayAction] = [],
         instantCapture: Bool = false,
         lockedAspect: CGFloat? = nil,
+        restoreSelection: CGRect? = nil,
         onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void,
         onWindow: @escaping (CGWindowID) -> Void,
         onCancel: @escaping () -> Void
@@ -74,6 +75,15 @@ final class OverlayController {
             view.toolbarActions = toolbarActions
             view.instantCapture = instantCapture
             view.lockedAspect = lockedAspect
+            // Restore the prior selection on the pane whose screen holds it (global → view coords).
+            if let restore = restoreSelection, frame.intersects(restore) {
+                view.initialSelection = CGRect(
+                    x: restore.minX - frame.minX,
+                    y: restore.minY - frame.minY,
+                    width: restore.width,
+                    height: restore.height
+                )
+            }
             view.setCursorHidden = { [weak self] hidden in hidden ? self?.hideCursor() : self?.showCursor() }
             // Empty hits → no window hover-highlight and no click-to-pick (region-only flows).
             view.windowHits = windowSelection

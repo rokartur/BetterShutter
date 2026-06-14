@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func dispatch(_ command: URLCommand) {
         switch command {
+        case .allInOne:             CaptureCoordinator.shared.captureAllInOne()
         case .captureRegion:        CaptureCoordinator.shared.capture(.region)
         case .captureWindow:        CaptureCoordinator.shared.capture(.window)
         case .captureFullScreen:    CaptureCoordinator.shared.capture(.fullDisplay)
@@ -157,6 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         captureMenuItems.removeAll()
+        addCaptureItem(to: menu, title: "All-in-One Capture", symbol: "square.dashed.inset.filled",
+                       action: #selector(allInOne), name: .allInOne)
         addCaptureItem(to: menu, title: "Quick Screenshot", symbol: "bolt",
                        action: #selector(quickScreenshot), name: .quickScreenshot)
         addCaptureItem(to: menu, title: "Screenshot & Markup", symbol: "pencil.and.outline",
@@ -329,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
 
+    @objc private func allInOne() { CaptureCoordinator.shared.captureAllInOne() }
     @objc private func quickScreenshot() { CaptureCoordinator.shared.captureQuick() }
     @objc private func screenshotEdit() { CaptureCoordinator.shared.captureAndEdit() }
     @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }

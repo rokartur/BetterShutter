@@ -6,6 +6,9 @@ import BetterShortcuts
 @MainActor
 enum HotKeyBridge {
     static func install() {
+        BetterShortcuts.onKeyDown(for: .allInOne) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.captureAllInOne() }
+        }
         BetterShortcuts.onKeyDown(for: .quickScreenshot) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.captureQuick() }
         }
@@ -45,6 +48,7 @@ enum HotKeyBridge {
 
         // Friendly labels in the recorder's conflict alert.
         BetterShortcuts.displayName = { name in
+            if name == .allInOne { return "All-in-One Capture" }
             if name == .quickScreenshot { return "Quick Screenshot" }
             if name == .screenshotEdit { return "Screenshot & Markup" }
             if name == .captureRegion { return "Capture Region" }

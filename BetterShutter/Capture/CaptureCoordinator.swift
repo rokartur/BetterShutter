@@ -321,6 +321,39 @@ final class CaptureCoordinator {
     /// Region / window capture with the CleanShot-style action bar. The bar lets the user pick the
     /// outcome (capture / annotate / copy / save / record) per selection instead of always running
     /// the configured default. A window click has no bar and uses the configured after-action.
+    /// All-in-One (CleanShot-style): one entry that selects a region or window with the full action
+    /// bar (capture / annotate / copy / save / record) and restores your last selection so you can
+    /// re-shoot the same area with a single Return. Shift still locks the drag to a square.
+    func captureAllInOne(afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureAllInOne(afterDelay: false) }) { return }
+        isCapturing = true
+        let restore = lastRegion?.rect
+        Task {
+            do {
+                let frozen = try await frozenDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: Preferences.magnifierEnabled,
+                    windowSelection: true,
+                    toolbarActions: [.capture, .annotate, .copy, .save, .record],
+                    restoreSelection: restore,
+                    onRegion: { [weak self] image, globalRect, displayID, action in
+                        self?.handleRegionAction(image, globalRect: globalRect, displayID: displayID, action: action)
+                    },
+                    onWindow: { [weak self] id in self?.captureWindow(id) },
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
     private func beginRegionCapture(windowSelection: Bool) {
         isCapturing = true
         Task {

@@ -25,6 +25,9 @@ final class OverlayView: NSView {
     /// Locks the selection to this aspect ratio (width / height). `nil` = free. Holding Shift while
     /// dragging always locks to 1:1 regardless, matching the native screenshot gesture.
     var lockedAspect: CGFloat?
+    /// An initial selection (view coords) to restore as an adjustable pending selection when the
+    /// overlay appears — the All-in-One "remembers your last selection" behavior. `nil` = start empty.
+    var initialSelection: CGRect?
 
     // Callbacks (selection reported in this view's coordinates).
     var onRegionSelected: ((CGRect, OverlayAction) -> Void)?
@@ -187,6 +190,12 @@ final class OverlayView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateCursor()
+        if phase == .idle, let rect = initialSelection?.intersection(bounds),
+           rect.width >= minSelectionSide, rect.height >= minSelectionSide {
+            selectionRect = rect
+            enterPending()   // adjustable + action bar shown, ready to confirm or tweak
+        }
+        initialSelection = nil
     }
 
     override func mouseMoved(with event: NSEvent) {

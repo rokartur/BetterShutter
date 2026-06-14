@@ -445,6 +445,7 @@ struct PIIMatcherTests {
 struct URLCommandTests {
     @Test
     func parsesKnownHosts() {
+        #expect(URLCommand.parse(URL(string: "bettershutter://all-in-one")!) == .allInOne)
         #expect(URLCommand.parse(URL(string: "bettershutter://capture-region")!) == .captureRegion)
         #expect(URLCommand.parse(URL(string: "bettershutter://scrolling-capture")!) == .captureScrolling)
         #expect(URLCommand.parse(URL(string: "bettershutter://record-gif")!) == .recordGIF)
