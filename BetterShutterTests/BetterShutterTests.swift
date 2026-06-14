@@ -1016,6 +1016,32 @@ struct SelectionAspectTests {
     }
 }
 
+struct VideoBeautifyLayoutTests {
+    @Test
+    func paddingAddsEvenBorder() {
+        let (size, scale, inset) = VideoBeautify.layout(srcW: 1920, srcH: 1080, paddingFraction: 0.1, targetHeight: nil)
+        #expect(size.width == 2136 && size.height == 1296)   // pad = 108 each side
+        #expect(scale == 1)
+        #expect(inset == 108)
+        #expect(Int(size.width) % 2 == 0 && Int(size.height) % 2 == 0)
+    }
+
+    @Test
+    func targetHeightScalesProportionally() {
+        let (size, scale, inset) = VideoBeautify.layout(srcW: 1000, srcH: 1000, paddingFraction: 0.1, targetHeight: 600)
+        #expect(size.height == 600)
+        #expect(abs(scale - 0.5) < 1e-9)
+        #expect(abs(inset - 50) < 1e-9)
+    }
+
+    @Test
+    func zeroPaddingRoundsToEvenSourceSize() {
+        let (size, _, inset) = VideoBeautify.layout(srcW: 1281, srcH: 721, paddingFraction: 0, targetHeight: nil)
+        #expect(inset == 0)
+        #expect(size.width == 1280 && size.height == 720)
+    }
+}
+
 @MainActor
 struct PerspectiveMockupTests {
     @Test

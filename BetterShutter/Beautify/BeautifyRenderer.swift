@@ -155,6 +155,18 @@ enum BeautifyRenderer {
         }
     }
 
+    /// Render a background fill to a standalone bitmap of `size` — used by the video editor to frame
+    /// a recording on a wallpaper / gradient / mesh background.
+    static func backgroundImage(_ fill: BackgroundFill, size: CGSize) -> CGImage? {
+        let w = Int(size.width.rounded()), h = Int(size.height.rounded())
+        guard w > 0, h > 0 else { return nil }
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        drawBackground(fill, in: ctx, rect: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
+    }
+
     private static func drawTrafficLights(in ctx: CGContext, barRect: CGRect) {
         let r = max(4, barRect.height * 0.16)
         let gap = r * 2.8
