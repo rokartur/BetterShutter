@@ -165,6 +165,24 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     func resetAdjustments() { setAdjustments(ImageAdjustments(), commit: true) }
 
+    /// Formatting applied to new text; mirrors the toolbar's rich-text toggles.
+    private var textFormatDefault = TextFormatting()
+
+    /// Apply rich-text formatting to the selected (or in-progress) text element and remember it as
+    /// the default for new text. One undo step for a committed element.
+    func setTextFormatting(_ fmt: TextFormatting) {
+        textFormatDefault = fmt
+        if let editingElement {
+            editingElement.format = fmt
+            needsDisplay = true
+        } else if let text = selected as? TextElement {
+            let before = snapshot()
+            text.format = fmt
+            commit(before, "Text Style")
+            needsDisplay = true
+        }
+    }
+
     /// Add another image onto the canvas, centered and scaled to fit, selected for repositioning.
     func addComposedImage(_ cg: CGImage) {
         let before = snapshot()
@@ -950,7 +968,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     private func beginText(at p: CGPoint) {
         textPending = snapshot()   // before the empty TextElement is appended
-        let element = TextElement(origin: p, text: "", style: style)
+        let element = TextElement(origin: p, text: "", style: style, format: textFormatDefault)
         elements.append(element)
         editingElement = element
         selected = element

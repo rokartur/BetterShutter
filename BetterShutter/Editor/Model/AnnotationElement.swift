@@ -548,27 +548,61 @@ final class SpotlightElement: TwoPointElement {
 
 // MARK: - Text
 
+/// Per-element rich-text styling for a TextElement (whole-string, not per-character).
+struct TextFormatting: Equatable {
+    var bold = false
+    var italic = false
+    var underline = false
+    var strikethrough = false
+    var outlined = false
+    var background: NSColor?
+}
+
 final class TextElement: AnnotationElement {
     /// Baseline origin in image coordinates (bottom-left).
     var origin: CGPoint
     var text: String
+    var format = TextFormatting()
 
-    init(origin: CGPoint, text: String, style: AnnotationStyle) {
+    init(origin: CGPoint, text: String, style: AnnotationStyle, format: TextFormatting = TextFormatting()) {
         self.origin = origin
         self.text = text
+        self.format = format
         super.init(style: style)
     }
 
+    private func font() -> NSFont {
+        var font = NSFont.systemFont(ofSize: style.fontSize, weight: format.bold ? .bold : .semibold)
+        if format.italic { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
+        return font
+    }
+
+    private func attributes() -> [NSAttributedString.Key: Any] {
+        var attrs: [NSAttributedString.Key: Any] = [.font: font(), .foregroundColor: style.color]
+        if format.outlined {
+            // Negative stroke width = stroke + fill, drawing a contrasting halo for readability.
+            attrs[.strokeWidth] = -3.0
+            let rgb = style.color.usingColorSpace(.sRGB)
+            let lum = rgb.map { 0.299 * $0.redComponent + 0.587 * $0.greenComponent + 0.114 * $0.blueComponent } ?? 0
+            attrs[.strokeColor] = lum > 0.6 ? NSColor.black : NSColor.white
+        }
+        return attrs
+    }
+
     private func line() -> CTLine {
-        let font = NSFont.systemFont(ofSize: style.fontSize, weight: .semibold)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: style.color]
-        return CTLineCreateWithAttributedString(NSAttributedString(string: text.isEmpty ? " " : text, attributes: attrs))
+        CTLineCreateWithAttributedString(
+            NSAttributedString(string: text.isEmpty ? " " : text, attributes: attributes()))
+    }
+
+    private func metrics() -> (width: CGFloat, ascent: CGFloat, descent: CGFloat) {
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line(), &ascent, &descent, &leading))
+        return (width, ascent, descent)
     }
 
     override var boundingBox: CGRect {
-        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
-        let width = CGFloat(CTLineGetTypographicBounds(line(), &ascent, &descent, &leading))
-        return CGRect(x: origin.x, y: origin.y - descent, width: width, height: ascent + descent)
+        let m = metrics()
+        return CGRect(x: origin.x, y: origin.y - m.descent, width: m.width, height: m.ascent + m.descent)
     }
 
     override func translate(by delta: CGSize) {
@@ -578,7 +612,7 @@ final class TextElement: AnnotationElement {
     override var isDegenerate: Bool { text.isEmpty }
 
     override func clone() -> AnnotationElement {
-        let copy = TextElement(origin: origin, text: text, style: style)
+        let copy = TextElement(origin: origin, text: text, style: style, format: format)
         copy.rotation = rotation
         return copy
     }
@@ -587,9 +621,31 @@ final class TextElement: AnnotationElement {
 
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         guard !text.isEmpty else { return }
+        let m = metrics()
+        if let bg = format.background {
+            let padX = style.fontSize * 0.2, padY = style.fontSize * 0.12
+            cg.setFillColor(bg.cgColor)
+            cg.fill(CGRect(x: origin.x - padX, y: origin.y - m.descent - padY,
+                           width: m.width + padX * 2, height: m.ascent + m.descent + padY * 2))
+        }
         cg.textMatrix = .identity
         cg.textPosition = origin
         CTLineDraw(line(), cg)
+
+        // CoreText's CTLine doesn't render underline/strikethrough, so draw them by hand.
+        if format.underline || format.strikethrough {
+            cg.setStrokeColor(style.color.cgColor)
+            cg.setLineWidth(max(1, style.fontSize * 0.06))
+            if format.underline {
+                let y = origin.y - m.descent * 0.4
+                cg.move(to: CGPoint(x: origin.x, y: y)); cg.addLine(to: CGPoint(x: origin.x + m.width, y: y))
+            }
+            if format.strikethrough {
+                let y = origin.y + (m.ascent - m.descent) * 0.32
+                cg.move(to: CGPoint(x: origin.x, y: y)); cg.addLine(to: CGPoint(x: origin.x + m.width, y: y))
+            }
+            cg.strokePath()
+        }
     }
 }
 

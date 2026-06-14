@@ -825,6 +825,36 @@ struct BeautifyPresetTests {
     }
 }
 
+@MainActor
+struct TextFormattingTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func projectRoundTripPreservesFormatting() throws {
+        let base = makeSolidTestImage(width: 60, height: 40)
+        var fmt = TextFormatting()
+        fmt.bold = true; fmt.underline = true; fmt.outlined = true
+        fmt.background = NSColor.systemYellow.withAlphaComponent(0.4)
+        let text = TextElement(origin: CGPoint(x: 4, y: 5), text: "Hi", style: style, format: fmt)
+        let project = try #require(AnnotationProjectIO.make(base: base, elements: [text]))
+        let decoded = try JSONDecoder().decode(AnnotationProject.self, from: JSONEncoder().encode(project))
+        let back = try #require(AnnotationProjectIO.elements(decoded).first as? TextElement)
+        #expect(back.format.bold && back.format.underline && back.format.outlined)
+        #expect(!back.format.italic && !back.format.strikethrough)
+        #expect(back.format.background != nil)
+    }
+
+    @Test
+    func flattenWithFormattedTextKeepsSize() {
+        let base = makeSolidTestImage(width: 80, height: 40)
+        var fmt = TextFormatting()
+        fmt.strikethrough = true; fmt.italic = true
+        let text = TextElement(origin: CGPoint(x: 5, y: 10), text: "abc", style: style, format: fmt)
+        let out = AnnotationRenderer.flatten(base: base, elements: [text], ciContext: CIContext())
+        #expect(out?.width == 80 && out?.height == 40)
+    }
+}
+
 struct ImageAdjustmentsTests {
     @Test
     func identityFlag() {

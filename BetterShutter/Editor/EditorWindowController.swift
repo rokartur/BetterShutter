@@ -17,6 +17,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var zoomControl: NSSegmentedControl?
     private var adjustPopover: NSPopover?
     private var adjustSliders: [String: NSSlider] = [:]
+    private var textFormatControl: NSSegmentedControl?
     private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     var onClose: (() -> Void)?
 
@@ -120,6 +121,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         adjustButton.imagePosition = .imageOnly
         adjustButton.toolTip = "Image Adjustments (brightness / contrast / saturation / sharpness)"
 
+        func sym(_ name: String) -> NSImage { NSImage(systemSymbolName: name, accessibilityDescription: name) ?? NSImage() }
+        let textFormat = NSSegmentedControl(
+            images: [sym("bold"), sym("italic"), sym("underline"), sym("strikethrough"),
+                     sym("pencil.and.outline"), sym("highlighter")],
+            trackingMode: .selectAny, target: self, action: #selector(textFormatChanged(_:)))
+        textFormat.toolTip = "Text style: bold / italic / underline / strikethrough / outline / highlight"
+        self.textFormatControl = textFormat
+
         // Action buttons (project / share / copy / save / done) ride the bottom bar, right side.
         let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
         project.toolTip = "Save Re-editable Project (.bsproj)"
@@ -136,6 +145,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
             label("Stroke"), widthSlider,
             label("Strength"), strengthSlider,
             label("Transform"), transform,
+            label("Text"), textFormat,
             label("Adjust"), adjustButton,
             label("Zoom"), zoom,
         ])
@@ -338,6 +348,17 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     @objc private func transformPicked(_ sender: NSMenuItem) {
         guard let kind = sender.representedObject as? ImageTransform else { return }
         canvas.applyImageTransform(kind)
+    }
+
+    @objc private func textFormatChanged(_ sender: NSSegmentedControl) {
+        var fmt = TextFormatting()
+        fmt.bold = sender.isSelected(forSegment: 0)
+        fmt.italic = sender.isSelected(forSegment: 1)
+        fmt.underline = sender.isSelected(forSegment: 2)
+        fmt.strikethrough = sender.isSelected(forSegment: 3)
+        fmt.outlined = sender.isSelected(forSegment: 4)
+        fmt.background = sender.isSelected(forSegment: 5) ? NSColor.systemYellow.withAlphaComponent(0.4) : nil
+        canvas.setTextFormatting(fmt)
     }
 
     // MARK: Image adjustments
