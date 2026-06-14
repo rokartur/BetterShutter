@@ -343,11 +343,33 @@ final class RecordingSettingsTab: SettingsTabViewController {
         fps.action = #selector(changeFPS(_:))
         addRow(to: quality, title: "Frame rate",
                subtitle: "Higher is smoother; lower makes smaller files.", accessory: fps)
+
+        let focus = addSection(title: "Focus", anchor: "recording.focus")
+        let startField = NSTextField(string: Preferences.focusShortcutStart)
+        startField.placeholderString = "Shortcut name"
+        startField.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        startField.target = self
+        startField.action = #selector(focusStartChanged(_:))
+        addRow(to: focus, title: "Run Shortcut on start",
+               subtitle: "macOS has no direct Focus API — name a Shortcut (e.g. one that turns on a Focus) to run when recording starts.",
+               accessory: startField)
+
+        let stopField = NSTextField(string: Preferences.focusShortcutStop)
+        stopField.placeholderString = "Shortcut name"
+        stopField.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        stopField.target = self
+        stopField.action = #selector(focusStopChanged(_:))
+        addRow(to: focus, title: "Run Shortcut on stop",
+               subtitle: "Runs when recording stops (e.g. to turn the Focus back off).",
+               accessory: stopField)
     }
 
     @objc private func changeFPS(_ sender: NSPopUpButton) {
         Preferences.recordingFPS = sender.indexOfSelectedItem == 0 ? 30 : 60
     }
+
+    @objc private func focusStartChanged(_ sender: NSTextField) { Preferences.focusShortcutStart = sender.stringValue }
+    @objc private func focusStopChanged(_ sender: NSTextField) { Preferences.focusShortcutStop = sender.stringValue }
 
     @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
     @objc private func toggleRecordMic(_ sender: NSSwitch) { Preferences.recordMicrophone = (sender.state == .on) }

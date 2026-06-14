@@ -85,6 +85,7 @@ final class RecordingController {
         }
         // Keep our own control bar out of the recording (overlays stay in deliberately).
         engine.excludedWindowIDs = [controlBar.windowID].compactMap { $0 }
+        FocusController.run(shortcutNamed: Preferences.focusShortcutStart)
         if Preferences.highlightClicks { ClickHighlighter.shared.start(displayID: displayID) }
         if !gif, Preferences.showWebcam { WebcamOverlay.shared.start(displayID: displayID) }
         if !gif, Preferences.showKeystrokes { KeystrokeOverlay.shared.start(displayID: displayID) }
@@ -112,6 +113,7 @@ final class RecordingController {
                 WebcamOverlay.shared.stop()
                 KeystrokeOverlay.shared.stop()
                 stopCursorSampling()
+                FocusController.run(shortcutNamed: Preferences.focusShortcutStop)
                 if iconsHidden { DesktopIconHider.shared.show(); iconsHidden = false }
                 self.engine = nil
                 onStateChange?()
@@ -130,6 +132,7 @@ final class RecordingController {
         WebcamOverlay.shared.stop()
         KeystrokeOverlay.shared.stop()
         stopCursorSampling()
+        FocusController.run(shortcutNamed: Preferences.focusShortcutStop)
         if iconsHidden { DesktopIconHider.shared.show(); iconsHidden = false }
         self.engine = nil
         onStateChange?()
