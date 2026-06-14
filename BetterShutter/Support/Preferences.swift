@@ -139,6 +139,34 @@ nonisolated enum Preferences {
         static let stepStart = "stepStart"
         static let recentColors = "recentColors"
         static let historyRetention = "captureHistoryRetention"
+        static let captureDelay = "captureDelaySeconds"
+        static let hideDesktopIcons = "hideDesktopIcons"
+        static let focusShortcutStart = "focusShortcutStart"
+        static let focusShortcutStop = "focusShortcutStop"
+    }
+
+    /// Name of a Shortcut to run when recording starts / stops (e.g. to turn a Focus on/off). macOS
+    /// has no public Focus API, so this is the sanctioned workaround. Empty = disabled.
+    static var focusShortcutStart: String {
+        get { defaults.string(forKey: Key.focusShortcutStart) ?? "" }
+        set { defaults.set(newValue, forKey: Key.focusShortcutStart) }
+    }
+    static var focusShortcutStop: String {
+        get { defaults.string(forKey: Key.focusShortcutStop) ?? "" }
+        set { defaults.set(newValue, forKey: Key.focusShortcutStop) }
+    }
+
+    /// Hide desktop icons during captures and recordings (seamless wallpaper cover, no Finder relaunch).
+    static var hideDesktopIcons: Bool {
+        get { defaults.bool(forKey: Key.hideDesktopIcons) }
+        set { defaults.set(newValue, forKey: Key.hideDesktopIcons) }
+    }
+
+    /// Self-timer delay (seconds) before a capture fires; 0 = off. Lets the user arrange the screen
+    /// (open menus, hover tooltips) first. Allowed values: 0 / 3 / 5 / 10.
+    static var captureDelaySeconds: Int {
+        get { defaults.integer(forKey: Key.captureDelay) }
+        set { defaults.set(newValue, forKey: Key.captureDelay) }
     }
 
     /// How far back the Capture History bar reaches. Defaults to 30 days.

@@ -232,6 +232,118 @@ final class LineElement: TwoPointElement {
     }
 }
 
+// MARK: - Freehand
+
+/// Freehand pen stroke: a smoothed path through the points sampled while dragging. Plugs into the
+/// canvas's `.creating` drag mode via `updateDrag`, which appends points instead of moving an end.
+class PenElement: AnnotationElement {
+    var points: [CGPoint]
+
+    required init(start: CGPoint, style: AnnotationStyle) {
+        points = [start]
+        super.init(style: style)
+    }
+
+    /// Stroke opacity (1 for the pen; the marker overrides to a translucent highlighter wash).
+    var strokeAlpha: CGFloat { 1 }
+    /// Stroke-width multiplier (the marker is much broader than the pen).
+    var widthScale: CGFloat { 1 }
+
+    override func updateDrag(to point: CGPoint) {
+        // Drop near-duplicate samples so the smoothing stays stable on slow drags.
+        if let last = points.last, hypot(point.x - last.x, point.y - last.y) < 1.5 { return }
+        points.append(point)
+    }
+
+    override var boundingBox: CGRect {
+        guard let first = points.first else { return .zero }
+        var (minX, maxX, minY, maxY) = (first.x, first.x, first.y, first.y)
+        for p in points {
+            minX = min(minX, p.x); maxX = max(maxX, p.x)
+            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        }
+        let pad = style.strokeWidth * widthScale / 2 + 1
+        return CGRect(x: minX - pad, y: minY - pad,
+                      width: (maxX - minX) + pad * 2, height: (maxY - minY) + pad * 2)
+    }
+
+    override var isDegenerate: Bool {
+        guard points.count >= 2 else { return true }
+        let b = boundingBox
+        return b.width < 3 && b.height < 3
+    }
+
+    override func translate(by delta: CGSize) {
+        for i in points.indices { points[i].x += delta.width; points[i].y += delta.height }
+    }
+
+    override func transform(_ t: CGAffineTransform) {
+        for i in points.indices { points[i] = points[i].applying(t) }
+    }
+
+    override func hitTest(_ point: CGPoint) -> Bool {
+        guard points.count >= 2 else { return boundingBox.contains(point) }
+        let tol = max(8, style.strokeWidth * widthScale / 2 + 6)
+        for i in 1..<points.count where Self.distance(point, segA: points[i - 1], segB: points[i]) <= tol {
+            return true
+        }
+        return false
+    }
+
+    override func clone() -> AnnotationElement {
+        let copy = Self(start: points.first ?? .zero, style: style)
+        copy.points = points
+        copy.rotation = rotation
+        return copy
+    }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        guard !points.isEmpty else { return }
+        cg.addPath(Self.smoothedPath(points))
+        cg.setLineWidth(style.strokeWidth * widthScale)
+        cg.setLineCap(.round)
+        cg.setLineJoin(.round)
+        cg.setStrokeColor(style.color.withAlphaComponent(strokeAlpha).cgColor)
+        cg.strokePath()
+    }
+
+    /// Catmull-Rom → cubic Bézier smoothing through the sampled points.
+    static func smoothedPath(_ pts: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        guard let first = pts.first else { return path }
+        path.move(to: first)
+        guard pts.count >= 3 else {
+            for p in pts.dropFirst() { path.addLine(to: p) }
+            return path
+        }
+        for i in 0..<(pts.count - 1) {
+            let p0 = pts[max(i - 1, 0)]
+            let p1 = pts[i]
+            let p2 = pts[i + 1]
+            let p3 = pts[min(i + 2, pts.count - 1)]
+            let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+            path.addCurve(to: p2, control1: c1, control2: c2)
+        }
+        return path
+    }
+
+    /// Shortest distance from `p` to the segment a–b (for hit-testing the thin stroke).
+    static func distance(_ p: CGPoint, segA a: CGPoint, segB b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lenSq = dx * dx + dy * dy
+        guard lenSq > 0 else { return hypot(p.x - a.x, p.y - a.y) }
+        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
+}
+
+/// Highlighter-style freehand marker: a broad, translucent stroke that layers like a real marker.
+final class MarkerElement: PenElement {
+    override var strokeAlpha: CGFloat { 0.4 }
+    override var widthScale: CGFloat { 2.8 }
+}
+
 final class ArrowElement: TwoPointElement {
     override var isDegenerate: Bool { hypot(end.x - start.x, end.y - start.y) < 6 }
     // Tail (start) and head (end) are the resize handles.
@@ -418,6 +530,55 @@ final class BlackoutElement: TwoPointElement {
     }
 }
 
+/// Smart erase: fills the region with the average color of a thin ring just outside it, so the
+/// content "disappears" into a near-uniform background — a lightweight content-aware erase (macshot's
+/// fourth censor mode). Best on flat / gradient backgrounds; degrades to a flat patch on busy ones.
+final class SmartEraseElement: TwoPointElement {
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        let r = rect.integral
+        guard r.width >= 2, r.height >= 2 else { return }
+        cg.setFillColor(Self.borderAverageColor(of: rc.baseImage, region: r,
+                                                imageSize: rc.imageSize, ciContext: rc.ciContext))
+        cg.fill(r)
+    }
+
+    /// Average color of the ring of pixels just outside `region` (image bottom-left coords).
+    static func borderAverageColor(of image: CGImage, region: CGRect, imageSize: CGSize,
+                                   ciContext: CIContext) -> CGColor {
+        let ci = CIImage(cgImage: image)
+        let m = max(4, min(region.width, region.height) * 0.15)
+        let full = CGRect(origin: .zero, size: imageSize)
+        let strips = [
+            CGRect(x: region.minX, y: region.maxY, width: region.width, height: m),      // top
+            CGRect(x: region.minX, y: region.minY - m, width: region.width, height: m),  // bottom
+            CGRect(x: region.minX - m, y: region.minY, width: m, height: region.height), // left
+            CGRect(x: region.maxX, y: region.minY, width: m, height: region.height),     // right
+        ].map { $0.intersection(full) }.filter { !$0.isNull && $0.width >= 1 && $0.height >= 1 }
+
+        var (rT, gT, bT, n) = (0.0, 0.0, 0.0, 0.0)
+        for strip in strips {
+            if let c = averageColor(ci, extent: strip, ciContext: ciContext) {
+                rT += c.0; gT += c.1; bT += c.2; n += 1
+            }
+        }
+        guard n > 0 else { return CGColor(gray: 0.5, alpha: 1) }
+        return CGColor(srgbRed: rT / n, green: gT / n, blue: bT / n, alpha: 1)
+    }
+
+    private static func averageColor(_ ci: CIImage, extent: CGRect,
+                                     ciContext: CIContext) -> (Double, Double, Double)? {
+        let filter = CIFilter.areaAverage()
+        filter.inputImage = ci
+        filter.extent = extent
+        guard let out = filter.outputImage else { return nil }
+        var px = [UInt8](repeating: 0, count: 4)
+        ciContext.render(out, toBitmap: &px, rowBytes: 4,
+                         bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                         format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        return (Double(px[0]) / 255, Double(px[1]) / 255, Double(px[2]) / 255)
+    }
+}
+
 /// Spotlight: dims the whole image except the dragged region, to direct attention without arrows.
 /// The bounding box is the bright (clear) area, so selection/hit-testing targets the focus rect.
 final class SpotlightElement: TwoPointElement {
@@ -436,27 +597,61 @@ final class SpotlightElement: TwoPointElement {
 
 // MARK: - Text
 
+/// Per-element rich-text styling for a TextElement (whole-string, not per-character).
+struct TextFormatting: Equatable {
+    var bold = false
+    var italic = false
+    var underline = false
+    var strikethrough = false
+    var outlined = false
+    var background: NSColor?
+}
+
 final class TextElement: AnnotationElement {
     /// Baseline origin in image coordinates (bottom-left).
     var origin: CGPoint
     var text: String
+    var format = TextFormatting()
 
-    init(origin: CGPoint, text: String, style: AnnotationStyle) {
+    init(origin: CGPoint, text: String, style: AnnotationStyle, format: TextFormatting = TextFormatting()) {
         self.origin = origin
         self.text = text
+        self.format = format
         super.init(style: style)
     }
 
+    private func font() -> NSFont {
+        var font = NSFont.systemFont(ofSize: style.fontSize, weight: format.bold ? .bold : .semibold)
+        if format.italic { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
+        return font
+    }
+
+    private func attributes() -> [NSAttributedString.Key: Any] {
+        var attrs: [NSAttributedString.Key: Any] = [.font: font(), .foregroundColor: style.color]
+        if format.outlined {
+            // Negative stroke width = stroke + fill, drawing a contrasting halo for readability.
+            attrs[.strokeWidth] = -3.0
+            let rgb = style.color.usingColorSpace(.sRGB)
+            let lum = rgb.map { 0.299 * $0.redComponent + 0.587 * $0.greenComponent + 0.114 * $0.blueComponent } ?? 0
+            attrs[.strokeColor] = lum > 0.6 ? NSColor.black : NSColor.white
+        }
+        return attrs
+    }
+
     private func line() -> CTLine {
-        let font = NSFont.systemFont(ofSize: style.fontSize, weight: .semibold)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: style.color]
-        return CTLineCreateWithAttributedString(NSAttributedString(string: text.isEmpty ? " " : text, attributes: attrs))
+        CTLineCreateWithAttributedString(
+            NSAttributedString(string: text.isEmpty ? " " : text, attributes: attributes()))
+    }
+
+    private func metrics() -> (width: CGFloat, ascent: CGFloat, descent: CGFloat) {
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line(), &ascent, &descent, &leading))
+        return (width, ascent, descent)
     }
 
     override var boundingBox: CGRect {
-        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
-        let width = CGFloat(CTLineGetTypographicBounds(line(), &ascent, &descent, &leading))
-        return CGRect(x: origin.x, y: origin.y - descent, width: width, height: ascent + descent)
+        let m = metrics()
+        return CGRect(x: origin.x, y: origin.y - m.descent, width: m.width, height: m.ascent + m.descent)
     }
 
     override func translate(by delta: CGSize) {
@@ -466,7 +661,7 @@ final class TextElement: AnnotationElement {
     override var isDegenerate: Bool { text.isEmpty }
 
     override func clone() -> AnnotationElement {
-        let copy = TextElement(origin: origin, text: text, style: style)
+        let copy = TextElement(origin: origin, text: text, style: style, format: format)
         copy.rotation = rotation
         return copy
     }
@@ -475,9 +670,115 @@ final class TextElement: AnnotationElement {
 
     override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
         guard !text.isEmpty else { return }
+        let m = metrics()
+        if let bg = format.background {
+            let padX = style.fontSize * 0.2, padY = style.fontSize * 0.12
+            cg.setFillColor(bg.cgColor)
+            cg.fill(CGRect(x: origin.x - padX, y: origin.y - m.descent - padY,
+                           width: m.width + padX * 2, height: m.ascent + m.descent + padY * 2))
+        }
         cg.textMatrix = .identity
         cg.textPosition = origin
         CTLineDraw(line(), cg)
+
+        // CoreText's CTLine doesn't render underline/strikethrough, so draw them by hand.
+        if format.underline || format.strikethrough {
+            cg.setStrokeColor(style.color.cgColor)
+            cg.setLineWidth(max(1, style.fontSize * 0.06))
+            if format.underline {
+                let y = origin.y - m.descent * 0.4
+                cg.move(to: CGPoint(x: origin.x, y: y)); cg.addLine(to: CGPoint(x: origin.x + m.width, y: y))
+            }
+            if format.strikethrough {
+                let y = origin.y + (m.ascent - m.descent) * 0.32
+                cg.move(to: CGPoint(x: origin.x, y: y)); cg.addLine(to: CGPoint(x: origin.x + m.width, y: y))
+            }
+            cg.strokePath()
+        }
+    }
+}
+
+// MARK: - Watermark
+
+/// A text watermark — either a single placed mark or a translucent pattern tiled diagonally across
+/// the whole image (Snapzy-style). Opacity and the fixed tile angle keep it readable but unobtrusive.
+final class WatermarkElement: AnnotationElement {
+    var text: String
+    var tiled: Bool
+    /// Single-mode draw point, or the tiled pattern's phase offset (so it can be nudged).
+    var anchor: CGPoint
+    var imageSize: CGSize
+    var opacity: CGFloat
+    private let angle: CGFloat = .pi / 6   // 30° diagonal for the tiled pattern
+
+    init(text: String, tiled: Bool, anchor: CGPoint, imageSize: CGSize,
+         style: AnnotationStyle, opacity: CGFloat = 0.22) {
+        self.text = text
+        self.tiled = tiled
+        self.anchor = anchor
+        self.imageSize = imageSize
+        self.opacity = opacity
+        super.init(style: style)
+    }
+
+    private func line() -> CTLine {
+        let font = NSFont.systemFont(ofSize: style.fontSize, weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: style.color.withAlphaComponent(opacity),
+        ]
+        return CTLineCreateWithAttributedString(
+            NSAttributedString(string: text.isEmpty ? " " : text, attributes: attrs))
+    }
+
+    private var textSize: CGSize {
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let w = CGFloat(CTLineGetTypographicBounds(line(), &ascent, &descent, &leading))
+        return CGSize(width: w, height: ascent + descent)
+    }
+
+    override var boundingBox: CGRect {
+        if tiled { return CGRect(origin: .zero, size: imageSize) }
+        let s = textSize
+        return CGRect(x: anchor.x, y: anchor.y, width: s.width, height: s.height)
+    }
+
+    override func translate(by delta: CGSize) { anchor.x += delta.width; anchor.y += delta.height }
+    override var isDegenerate: Bool { text.isEmpty }
+    override func transform(_ t: CGAffineTransform) { anchor = anchor.applying(t) }
+
+    override func clone() -> AnnotationElement {
+        let copy = WatermarkElement(text: text, tiled: tiled, anchor: anchor,
+                                    imageSize: imageSize, style: style, opacity: opacity)
+        copy.rotation = rotation
+        return copy
+    }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        guard !text.isEmpty else { return }
+        cg.textMatrix = .identity
+        guard tiled else { drawOne(in: cg, at: anchor); return }
+        let s = textSize
+        let stepX = s.width + max(60, s.width * 0.6)
+        let stepY = max(80, s.height * 3)
+        // Extend the grid beyond the image so the rotated pattern still covers the corners.
+        var y = -stepY + anchor.y.truncatingRemainder(dividingBy: stepY)
+        while y < imageSize.height + stepY {
+            var x = -stepX + anchor.x.truncatingRemainder(dividingBy: stepX)
+            while x < imageSize.width + stepX {
+                drawOne(in: cg, at: CGPoint(x: x, y: y))
+                x += stepX
+            }
+            y += stepY
+        }
+    }
+
+    private func drawOne(in cg: CGContext, at p: CGPoint) {
+        cg.saveGState()
+        cg.translateBy(x: p.x, y: p.y)
+        if tiled { cg.rotate(by: angle) }
+        cg.textPosition = .zero
+        CTLineDraw(line(), cg)
+        cg.restoreGState()
     }
 }
 

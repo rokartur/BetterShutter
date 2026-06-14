@@ -68,6 +68,8 @@ final class CaptureHistoryPanel: NSObject {
 
     private var panel: NSPanel?
     private let filterControl = NSSegmentedControl()
+    private let searchField = NSSearchField()
+    private var searchQuery = ""
     private let cardStack = NSStackView()
     private let scroll = NSScrollView()
     private let emptyLabel = NSTextField(labelWithString: "No captures yet")
@@ -173,9 +175,20 @@ final class CaptureHistoryPanel: NSObject {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(emptyLabel)
 
+        searchField.placeholderString = "Search filenames"
+        searchField.target = self
+        searchField.action = #selector(searchChanged(_:))
+        searchField.sendsSearchStringImmediately = false
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(searchField)
+
         NSLayoutConstraint.activate([
             filterControl.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
             filterControl.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+
+            searchField.centerYAnchor.constraint(equalTo: filterControl.centerYAnchor),
+            searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            searchField.widthAnchor.constraint(equalToConstant: 200),
 
             close.centerYAnchor.constraint(equalTo: filterControl.centerYAnchor),
             close.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
@@ -239,7 +252,12 @@ final class CaptureHistoryPanel: NSObject {
         rebuildCards()
     }
 
-    private func shownEntries() -> [HistoryEntry] { entries.filter { filter.matches($0.kind) } }
+    private func shownEntries() -> [HistoryEntry] {
+        entries.filter {
+            filter.matches($0.kind)
+                && (searchQuery.isEmpty || $0.url.lastPathComponent.localizedCaseInsensitiveContains(searchQuery))
+        }
+    }
 
     private func rebuildCards() {
         cardStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -372,6 +390,11 @@ final class CaptureHistoryPanel: NSObject {
 
     // MARK: Actions
 
+    @objc private func searchChanged(_ sender: NSSearchField) {
+        searchQuery = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        rebuildCards()
+    }
+
     @objc private func filterChanged(_ sender: NSSegmentedControl) {
         let index = sender.selectedSegment
         guard HistoryFilter.allCases.indices.contains(index) else { return }
@@ -408,6 +431,7 @@ final class CaptureHistoryPanel: NSObject {
             ("Restore", #selector(menuRestore)),
             ("Reveal in Finder", #selector(menuReveal)),
             ("Copy", #selector(menuCopy)),
+            ("Upload & Copy Link", #selector(menuUpload)),
             ("Share…", #selector(menuShare)),
             ("Delete", #selector(menuDelete)),
         ] {
@@ -420,6 +444,7 @@ final class CaptureHistoryPanel: NSObject {
 
     @objc private func menuRestore() { if let selected { restore(selected) } }
     @objc private func menuReveal() { if let selected { NSWorkspace.shared.activateFileViewerSelecting([selected]) } }
+    @objc private func menuUpload() { if let selected { CloudUploadService.uploadFile(selected) } }
 
     @objc private func menuCopy() {
         guard let selected, let kind = HistoryKind(extension: selected.pathExtension) else { return }

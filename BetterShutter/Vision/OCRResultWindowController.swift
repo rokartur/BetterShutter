@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Shows OCR results in a glass window: selectable recognized text with a "Preserve line breaks"
 /// toggle and Copy, plus any detected QR/barcode payloads with Copy / Open actions.
@@ -65,6 +66,15 @@ final class OCRResultWindowController: NSObject, NSWindowDelegate {
         copy.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(copy)
 
+        var translateButton: NSButton?
+        if #available(macOS 15.0, *) {
+            let translate = NSButton(title: "Translate", target: self, action: #selector(translateText))
+            translate.bezelStyle = .rounded
+            translate.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(translate)
+            translateButton = translate
+        }
+
         let barcodeStack = NSStackView()
         barcodeStack.orientation = .vertical
         barcodeStack.alignment = .leading
@@ -89,7 +99,27 @@ final class OCRResultWindowController: NSObject, NSWindowDelegate {
             copy.centerYAnchor.constraint(equalTo: preserve.centerYAnchor),
             copy.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
         ])
+        if let translateButton {
+            NSLayoutConstraint.activate([
+                translateButton.centerYAnchor.constraint(equalTo: preserve.centerYAnchor),
+                translateButton.trailingAnchor.constraint(equalTo: copy.leadingAnchor, constant: -8),
+            ])
+        }
         self.window = window
+    }
+
+    @available(macOS 15.0, *)
+    @objc private func translateText() {
+        guard let window, !rawText.isEmpty else { return }
+        var sheet: NSWindow?
+        let view = OCRTranslationView(sourceText: rawText) {
+            if let sheet { window.endSheet(sheet) }
+        }
+        let host = NSHostingController(rootView: view)
+        let sheetWindow = NSWindow(contentViewController: host)
+        sheetWindow.setContentSize(NSSize(width: 440, height: 320))
+        sheet = sheetWindow
+        window.beginSheet(sheetWindow)
     }
 
     // MARK: Render

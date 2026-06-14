@@ -22,6 +22,12 @@ final class OverlayView: NSView {
     /// When non-empty, a confirmed selection shows the action bar with these buttons. When empty
     /// (recording / OCR flows), confirming a selection just reports `.capture`.
     var toolbarActions: [OverlayAction] = []
+    /// Locks the selection to this aspect ratio (width / height). `nil` = free. Holding Shift while
+    /// dragging always locks to 1:1 regardless, matching the native screenshot gesture.
+    var lockedAspect: CGFloat?
+    /// An initial selection (view coords) to restore as an adjustable pending selection when the
+    /// overlay appears — the All-in-One "remembers your last selection" behavior. `nil` = start empty.
+    var initialSelection: CGRect?
 
     // Callbacks (selection reported in this view's coordinates).
     var onRegionSelected: ((CGRect, OverlayAction) -> Void)?
@@ -43,6 +49,7 @@ final class OverlayView: NSView {
     private var didMove = false
     private var hoveredWindow: WindowHighlighter.Hit?
     private var spaceHeld = false
+    private var shiftHeld = false
     private var trackingArea: NSTrackingArea?
     private var actionBar: CaptureActionBar?
     private var finished = false   // one-shot guard: a confirmed selection fires exactly once
@@ -89,11 +96,22 @@ final class OverlayView: NSView {
         CGPoint(x: p.x * sx, y: (bounds.height - p.y) * sy)
     }
 
+    /// The aspect ratio (width / height) currently enforced, or `nil` for a free selection.
+    /// Shift forces a square; otherwise the configured `lockedAspect` (if any) applies.
+    private var effectiveAspect: CGFloat? {
+        if shiftHeld { return 1 }
+        return lockedAspect
+    }
+
     /// The rect currently shown (live drag or committed selection), in view coords.
     private var activeRect: CGRect? {
         switch phase {
         case .dragging:
             guard let anchor = dragAnchor else { return nil }
+            if let aspect = effectiveAspect {
+                return SelectionModel.rect(from: anchor, to: mousePoint, aspect: aspect)
+                    .intersection(bounds)
+            }
             return SelectionModel.rect(from: anchor, to: mousePoint)
         case .pending, .moving, .resizing:
             return selectionRect
@@ -126,6 +144,9 @@ final class OverlayView: NSView {
     }
 
     private func resized(_ r: CGRect, handle: Handle, to m: CGPoint) -> CGRect {
+        if let aspect = effectiveAspect {
+            return aspectResized(r, handle: handle, to: m, aspect: aspect).intersection(bounds)
+        }
         var (minX, maxX, minY, maxY) = (r.minX, r.maxX, r.minY, r.maxY)
         switch handle {
         case .tl: minX = m.x; maxY = m.y
@@ -141,11 +162,40 @@ final class OverlayView: NSView {
         return rect.intersection(bounds)
     }
 
+    /// Resize keeping `aspect` (width / height). Corner handles pin the opposite corner; edge handles
+    /// pin the opposite edge and grow the locked perpendicular dimension symmetrically about the axis.
+    private func aspectResized(_ r: CGRect, handle: Handle, to m: CGPoint, aspect: CGFloat) -> CGRect {
+        switch handle {
+        case .tl: return SelectionModel.rect(from: CGPoint(x: r.maxX, y: r.minY), to: m, aspect: aspect)
+        case .tr: return SelectionModel.rect(from: CGPoint(x: r.minX, y: r.minY), to: m, aspect: aspect)
+        case .bl: return SelectionModel.rect(from: CGPoint(x: r.maxX, y: r.maxY), to: m, aspect: aspect)
+        case .br: return SelectionModel.rect(from: CGPoint(x: r.minX, y: r.maxY), to: m, aspect: aspect)
+        case .t:
+            let h = max(1, m.y - r.minY); let w = h * aspect
+            return CGRect(x: r.midX - w / 2, y: r.minY, width: w, height: h)
+        case .b:
+            let h = max(1, r.maxY - m.y); let w = h * aspect
+            return CGRect(x: r.midX - w / 2, y: r.maxY - h, width: w, height: h)
+        case .l:
+            let w = max(1, r.maxX - m.x); let h = w / aspect
+            return CGRect(x: r.maxX - w, y: r.midY - h / 2, width: w, height: h)
+        case .r:
+            let w = max(1, m.x - r.minX); let h = w / aspect
+            return CGRect(x: r.minX, y: r.midY - h / 2, width: w, height: h)
+        }
+    }
+
     // MARK: Mouse
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateCursor()
+        if phase == .idle, let rect = initialSelection?.intersection(bounds),
+           rect.width >= minSelectionSide, rect.height >= minSelectionSide {
+            selectionRect = rect
+            enterPending()   // adjustable + action bar shown, ready to confirm or tweak
+        }
+        initialSelection = nil
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -159,6 +209,7 @@ final class OverlayView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         mousePoint = convert(event.locationInWindow, from: nil)
+        shiftHeld = event.modifierFlags.contains(.shift)
 
         if hasCommittedSelection {
             if let h = handle(at: mousePoint, in: selectionRect) {
@@ -185,6 +236,7 @@ final class OverlayView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        shiftHeld = event.modifierFlags.contains(.shift)
         switch phase {
         case .moving:
             let dx = p.x - moveStart.x, dy = p.y - moveStart.y
@@ -220,7 +272,12 @@ final class OverlayView: NSView {
             enterPending()
         case .dragging:
             guard let anchor = dragAnchor else { return }
-            let r = SelectionModel.rect(from: anchor, to: mousePoint)
+            let r: CGRect
+            if let aspect = effectiveAspect {
+                r = SelectionModel.rect(from: anchor, to: mousePoint, aspect: aspect).intersection(bounds)
+            } else {
+                r = SelectionModel.rect(from: anchor, to: mousePoint)
+            }
             dragAnchor = nil
             if r.width < minSelectionSide || r.height < minSelectionSide {
                 // Treated as a click: capture the window under the cursor, if any.
@@ -260,6 +317,18 @@ final class OverlayView: NSView {
 
     override func keyUp(with event: NSEvent) {
         if event.keyCode == 49 { spaceHeld = false }
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        let shift = event.modifierFlags.contains(.shift)
+        guard shift != shiftHeld else { return super.flagsChanged(with: event) }
+        shiftHeld = shift
+        // Re-apply the constraint to the live selection so toggling Shift mid-resize updates it.
+        if case .resizing(let h) = phase {
+            selectionRect = resized(selectionRect, handle: h, to: mousePoint)
+            layoutActionBar()
+        }
+        needsDisplay = true
     }
 
     private func handleArrow(_ event: NSEvent) {

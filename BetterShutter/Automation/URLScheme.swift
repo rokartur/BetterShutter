@@ -8,10 +8,11 @@ import Foundation
 /// registration is the one remaining manual config step (left out of code to avoid converting the
 /// auto-generated Info.plist and risking the LSUIElement / mic-usage keys).
 nonisolated enum URLCommand: Equatable {
+    case allInOne
     case captureRegion, captureWindow, captureFullScreen, captureText, captureScrolling, captureCutout
-    case record, recordGIF, recordRegion
+    case record, recordGIF, recordRegion, recordWindow
     case capturePreviousArea
-    case openBrowser, openSettings, pinLast
+    case openBrowser, openSettings, pinLast, uploadLast
     case unknown(String)
 
     static func parse(_ url: URL) -> URLCommand? {
@@ -19,6 +20,7 @@ nonisolated enum URLCommand: Equatable {
         // Accept both bettershutter://capture-region and bettershutter:capture-region forms.
         let raw = url.host ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         switch raw.lowercased() {
+        case "all-in-one", "capture":            return .allInOne
         case "capture-region", "region":        return .captureRegion
         case "capture-window", "window":         return .captureWindow
         case "capture-fullscreen", "fullscreen": return .captureFullScreen
@@ -28,10 +30,12 @@ nonisolated enum URLCommand: Equatable {
         case "record":                           return .record
         case "record-gif", "gif":                return .recordGIF
         case "record-region":                    return .recordRegion
+        case "record-window":                    return .recordWindow
         case "capture-previous-area", "previous": return .capturePreviousArea
         case "browse", "browser":                return .openBrowser
         case "settings":                         return .openSettings
         case "pin-last", "pin":                  return .pinLast
+        case "upload-last", "upload":            return .uploadLast
         case "":                                 return nil
         default:                                 return .unknown(raw)
         }

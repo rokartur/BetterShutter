@@ -25,9 +25,32 @@ final class CaptureCoordinator {
         preview.onBeautify = { [weak self] image, mode in self?.beautify(image, mode: mode) }
     }
 
-    func capture(_ mode: CaptureMode) {
-        guard !isCapturing, !overlay.isPresenting else { return }
+    /// Freeze all displays, momentarily hiding desktop icons first when the user enabled it, so the
+    /// frozen bitmap (and thus the selection and capture) shows a clean desktop.
+    private func frozenDisplays() async throws -> [CapturedImage] {
+        let hideIcons = Preferences.hideDesktopIcons
+        if hideIcons {
+            DesktopIconHider.shared.hide()
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        defer { if hideIcons { DesktopIconHider.shared.show() } }
+        return try await engine.freezeAllDisplays()
+    }
+
+    /// If a self-timer delay is configured, show the countdown and return `true` so the caller aborts;
+    /// `resume` re-invokes the capture (with the delay already consumed) when the countdown elapses.
+    /// Returns `false` when no delay is set, so the caller proceeds immediately.
+    private func startCountdownIfNeeded(_ resume: @escaping () -> Void) -> Bool {
+        let seconds = Preferences.captureDelaySeconds
+        guard seconds > 0 else { return false }
+        CaptureCountdown.shared.run(seconds: seconds, onComplete: resume)
+        return true
+    }
+
+    func capture(_ mode: CaptureMode, afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.capture(mode, afterDelay: false) }) { return }
         sampleBypass()
 
         switch mode {
@@ -42,9 +65,10 @@ final class CaptureCoordinator {
 
     /// Quick screenshot: select a region (or click a window) and deliver it straight to the normal
     /// output (quick-access card + clipboard per settings) with NO action-bar step — the fastest path.
-    func captureQuick() {
-        guard !isCapturing, !overlay.isPresenting else { return }
+    func captureQuick(afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureQuick(afterDelay: false) }) { return }
         sampleBypass()
         presentRegion(
             magnifier: Preferences.magnifierEnabled,
@@ -61,9 +85,10 @@ final class CaptureCoordinator {
 
     /// Screenshot & markup (macshot-style): select a region (or click a window), then open the full
     /// editor with every annotation / drawing tool ready, instead of parking a quick-access card.
-    func captureAndEdit() {
-        guard !isCapturing, !overlay.isPresenting else { return }
+    func captureAndEdit(afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureAndEdit(afterDelay: false) }) { return }
         sampleBypass()
         presentRegion(
             magnifier: Preferences.magnifierEnabled,
@@ -90,7 +115,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -131,7 +156,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -155,7 +180,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -224,7 +249,7 @@ final class CaptureCoordinator {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -241,6 +266,39 @@ final class CaptureCoordinator {
                 handleError(error)
             }
         }
+    }
+
+    /// Click a window to record just that window (it's followed across the screen). A drag instead
+    /// records that region, so the one flow covers both.
+    func recordWindow() {
+        guard !isCapturing, !overlay.isPresenting, !RecordingController.shared.isRecording else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        isCapturing = true
+        Task {
+            do {
+                let frozen = try await frozenDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: false,
+                    windowSelection: true,
+                    onRegion: { [weak self] _, globalRect, displayID, _ in
+                        self?.startRegionRecording(globalRect: globalRect, displayID: displayID)
+                    },
+                    onWindow: { [weak self] id in self?.startWindowRecording(id) },
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
+    private func startWindowRecording(_ id: CGWindowID) {
+        isCapturing = false
+        RecordingController.shared.startWindow(windowID: id, displayID: Self.displayUnderMouse())
     }
 
     private func startRegionRecording(globalRect: CGRect, displayID: CGDirectDisplayID) {
@@ -263,11 +321,44 @@ final class CaptureCoordinator {
     /// Region / window capture with the CleanShot-style action bar. The bar lets the user pick the
     /// outcome (capture / annotate / copy / save / record) per selection instead of always running
     /// the configured default. A window click has no bar and uses the configured after-action.
+    /// All-in-One (CleanShot-style): one entry that selects a region or window with the full action
+    /// bar (capture / annotate / copy / save / record) and restores your last selection so you can
+    /// re-shoot the same area with a single Return. Shift still locks the drag to a square.
+    func captureAllInOne(afterDelay: Bool = true) {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureAllInOne(afterDelay: false) }) { return }
+        isCapturing = true
+        let restore = lastRegion?.rect
+        Task {
+            do {
+                let frozen = try await frozenDisplays()
+                let content = try await engine.shareableContent()
+                overlay.present(
+                    frozen: frozen,
+                    windows: content.windows,
+                    magnifierEnabled: Preferences.magnifierEnabled,
+                    windowSelection: true,
+                    toolbarActions: [.capture, .annotate, .copy, .save, .record],
+                    restoreSelection: restore,
+                    onRegion: { [weak self] image, globalRect, displayID, action in
+                        self?.handleRegionAction(image, globalRect: globalRect, displayID: displayID, action: action)
+                    },
+                    onWindow: { [weak self] id in self?.captureWindow(id) },
+                    onCancel: { [weak self] in self?.isCapturing = false }
+                )
+            } catch {
+                isCapturing = false
+                handleError(error)
+            }
+        }
+    }
+
     private func beginRegionCapture(windowSelection: Bool) {
         isCapturing = true
         Task {
             do {
-                let frozen = try await engine.freezeAllDisplays()
+                let frozen = try await frozenDisplays()
                 let content = try await engine.shareableContent()
                 overlay.present(
                     frozen: frozen,
@@ -350,7 +441,15 @@ final class CaptureCoordinator {
         let displayID = Self.displayUnderMouse()
         Task {
             do {
-                let image = try await engine.captureDisplay(displayID)
+                let hideIcons = Preferences.hideDesktopIcons
+                if hideIcons {
+                    DesktopIconHider.shared.hide()
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                let image: CapturedImage
+                do { image = try await engine.captureDisplay(displayID) }
+                catch { if hideIcons { DesktopIconHider.shared.show() }; throw error }
+                if hideIcons { DesktopIconHider.shared.show() }
                 finish(image, mode: .fullDisplay)
             } catch {
                 isCapturing = false
@@ -392,6 +491,8 @@ final class CaptureCoordinator {
         let action = Preferences.afterCaptureAction
         if action.copies { PasteboardWriter.copy(output.cgImage) }
         if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+        // Auto-upload + copy the share link (overwrites the image on the pasteboard, CleanShot-style).
+        if Preferences.uploadAfterCapture, CloudUploadService.isEnabled { CloudUploadService.upload(output.cgImage) }
 
         Task {
             // Always persist a durable file; reveal it from the preview.

@@ -24,6 +24,8 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
                         iconStyle: .solid(SettingsColor(hex: 0xBF5AF2))),
             SettingsTab(id: "output", title: "Output", icon: "square.and.arrow.down",
                         iconStyle: .solid(SettingsColor(hex: 0x30D158))),
+            SettingsTab(id: "cloud", title: "Cloud", icon: "icloud.and.arrow.up",
+                        iconStyle: .solid(SettingsColor(hex: 0x64D2FF))),
             SettingsTab(id: "advanced", title: "Advanced", icon: "slider.horizontal.3",
                         iconStyle: .solid(SettingsColor(hex: 0x8E8E93))),
             SettingsTab(id: "about", title: "About", icon: "info.circle.fill",
@@ -65,11 +67,87 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
             case "editor": return EditorSettingsTab()
             case "beautify": return BeautifySettingsTab()
             case "output": return OutputSettingsTab()
+            case "cloud": return CloudSettingsTab()
             case "advanced": return AdvancedSettingsTab()
             default: return AboutSettingsTab()
             }
         }
     )
+}
+
+// MARK: - Cloud
+
+final class CloudSettingsTab: SettingsTabViewController {
+    override func setupContent() {
+        let providerSection = addSection(title: "Provider", anchor: "cloud.provider")
+        let provider = NSPopUpButton()
+        for p in CloudProvider.allCases { provider.addItem(withTitle: p.presentableName) }
+        provider.selectItem(at: CloudProvider.allCases.firstIndex(of: Preferences.cloudProvider) ?? 0)
+        provider.target = self
+        provider.action = #selector(changeProvider(_:))
+        addRow(to: providerSection, title: "Upload to",
+               subtitle: "CleanShot Cloud is proprietary; bring your own S3-compatible storage or use imgbb.",
+               accessory: provider)
+
+        let auto = NSSwitch()
+        auto.state = Preferences.uploadAfterCapture ? .on : .off
+        auto.target = self
+        auto.action = #selector(toggleAuto(_:))
+        addRow(to: providerSection, title: "Upload after capture",
+               subtitle: "Automatically upload every capture and copy the link.", accessory: auto)
+
+        let s3 = addSection(title: "S3 / R2", anchor: "cloud.s3")
+        addRow(to: s3, title: "Access Key ID", subtitle: "Your S3/R2 access key.",
+               accessory: field(Preferences.s3Config.accessKey, #selector(s3AccessKey(_:)), secure: false))
+        addRow(to: s3, title: "Secret Access Key", subtitle: "Stored in the Keychain.",
+               accessory: field(Preferences.s3SecretKey, #selector(s3Secret(_:)), secure: true))
+        addRow(to: s3, title: "Bucket", subtitle: "Destination bucket name.",
+               accessory: field(Preferences.s3Config.bucket, #selector(s3Bucket(_:)), secure: false))
+        addRow(to: s3, title: "Region", subtitle: "e.g. us-east-1 (S3) or auto (R2).",
+               accessory: field(Preferences.s3Config.region, #selector(s3Region(_:)), secure: false))
+        addRow(to: s3, title: "Endpoint host", subtitle: "e.g. s3.amazonaws.com or <acct>.r2.cloudflarestorage.com.",
+               accessory: field(Preferences.s3Config.endpointHost, #selector(s3Endpoint(_:)), secure: false))
+        addRow(to: s3, title: "Public base URL", subtitle: "Optional, e.g. https://cdn.example.com — the share link uses this.",
+               accessory: field(Preferences.s3Config.publicBaseURL, #selector(s3PublicURL(_:)), secure: false))
+        let pathStyle = NSSwitch()
+        pathStyle.state = Preferences.s3Config.usePathStyle ? .on : .off
+        pathStyle.target = self
+        pathStyle.action = #selector(s3PathStyle(_:))
+        addRow(to: s3, title: "Path-style URLs", subtitle: "On for R2 / MinIO; off for AWS virtual-hosted.", accessory: pathStyle)
+        let acl = NSSwitch()
+        acl.state = Preferences.s3Config.setPublicACL ? .on : .off
+        acl.target = self
+        acl.action = #selector(s3ACL(_:))
+        addRow(to: s3, title: "Set public-read ACL", subtitle: "On for AWS S3 public objects; off for R2.", accessory: acl)
+
+        let imgbb = addSection(title: "imgbb", anchor: "cloud.imgbb")
+        addRow(to: imgbb, title: "API Key", subtitle: "From your imgbb.com account.",
+               accessory: field(Preferences.imgbbAPIKey, #selector(imgbbKey(_:)), secure: true))
+    }
+
+    private func field(_ value: String, _ action: Selector, secure: Bool) -> NSTextField {
+        let f = secure ? NSSecureTextField() : NSTextField()
+        f.stringValue = value
+        f.target = self
+        f.action = action
+        f.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        return f
+    }
+
+    @objc private func changeProvider(_ sender: NSPopUpButton) {
+        let i = sender.indexOfSelectedItem
+        if CloudProvider.allCases.indices.contains(i) { Preferences.cloudProvider = CloudProvider.allCases[i] }
+    }
+    @objc private func toggleAuto(_ sender: NSSwitch) { Preferences.uploadAfterCapture = (sender.state == .on) }
+    @objc private func s3AccessKey(_ s: NSTextField) { var c = Preferences.s3Config; c.accessKey = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3Secret(_ s: NSTextField) { Preferences.s3SecretKey = s.stringValue }
+    @objc private func s3Bucket(_ s: NSTextField) { var c = Preferences.s3Config; c.bucket = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3Region(_ s: NSTextField) { var c = Preferences.s3Config; c.region = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3Endpoint(_ s: NSTextField) { var c = Preferences.s3Config; c.endpointHost = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3PublicURL(_ s: NSTextField) { var c = Preferences.s3Config; c.publicBaseURL = s.stringValue; Preferences.s3Config = c }
+    @objc private func s3PathStyle(_ s: NSSwitch) { var c = Preferences.s3Config; c.usePathStyle = (s.state == .on); Preferences.s3Config = c }
+    @objc private func s3ACL(_ s: NSSwitch) { var c = Preferences.s3Config; c.setPublicACL = (s.state == .on); Preferences.s3Config = c }
+    @objc private func imgbbKey(_ s: NSTextField) { Preferences.imgbbAPIKey = s.stringValue }
 }
 
 // MARK: - General
@@ -125,6 +203,9 @@ final class GeneralSettingsTab: SettingsTabViewController {
 final class ShortcutsSettingsTab: SettingsTabViewController {
     override func setupContent() {
         let section = addSection(title: "Capture", anchor: "shortcuts.capture")
+        addRecorder(to: section, title: "All-in-One Capture",
+                    subtitle: "Region or window with the full action bar; restores your last selection.",
+                    name: .allInOne, searchItemID: "shortcuts.allInOne")
         addRecorder(to: section, title: "Quick Screenshot",
                     subtitle: "Select an area; deliver it instantly (no action bar).", name: .quickScreenshot,
                     searchItemID: "shortcuts.quick")
@@ -156,6 +237,9 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
                     searchItemID: nil)
         addRecorder(to: recording, title: "Record Region",
                     subtitle: "Select an area and record just that.", name: .recordRegion,
+                    searchItemID: nil)
+        addRecorder(to: recording, title: "Record Window",
+                    subtitle: "Click a window to record just that window.", name: .recordWindow,
                     searchItemID: nil)
         addRecorder(to: recording, title: "Record GIF",
                     subtitle: "Record the display to an animated GIF.", name: .recordGIF,
@@ -192,6 +276,24 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: behavior, title: "Downscale Retina to 1×",
                subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
 
+        let hideIcons = NSSwitch()
+        hideIcons.state = Preferences.hideDesktopIcons ? .on : .off
+        hideIcons.target = self
+        hideIcons.action = #selector(toggleHideDesktopIcons(_:))
+        addRow(to: behavior, title: "Hide desktop icons",
+               subtitle: "Cover desktop icons with the wallpaper during captures and recordings (no Finder relaunch).",
+               accessory: hideIcons)
+
+        let timer = addSection(title: "Self-Timer", anchor: "capture.timer")
+        let delay = NSPopUpButton()
+        for option in Self.delayOptions { delay.addItem(withTitle: Self.delayTitle(option)) }
+        delay.selectItem(withTitle: Self.delayTitle(Preferences.captureDelaySeconds))
+        delay.target = self
+        delay.action = #selector(changeDelay(_:))
+        addRow(to: timer, title: "Countdown before capture",
+               subtitle: "Wait before a screenshot fires so you can open menus or arrange windows. Press Esc to cancel.",
+               accessory: delay)
+
         let history = addSection(title: "Capture History", anchor: "capture.history")
         let retention = NSPopUpButton()
         for option in CaptureHistoryRetention.allCases { retention.addItem(withTitle: option.presentableName) }
@@ -218,6 +320,15 @@ final class CaptureSettingsTab: SettingsTabViewController {
     }
 
     @objc private func toggleDownscale(_ sender: NSSwitch) { Preferences.downscaleRetina = (sender.state == .on) }
+    @objc private func toggleHideDesktopIcons(_ sender: NSSwitch) { Preferences.hideDesktopIcons = (sender.state == .on) }
+
+    static let delayOptions = [0, 3, 5, 10]
+    static func delayTitle(_ seconds: Int) -> String { seconds == 0 ? "Off" : "\(seconds) seconds" }
+
+    @objc private func changeDelay(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if Self.delayOptions.indices.contains(index) { Preferences.captureDelaySeconds = Self.delayOptions[index] }
+    }
 }
 
 // MARK: - Overlay
@@ -310,11 +421,33 @@ final class RecordingSettingsTab: SettingsTabViewController {
         fps.action = #selector(changeFPS(_:))
         addRow(to: quality, title: "Frame rate",
                subtitle: "Higher is smoother; lower makes smaller files.", accessory: fps)
+
+        let focus = addSection(title: "Focus", anchor: "recording.focus")
+        let startField = NSTextField(string: Preferences.focusShortcutStart)
+        startField.placeholderString = "Shortcut name"
+        startField.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        startField.target = self
+        startField.action = #selector(focusStartChanged(_:))
+        addRow(to: focus, title: "Run Shortcut on start",
+               subtitle: "macOS has no direct Focus API — name a Shortcut (e.g. one that turns on a Focus) to run when recording starts.",
+               accessory: startField)
+
+        let stopField = NSTextField(string: Preferences.focusShortcutStop)
+        stopField.placeholderString = "Shortcut name"
+        stopField.widthAnchor.constraint(equalToConstant: 170).isActive = true
+        stopField.target = self
+        stopField.action = #selector(focusStopChanged(_:))
+        addRow(to: focus, title: "Run Shortcut on stop",
+               subtitle: "Runs when recording stops (e.g. to turn the Focus back off).",
+               accessory: stopField)
     }
 
     @objc private func changeFPS(_ sender: NSPopUpButton) {
         Preferences.recordingFPS = sender.indexOfSelectedItem == 0 ? 30 : 60
     }
+
+    @objc private func focusStartChanged(_ sender: NSTextField) { Preferences.focusShortcutStart = sender.stringValue }
+    @objc private func focusStopChanged(_ sender: NSTextField) { Preferences.focusShortcutStop = sender.stringValue }
 
     @objc private func toggleRecordAudio(_ sender: NSSwitch) { Preferences.recordSystemAudio = (sender.state == .on) }
     @objc private func toggleRecordMic(_ sender: NSSwitch) { Preferences.recordMicrophone = (sender.state == .on) }

@@ -49,6 +49,11 @@ nonisolated struct CodableAnnotation: Codable, Sendable {
     var zoom: Double?       // loupe
     var rotation: Double?   // any element, radians
     var imagePNG: Data?     // composed image (base64 in JSON)
+    var points: [CGPoint]?  // pen / marker freehand stroke
+    var tiled: Bool?        // watermark
+    var opacity: Double?    // watermark
+    var textFlags: Int?     // text: bold=1 italic=2 underline=4 strike=8 outline=16
+    var textBackground: CodableColor?  // text highlight
 }
 
 nonisolated struct AnnotationProject: Codable, Sendable {
@@ -117,9 +122,31 @@ enum AnnotationProjectIO {
         case let x as PixelateElement:  return twoPoint("pixelate", x)
         case let x as BlurElement:      return twoPoint("blur", x)
         case let x as BlackoutElement:  return twoPoint("blackout", x)
+        case let x as SmartEraseElement: return twoPoint("erase", x)
         case let x as SpotlightElement: return twoPoint("spotlight", x)
+        case let x as MarkerElement:
+            return CodableAnnotation(kind: "marker", style: style, points: x.points)
+        case let x as PenElement:
+            return CodableAnnotation(kind: "pen", style: style, points: x.points)
+        case let x as WatermarkElement:
+            // `end` carries the image size (width, height) so the tiled pattern restores correctly.
+            var record = CodableAnnotation(kind: "watermark", style: style, start: x.anchor,
+                                           end: CGPoint(x: x.imageSize.width, y: x.imageSize.height),
+                                           text: x.text)
+            record.tiled = x.tiled
+            record.opacity = Double(x.opacity)
+            return record
         case let x as TextElement:
-            return CodableAnnotation(kind: "text", style: style, origin: x.origin, text: x.text)
+            var record = CodableAnnotation(kind: "text", style: style, origin: x.origin, text: x.text)
+            var flags = 0
+            if x.format.bold { flags |= 1 }
+            if x.format.italic { flags |= 2 }
+            if x.format.underline { flags |= 4 }
+            if x.format.strikethrough { flags |= 8 }
+            if x.format.outlined { flags |= 16 }
+            record.textFlags = flags == 0 ? nil : flags
+            if let bg = x.format.background { record.textBackground = CodableColor(bg) }
+            return record
         case let x as StepElement:
             return CodableAnnotation(kind: "step", style: style, center: x.center, number: x.number,
                                      stepFormat: x.format.rawValue, stepStart: x.start)
@@ -168,8 +195,30 @@ enum AnnotationProjectIO {
         case "pixelate":  return twoPoint(PixelateElement.self)
         case "blur":      return twoPoint(BlurElement.self)
         case "blackout":  return twoPoint(BlackoutElement.self)
+        case "erase":     return twoPoint(SmartEraseElement.self)
         case "spotlight": return twoPoint(SpotlightElement.self)
-        case "text":      return TextElement(origin: c.origin ?? .zero, text: c.text ?? "", style: style)
+        case "pen", "marker":
+            let pts = c.points ?? []
+            let pen: PenElement = c.kind == "marker"
+                ? MarkerElement(start: pts.first ?? .zero, style: style)
+                : PenElement(start: pts.first ?? .zero, style: style)
+            if !pts.isEmpty { pen.points = pts }
+            return pen
+        case "watermark":
+            let size = c.end.map { CGSize(width: $0.x, height: $0.y) } ?? .zero
+            return WatermarkElement(text: c.text ?? "", tiled: c.tiled ?? true,
+                                    anchor: c.start ?? .zero, imageSize: size, style: style,
+                                    opacity: CGFloat(c.opacity ?? 0.22))
+        case "text":
+            var fmt = TextFormatting()
+            let flags = c.textFlags ?? 0
+            fmt.bold = flags & 1 != 0
+            fmt.italic = flags & 2 != 0
+            fmt.underline = flags & 4 != 0
+            fmt.strikethrough = flags & 8 != 0
+            fmt.outlined = flags & 16 != 0
+            fmt.background = c.textBackground?.nsColor
+            return TextElement(origin: c.origin ?? .zero, text: c.text ?? "", style: style, format: fmt)
         case "step":
             return StepElement(center: c.center ?? .zero, number: c.number ?? 1, style: style,
                                format: StepFormat(rawValue: c.stepFormat ?? "decimal") ?? .decimal,

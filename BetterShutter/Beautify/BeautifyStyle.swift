@@ -5,6 +5,8 @@ import AppKit
 enum BackgroundFill {
     case solid(NSColor)
     case gradient([NSColor], angleDegrees: CGFloat)
+    /// Soft multi-color mesh — several radial color blobs blended over a base (macshot-style).
+    case mesh([NSColor])
     case image(CGImage)
 }
 
@@ -44,6 +46,42 @@ struct BackgroundPreset: Identifiable {
                          fill: .gradient([hex(0xFFDEE9), hex(0xB5FFFC)], angleDegrees: 30)),
         BackgroundPreset(id: "graphite", name: "Graphite",
                          fill: .solid(hex(0x1C1C1E))),
+        // More linear gradients.
+        BackgroundPreset(id: "lavender", name: "Lavender",
+                         fill: .gradient([hex(0xC471F5), hex(0xFA71CD)], angleDegrees: 45)),
+        BackgroundPreset(id: "lagoon", name: "Lagoon",
+                         fill: .gradient([hex(0x43E97B), hex(0x38F9D7)], angleDegrees: 45)),
+        BackgroundPreset(id: "dusk", name: "Dusk",
+                         fill: .gradient([hex(0x4B6CB7), hex(0x182848)], angleDegrees: 60)),
+        BackgroundPreset(id: "flare", name: "Flare",
+                         fill: .gradient([hex(0xF83600), hex(0xFE8C00)], angleDegrees: 45)),
+        BackgroundPreset(id: "royal", name: "Royal",
+                         fill: .gradient([hex(0x141E30), hex(0x243B55)], angleDegrees: 60)),
+        BackgroundPreset(id: "bubblegum", name: "Bubblegum",
+                         fill: .gradient([hex(0xFF9A9E), hex(0xFAD0C4)], angleDegrees: 30)),
+        BackgroundPreset(id: "forest", name: "Forest",
+                         fill: .gradient([hex(0x134E5E), hex(0x71B280)], angleDegrees: 45)),
+        BackgroundPreset(id: "plum", name: "Plum",
+                         fill: .gradient([hex(0x614385), hex(0x516395)], angleDegrees: 60)),
+        BackgroundPreset(id: "coral", name: "Coral",
+                         fill: .gradient([hex(0xFF7E5F), hex(0xFEB47B)], angleDegrees: 45)),
+        BackgroundPreset(id: "sky", name: "Sky",
+                         fill: .gradient([hex(0x56CCF2), hex(0x2F80ED)], angleDegrees: 60)),
+        BackgroundPreset(id: "snow", name: "Snow",
+                         fill: .solid(hex(0xFFFFFF))),
+        // Mesh gradients (multi-blob).
+        BackgroundPreset(id: "mesh-nebula", name: "Nebula",
+                         fill: .mesh([hex(0x4158D0), hex(0xC850C0), hex(0xFFCC70), hex(0x2A2A72)])),
+        BackgroundPreset(id: "mesh-pastel", name: "Pastel Mesh",
+                         fill: .mesh([hex(0xA9C9FF), hex(0xFFBBEC), hex(0xC2FFD8), hex(0xFFF3B0)])),
+        BackgroundPreset(id: "mesh-sunrise", name: "Sunrise Mesh",
+                         fill: .mesh([hex(0xFF3CAC), hex(0x784BA0), hex(0x2B86C5), hex(0xFFB75E)])),
+        BackgroundPreset(id: "mesh-aurora", name: "Aurora Mesh",
+                         fill: .mesh([hex(0x00DBDE), hex(0xFC00FF), hex(0x00C9FF), hex(0x92FE9D)])),
+        BackgroundPreset(id: "mesh-ember", name: "Ember Mesh",
+                         fill: .mesh([hex(0xF12711), hex(0xF5AF19), hex(0xFF512F), hex(0xDD2476)])),
+        BackgroundPreset(id: "mesh-mint", name: "Mint Mesh",
+                         fill: .mesh([hex(0x11998E), hex(0x38EF7D), hex(0x56CCF2), hex(0xC2FFD8)])),
     ]
 
     static func hex(_ value: UInt32) -> NSColor {
@@ -53,6 +91,21 @@ struct BackgroundPreset: Identifiable {
             blue: CGFloat(value & 0xFF) / 255,
             alpha: 1
         )
+    }
+}
+
+/// Optional 3D perspective tilt applied to the screenshot card for a mockup look.
+enum BeautifyPerspective: Int, CaseIterable, Sendable {
+    case none
+    case left
+    case right
+
+    var presentableName: String {
+        switch self {
+        case .none: return "Flat"
+        case .left: return "Tilt Left"
+        case .right: return "Tilt Right"
+        }
     }
 }
 
@@ -84,6 +137,8 @@ struct BeautifyStyle {
     /// Output aspect ratio (width / height). Nil keeps the natural padded size; otherwise the canvas
     /// is enlarged on one axis and the card centered ("auto-balanced" composition).
     var targetAspect: CGFloat?
+    /// 3D tilt applied to the card (Snapzy-style mockup). `.none` keeps it flat.
+    var perspective: BeautifyPerspective
 
     static func makeDefault() -> BeautifyStyle {
         BeautifyStyle(
@@ -93,7 +148,8 @@ struct BeautifyStyle {
             shadow: true,
             shadowFraction: 0.05,
             windowFrame: .none,
-            targetAspect: nil
+            targetAspect: nil,
+            perspective: .none
         )
     }
 }

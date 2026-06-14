@@ -5,6 +5,7 @@ import AppKit
 nonisolated enum CodableBackgroundFill: Codable, Sendable {
     case solid(r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)
     case gradient(colors: [[CGFloat]], angle: CGFloat)
+    case mesh(colors: [[CGFloat]])
 }
 
 /// A persisted, named beautify configuration the user re-applies with one click. Stored as JSON in
@@ -20,6 +21,8 @@ nonisolated struct BeautifyPreset: Codable, Identifiable, Sendable {
     var shadowFraction: CGFloat
     var windowFrame: Int
     var targetAspect: CGFloat?
+    /// Optional; absent in presets saved before 3D mockups existed (decodes to flat).
+    var perspective: Int?
 
     var id: String { name }
 }
@@ -36,20 +39,27 @@ extension CodableBackgroundFill {
                 .map { [$0.redComponent, $0.greenComponent, $0.blueComponent, $0.alphaComponent] }
             guard !comps.isEmpty else { return nil }
             self = .gradient(colors: comps, angle: angle)
+        case .mesh(let colors):
+            let comps = colors.compactMap { $0.usingColorSpace(.sRGB) }
+                .map { [$0.redComponent, $0.greenComponent, $0.blueComponent, $0.alphaComponent] }
+            guard !comps.isEmpty else { return nil }
+            self = .mesh(colors: comps)
         case .image:
             return nil
         }
     }
 
     var fill: BackgroundFill {
+        func color(_ c: [CGFloat]) -> NSColor {
+            NSColor(srgbRed: c[0], green: c[1], blue: c[2], alpha: c.count > 3 ? c[3] : 1)
+        }
         switch self {
         case .solid(let r, let g, let b, let a):
             return .solid(NSColor(srgbRed: r, green: g, blue: b, alpha: a))
         case .gradient(let colors, let angle):
-            let ns = colors.map { c in
-                NSColor(srgbRed: c[0], green: c[1], blue: c[2], alpha: c.count > 3 ? c[3] : 1)
-            }
-            return .gradient(ns, angleDegrees: angle)
+            return .gradient(colors.map(color), angleDegrees: angle)
+        case .mesh(let colors):
+            return .mesh(colors.map(color))
         }
     }
 }
@@ -65,6 +75,7 @@ extension BeautifyPreset {
         self.shadowFraction = style.shadowFraction
         self.windowFrame = style.windowFrame.rawValue
         self.targetAspect = style.targetAspect
+        self.perspective = style.perspective.rawValue
     }
 
     /// A copy of `style` with this preset's parameters applied. The background is replaced only when
@@ -78,6 +89,7 @@ extension BeautifyPreset {
         s.shadowFraction = shadowFraction
         s.windowFrame = WindowFrame(rawValue: windowFrame) ?? .none
         s.targetAspect = targetAspect
+        s.perspective = BeautifyPerspective(rawValue: perspective ?? 0) ?? .none
         return s
     }
 }

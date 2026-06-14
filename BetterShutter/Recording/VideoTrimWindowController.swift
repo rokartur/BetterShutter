@@ -14,6 +14,14 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     private let startSlider = NSSlider()
     private let endSlider = NSSlider()
     private let rangeLabel = NSTextField(labelWithString: "")
+    private let bgPopup = NSPopUpButton()
+    private let sizePopup = NSPopUpButton()
+    private let paddingSlider = NSSlider(value: 0.08, minValue: 0, maxValue: 0.2, target: nil, action: nil)
+    // Background options offered for video framing (a curated subset of the beautify library).
+    private let bgPresets = BackgroundPreset.all
+    private let sizeOptions: [(String, CGFloat?)] = [("Original", nil), ("720p", 720), ("1080p", 1080), ("1440p", 1440)]
+    private let followMouseToggle = NSButton(checkboxWithTitle: "Follow Mouse", target: nil, action: nil)
+    private var cursorTrack: CursorTrack?
 
     init(url: URL) {
         self.url = url
@@ -22,6 +30,7 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        cursorTrack = CursorTrack.load(for: url)
         Task {
             let asset = AVURLAsset(url: url)
             duration = (try? await asset.load(.duration).seconds) ?? 0
@@ -34,7 +43,7 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     private func build() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "Trim Video"
+        window.title = "Edit Video"
         window.delegate = self
         window.center()
         let content = NSView()
@@ -55,17 +64,35 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         rangeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         rangeLabel.textColor = .secondaryLabelColor
 
+        // Background framing controls (wallpaper bg + padding + output size).
+        bgPopup.removeAllItems()
+        bgPopup.addItem(withTitle: "No Background")
+        for preset in bgPresets { bgPopup.addItem(withTitle: preset.name) }
+        sizePopup.removeAllItems()
+        for (title, _) in sizeOptions { sizePopup.addItem(withTitle: title) }
+        paddingSlider.translatesAutoresizingMaskIntoConstraints = false
+        paddingSlider.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        followMouseToggle.isEnabled = (cursorTrack != nil)
+        followMouseToggle.toolTip = cursorTrack == nil
+            ? "Available for full-screen recordings (no cursor track found)"
+            : "Auto-zoom toward the cursor"
+        let bgRow = NSStackView(views: [
+            label2("Background"), bgPopup, label2("Padding"), paddingSlider, label2("Size"), sizePopup,
+            followMouseToggle,
+        ])
+        bgRow.spacing = 6
+        bgRow.translatesAutoresizingMaskIntoConstraints = false
+
         let export = NSButton(title: "Save Trimmed", target: self, action: #selector(exportTapped))
-        if #available(macOS 26.0, *) {
-            export.bezelStyle = .glass
-        } else {
-            export.bezelStyle = .rounded
+        let beautify = NSButton(title: "Save with Background", target: self, action: #selector(exportBeautifiedTapped))
+        for b in [export, beautify] {
+            if #available(macOS 26.0, *) { b.bezelStyle = .glass } else { b.bezelStyle = .rounded }
         }
         export.keyEquivalent = "\r"
-        let bottom = NSStackView(views: [rangeLabel, NSView(), export])
+        let bottom = NSStackView(views: [rangeLabel, NSView(), beautify, export])
         bottom.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [startRow, endRow, bottom])
+        let stack = NSStackView(views: [startRow, endRow, bgRow, bottom])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -88,7 +115,7 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
             controlBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
             // Fixed height (not tied to the stack) avoids a layout-recursion loop with the glass
             // view re-laying out its contentView.
-            controlBar.heightAnchor.constraint(equalToConstant: 116),
+            controlBar.heightAnchor.constraint(equalToConstant: 150),
             stack.leadingAnchor.constraint(equalTo: controlBar.contentView.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: controlBar.contentView.trailingAnchor, constant: -16),
             stack.centerYAnchor.constraint(equalTo: controlBar.contentView.centerYAnchor),
@@ -96,6 +123,13 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         ])
         rangeChanged()
         self.window = window
+    }
+
+    private func label2(_ text: String) -> NSTextField {
+        let l = NSTextField(labelWithString: text)
+        l.font = .systemFont(ofSize: 11)
+        l.textColor = .secondaryLabelColor
+        return l
     }
 
     private func labeledRow(_ title: String, _ slider: NSSlider) -> NSStackView {
@@ -136,6 +170,34 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
                 } else {
                     HUD.show("Trim failed")
                 }
+            }
+        }
+    }
+
+    @objc private func exportBeautifiedTapped() {
+        let bgIndex = bgPopup.indexOfSelectedItem - 1   // 0 = "No Background"
+        guard bgPresets.indices.contains(bgIndex) else { HUD.show("Pick a background"); return }
+        let background = bgPresets[bgIndex].fill
+        let sizeIndex = sizePopup.indexOfSelectedItem
+        let targetHeight = sizeOptions.indices.contains(sizeIndex) ? sizeOptions[sizeIndex].1 : nil
+        let follow = (followMouseToggle.state == .on) && (cursorTrack != nil)
+        let options = VideoBeautify.Options(background: background,
+                                            paddingFraction: CGFloat(paddingSlider.doubleValue),
+                                            targetHeight: targetHeight,
+                                            cursorTrack: cursorTrack,
+                                            followZoom: follow ? 2.0 : 1)
+        let range = CMTimeRange(
+            start: CMTime(seconds: startSlider.doubleValue, preferredTimescale: 600),
+            end: CMTime(seconds: endSlider.doubleValue, preferredTimescale: 600)
+        )
+        let out = url.deletingPathExtension().appendingPathExtension("framed.mp4")
+        HUD.show("Rendering…", duration: 1.0)
+        Task {
+            let result = await VideoBeautify.export(url: url, options: options, timeRange: range, to: out)
+            if let result {
+                NSWorkspace.shared.activateFileViewerSelecting([result])
+            } else {
+                HUD.show("Export failed")
             }
         }
     }

@@ -6,6 +6,9 @@ import BetterShortcuts
 @MainActor
 enum HotKeyBridge {
     static func install() {
+        BetterShortcuts.onKeyDown(for: .allInOne) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.captureAllInOne() }
+        }
         BetterShortcuts.onKeyDown(for: .quickScreenshot) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.captureQuick() }
         }
@@ -36,12 +39,16 @@ enum HotKeyBridge {
         BetterShortcuts.onKeyDown(for: .recordRegion) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.recordRegion() }
         }
+        BetterShortcuts.onKeyDown(for: .recordWindow) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.recordWindow() }
+        }
         BetterShortcuts.onKeyDown(for: .recordGIF) {
             MainActor.assumeIsolated { RecordingController.shared.toggleGIF() }
         }
 
         // Friendly labels in the recorder's conflict alert.
         BetterShortcuts.displayName = { name in
+            if name == .allInOne { return "All-in-One Capture" }
             if name == .quickScreenshot { return "Quick Screenshot" }
             if name == .screenshotEdit { return "Screenshot & Markup" }
             if name == .captureRegion { return "Capture Region" }
@@ -52,6 +59,7 @@ enum HotKeyBridge {
             if name == .captureScrolling { return "Scrolling Capture" }
             if name == .toggleRecording { return "Start / Stop Recording" }
             if name == .recordRegion { return "Record Region" }
+            if name == .recordWindow { return "Record Window" }
             if name == .recordGIF { return "Record GIF" }
             return name.rawValue
         }

@@ -13,8 +13,9 @@ struct BetterShutterTests {
         #expect(configuration.tabs.contains { $0.id == "general" })
         #expect(configuration.tabs.contains { $0.id == "shortcuts" })
         #expect(configuration.tabs.contains { $0.id == "capture" })
-        #expect(configuration.tabs.contains { $0.id == "annotation" })
+        #expect(configuration.tabs.contains { $0.id == "editor" })
         #expect(configuration.tabs.contains { $0.id == "beautify" })
+        #expect(configuration.tabs.contains { $0.id == "cloud" })
         #expect(configuration.tabs.contains { $0.id == "advanced" })
     }
 }
@@ -445,10 +446,13 @@ struct PIIMatcherTests {
 struct URLCommandTests {
     @Test
     func parsesKnownHosts() {
+        #expect(URLCommand.parse(URL(string: "bettershutter://all-in-one")!) == .allInOne)
         #expect(URLCommand.parse(URL(string: "bettershutter://capture-region")!) == .captureRegion)
         #expect(URLCommand.parse(URL(string: "bettershutter://scrolling-capture")!) == .captureScrolling)
         #expect(URLCommand.parse(URL(string: "bettershutter://record-gif")!) == .recordGIF)
+        #expect(URLCommand.parse(URL(string: "bettershutter://record-window")!) == .recordWindow)
         #expect(URLCommand.parse(URL(string: "bettershutter://pin")!) == .pinLast)
+        #expect(URLCommand.parse(URL(string: "bettershutter://upload-last")!) == .uploadLast)
     }
 
     @Test
@@ -672,18 +676,26 @@ struct MeasureElementTests {
     }
 }
 
+@MainActor
 struct PixelateScaleTests {
+    // NOTE: re-pointed from a removed `secureScale(width:height:)` API to the current
+    // `blockSize(strength:imageSize:)`, which drives mosaic coarseness from the strength slider
+    // scaled to the image (not the region) with an 8px floor.
     @Test
-    func thinStripGetsCoarseFloor() {
-        // A 200×20 text strip must still be averaged into ≥16px blocks (not the old 8px).
-        #expect(PixelateElement.secureScale(width: 200, height: 20) == 16)
+    func weakestStrengthStillFloorsToEightPx() {
+        // Even strength 0 averages into at least an 8px block so faint text can't be reconstructed.
+        #expect(PixelateElement.blockSize(strength: 0, imageSize: CGSize(width: 200, height: 20)) == 8)
     }
 
     @Test
-    func largeRegionScalesUp() {
-        let scale = PixelateElement.secureScale(width: 600, height: 480)
-        #expect(scale == 80)            // min dim 480 / 6
-        #expect(scale > 16)
+    func blockScalesWithStrengthAndImage() {
+        // Small image: min dim 160/8 = 20 < 40 floor → 40 at full strength.
+        let small = PixelateElement.blockSize(strength: 1, imageSize: CGSize(width: 200, height: 160))
+        #expect(small == 40)
+        // Large image: min dim 480/8 = 60 → 60 at full strength, and coarser than the small image.
+        let large = PixelateElement.blockSize(strength: 1, imageSize: CGSize(width: 800, height: 480))
+        #expect(large == 60)
+        #expect(large > small)
     }
 }
 
@@ -812,6 +824,390 @@ struct BeautifyPresetTests {
         } else {
             Issue.record("expected solid background")
         }
+    }
+}
+
+@MainActor
+struct SmartEraseTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func flattenKeepsSizeAndClones() {
+        let base = makeSolidTestImage(width: 60, height: 50)
+        let erase = SmartEraseElement(start: CGPoint(x: 10, y: 10), style: style)
+        erase.updateDrag(to: CGPoint(x: 40, y: 35))
+        let out = AnnotationRenderer.flatten(base: base, elements: [erase], ciContext: CIContext())
+        #expect(out?.width == 60 && out?.height == 50)
+        #expect(erase.clone() is SmartEraseElement)
+    }
+
+    @Test
+    func borderAverageMatchesSolidBackground() {
+        // makeSolidTestImage paints solid blue → the border ring averages to blue.
+        let base = makeSolidTestImage(width: 40, height: 40)
+        let color = SmartEraseElement.borderAverageColor(
+            of: base, region: CGRect(x: 12, y: 12, width: 16, height: 16),
+            imageSize: CGSize(width: 40, height: 40), ciContext: CIContext())
+        let comps = color.components ?? []
+        #expect(comps.count >= 3)
+        #expect(comps[2] > 0.8)   // blue dominant
+        #expect(comps[0] < 0.2)   // little red
+    }
+}
+
+@MainActor
+struct TextFormattingTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func projectRoundTripPreservesFormatting() throws {
+        let base = makeSolidTestImage(width: 60, height: 40)
+        var fmt = TextFormatting()
+        fmt.bold = true; fmt.underline = true; fmt.outlined = true
+        fmt.background = NSColor.systemYellow.withAlphaComponent(0.4)
+        let text = TextElement(origin: CGPoint(x: 4, y: 5), text: "Hi", style: style, format: fmt)
+        let project = try #require(AnnotationProjectIO.make(base: base, elements: [text]))
+        let decoded = try JSONDecoder().decode(AnnotationProject.self, from: JSONEncoder().encode(project))
+        let back = try #require(AnnotationProjectIO.elements(decoded).first as? TextElement)
+        #expect(back.format.bold && back.format.underline && back.format.outlined)
+        #expect(!back.format.italic && !back.format.strikethrough)
+        #expect(back.format.background != nil)
+    }
+
+    @Test
+    func flattenWithFormattedTextKeepsSize() {
+        let base = makeSolidTestImage(width: 80, height: 40)
+        var fmt = TextFormatting()
+        fmt.strikethrough = true; fmt.italic = true
+        let text = TextElement(origin: CGPoint(x: 5, y: 10), text: "abc", style: style, format: fmt)
+        let out = AnnotationRenderer.flatten(base: base, elements: [text], ciContext: CIContext())
+        #expect(out?.width == 80 && out?.height == 40)
+    }
+}
+
+struct ImageAdjustmentsTests {
+    @Test
+    func identityFlag() {
+        #expect(ImageAdjustments().isIdentity)
+        var a = ImageAdjustments(); a.saturation = 0.5
+        #expect(!a.isIdentity)
+    }
+
+    @Test @MainActor
+    func identityReturnsInputUnchangedSize() {
+        let base = makeSolidTestImage(width: 20, height: 10)
+        let out = ImageAdjustments().apply(to: base, ciContext: CIContext())
+        #expect(out.width == 20 && out.height == 10)
+    }
+
+    @Test @MainActor
+    func adjustmentPreservesSize() {
+        let base = makeSolidTestImage(width: 32, height: 24)
+        var a = ImageAdjustments()
+        a.brightness = 0.2; a.contrast = 1.3; a.saturation = 1.5; a.sharpness = 0.5
+        let out = a.apply(to: base, ciContext: CIContext())
+        #expect(out.width == 32 && out.height == 24)
+    }
+}
+
+@MainActor
+struct WatermarkElementTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 120)
+
+    @Test
+    func tiledFlattensAtSameSize() {
+        let base = makeSolidTestImage(width: 120, height: 90)
+        let wm = WatermarkElement(text: "Confidential", tiled: true, anchor: .zero,
+                                  imageSize: CGSize(width: 120, height: 90), style: style)
+        let out = AnnotationRenderer.flatten(base: base, elements: [wm], ciContext: CIContext())
+        #expect(out?.width == 120)
+        #expect(out?.height == 90)
+        #expect(wm.clone() is WatermarkElement)
+    }
+
+    @Test
+    func projectRoundTripPreservesWatermark() throws {
+        let base = makeSolidTestImage(width: 60, height: 40)
+        let wm = WatermarkElement(text: "Draft", tiled: false,
+                                  anchor: CGPoint(x: 5, y: 6),
+                                  imageSize: CGSize(width: 60, height: 40), style: style, opacity: 0.3)
+        let project = try #require(AnnotationProjectIO.make(base: base, elements: [wm]))
+        let decoded = try JSONDecoder().decode(AnnotationProject.self, from: JSONEncoder().encode(project))
+        let back = try #require(AnnotationProjectIO.elements(decoded).first as? WatermarkElement)
+        #expect(back.text == "Draft")
+        #expect(back.tiled == false)
+        #expect(back.imageSize == CGSize(width: 60, height: 40))
+        #expect(abs(back.opacity - 0.3) < 1e-6)
+    }
+}
+
+@MainActor
+struct PenElementTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 100)
+
+    @Test
+    func updateDragAppendsDistinctPoints() {
+        let pen = PenElement(start: CGPoint(x: 0, y: 0), style: style)
+        pen.updateDrag(to: CGPoint(x: 0, y: 0.5))   // too close → dropped
+        pen.updateDrag(to: CGPoint(x: 10, y: 0))
+        pen.updateDrag(to: CGPoint(x: 20, y: 5))
+        #expect(pen.points.count == 3)
+    }
+
+    @Test
+    func cloneIsIndependentAndKeepsType() {
+        let marker = MarkerElement(start: CGPoint(x: 1, y: 1), style: style)
+        marker.updateDrag(to: CGPoint(x: 30, y: 10))
+        let copy = marker.clone()
+        #expect(copy is MarkerElement)
+        marker.translate(by: CGSize(width: 100, height: 0))
+        #expect((copy as? MarkerElement)?.points.first?.x == 1)
+        // The marker is broader and more translucent than a plain pen.
+        #expect(MarkerElement(start: .zero, style: style).widthScale > PenElement(start: .zero, style: style).widthScale)
+    }
+
+    @Test
+    func hitTestMatchesNearStrokeNotFar() {
+        let pen = PenElement(start: CGPoint(x: 0, y: 0), style: style)
+        pen.updateDrag(to: CGPoint(x: 100, y: 0))
+        #expect(pen.hitTest(CGPoint(x: 50, y: 2)))      // on the line
+        #expect(!pen.hitTest(CGPoint(x: 50, y: 80)))    // far away
+    }
+
+    @Test
+    func projectRoundTripPreservesPenPoints() throws {
+        let base = makeSolidTestImage(width: 50, height: 40)
+        let pen = PenElement(start: CGPoint(x: 2, y: 2), style: style)
+        pen.updateDrag(to: CGPoint(x: 20, y: 18))
+        let project = try #require(AnnotationProjectIO.make(base: base, elements: [pen]))
+        let decoded = try JSONDecoder().decode(AnnotationProject.self, from: JSONEncoder().encode(project))
+        let els = AnnotationProjectIO.elements(decoded)
+        #expect((els.first as? PenElement)?.points.count == 2)
+    }
+}
+
+struct SelectionAspectTests {
+    @Test
+    func squareLockFromWidthDominantDrag() {
+        // Drag right-and-up, wider than tall → height grows to match width (1:1).
+        let r = SelectionModel.rect(from: .zero, to: CGPoint(x: 100, y: 40), aspect: 1)
+        #expect(r == CGRect(x: 0, y: 0, width: 100, height: 100))
+    }
+
+    @Test
+    func sixteenNineLockFromHeightDominantDrag() {
+        // Tall drag with 16:9 lock → width derived from height.
+        let r = SelectionModel.rect(from: .zero, to: CGPoint(x: 10, y: 90), aspect: 16.0 / 9.0)
+        #expect(abs(r.width - 160) < 1e-6)
+        #expect(abs(r.height - 90) < 1e-6)
+    }
+
+    @Test
+    func anchorPinnedWhenDraggingUpLeft() {
+        // Dragging toward negative x/y keeps the anchor corner pinned at the far edge.
+        let r = SelectionModel.rect(from: CGPoint(x: 200, y: 200), to: CGPoint(x: 100, y: 190), aspect: 1)
+        #expect(r.maxX == 200)
+        #expect(r.maxY == 200)
+        #expect(r.width == 100 && r.height == 100)
+    }
+
+    @Test
+    func nonPositiveAspectFallsBackToFree() {
+        let r = SelectionModel.rect(from: .zero, to: CGPoint(x: 30, y: 70), aspect: 0)
+        #expect(r == CGRect(x: 0, y: 0, width: 30, height: 70))
+    }
+}
+
+struct CloudConfigTests {
+    @Test
+    func pathStyleObjectURL() {
+        var c = S3Config()
+        c.bucket = "shots"; c.endpointHost = "s3.amazonaws.com"; c.usePathStyle = true
+        #expect(c.objectURL(key: "a.png")?.absoluteString == "https://s3.amazonaws.com/shots/a.png")
+    }
+
+    @Test
+    func virtualHostedObjectURL() {
+        var c = S3Config()
+        c.bucket = "shots"; c.endpointHost = "s3.amazonaws.com"; c.usePathStyle = false
+        #expect(c.objectURL(key: "a.png")?.absoluteString == "https://shots.s3.amazonaws.com/a.png")
+    }
+
+    @Test
+    func publicBaseURLOverridesAndTrimsSlash() {
+        var c = S3Config()
+        c.bucket = "shots"; c.endpointHost = "s3.amazonaws.com"; c.publicBaseURL = "https://cdn.example.com/"
+        #expect(c.objectURL(key: "a.png")?.absoluteString == "https://cdn.example.com/a.png")
+    }
+
+    @Test @MainActor
+    func keyFormat() {
+        #expect(CloudUploadService.makeKey(stamp: "2026-06-14-090000", random: "ab12cd34", ext: "png")
+                == "2026-06-14-090000-ab12cd34.png")
+    }
+}
+
+struct SigV4Tests {
+    @Test
+    func derivesKnownSigningKey() {
+        // AWS's published "derive a signing key" example vector.
+        let key = SigV4.signingKey(secret: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+                                   dateStamp: "20120215", region: "us-east-1", service: "iam")
+        #expect(SigV4.hex(key) == "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d")
+    }
+
+    @Test
+    func sha256OfEmptyPayload() {
+        #expect(SigV4.sha256Hex(Data()) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    }
+
+    @Test
+    func authorizationHeaderHasExpectedShape() {
+        let r = SigV4.Request(
+            method: "PUT", host: "bucket.s3.us-east-1.amazonaws.com", path: "/key.png", query: "",
+            headers: ["host": "bucket.s3.us-east-1.amazonaws.com",
+                      "x-amz-date": "20240101T000000Z",
+                      "x-amz-content-sha256": SigV4.sha256Hex(Data())],
+            payloadHashHex: SigV4.sha256Hex(Data()),
+            date: Date(timeIntervalSince1970: 1_704_067_200), region: "us-east-1", service: "s3",
+            secretKey: "secret", accessKey: "AKIDEXAMPLE")
+        let header = SigV4.authorizationHeader(r)
+        #expect(header.hasPrefix("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"))
+        #expect(header.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"))
+        #expect(header.contains("Signature="))
+    }
+}
+
+struct CursorTrackTests {
+    @Test
+    func interpolatesBetweenSamples() {
+        let track = CursorTrack(samples: [
+            CursorSample(t: 0, x: 0, y: 0),
+            CursorSample(t: 1, x: 1, y: 0.5),
+        ])
+        let p = track.point(at: 0.5)
+        #expect(abs((p?.x ?? -1) - 0.5) < 1e-9)
+        #expect(abs((p?.y ?? -1) - 0.25) < 1e-9)
+    }
+
+    @Test
+    func clampsToEnds() {
+        let track = CursorTrack(samples: [
+            CursorSample(t: 1, x: 0.2, y: 0.3), CursorSample(t: 2, x: 0.8, y: 0.9),
+        ])
+        #expect(track.point(at: 0)?.x == 0.2)
+        #expect(track.point(at: 5)?.x == 0.8)
+    }
+
+    @Test
+    func emptyTrackReturnsNil() {
+        #expect(CursorTrack(samples: []).point(at: 1) == nil)
+    }
+}
+
+@MainActor
+struct VideoZoomTests {
+    @Test
+    func zoomCropReturnsFullFrameSize() {
+        let img = CIImage(cgImage: makeSolidTestImage(width: 200, height: 100))
+        // Focus at the corner; the clamp must keep the crop inside and rescale to the full frame.
+        let out = VideoBeautify.zoomed(img, focus: CGPoint(x: 1, y: 1), zoom: 2)
+        #expect(abs(out.extent.width - 200) < 1)
+        #expect(abs(out.extent.height - 100) < 1)
+    }
+
+    @Test
+    func zoomOneIsIdentity() {
+        let img = CIImage(cgImage: makeSolidTestImage(width: 50, height: 50))
+        let out = VideoBeautify.zoomed(img, focus: CGPoint(x: 0.5, y: 0.5), zoom: 1)
+        #expect(out.extent == img.extent)
+    }
+}
+
+struct VideoBeautifyLayoutTests {
+    @Test
+    func paddingAddsEvenBorder() {
+        let (size, scale, inset) = VideoBeautify.layout(srcW: 1920, srcH: 1080, paddingFraction: 0.1, targetHeight: nil)
+        #expect(size.width == 2136 && size.height == 1296)   // pad = 108 each side
+        #expect(scale == 1)
+        #expect(inset == 108)
+        #expect(Int(size.width) % 2 == 0 && Int(size.height) % 2 == 0)
+    }
+
+    @Test
+    func targetHeightScalesProportionally() {
+        let (size, scale, inset) = VideoBeautify.layout(srcW: 1000, srcH: 1000, paddingFraction: 0.1, targetHeight: 600)
+        #expect(size.height == 600)
+        #expect(abs(scale - 0.5) < 1e-9)
+        #expect(abs(inset - 50) < 1e-9)
+    }
+
+    @Test
+    func zeroPaddingRoundsToEvenSourceSize() {
+        let (size, _, inset) = VideoBeautify.layout(srcW: 1281, srcH: 721, paddingFraction: 0, targetHeight: nil)
+        #expect(inset == 0)
+        #expect(size.width == 1280 && size.height == 720)
+    }
+}
+
+@MainActor
+struct PerspectiveMockupTests {
+    @Test
+    func tiltRendersOutput() {
+        let base = makeSolidTestImage(width: 80, height: 60)
+        var style = BeautifyStyle.makeDefault()
+        style.perspective = .right
+        #expect(BeautifyRenderer.render(base: base, style: style) != nil)
+    }
+
+    @Test
+    func presetRoundTripPreservesPerspective() throws {
+        var style = BeautifyStyle.makeDefault()
+        style.perspective = .left
+        let preset = BeautifyPreset(name: "Tilt", style: style)
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: JSONEncoder().encode(preset))
+        #expect(decoded.applied(to: .makeDefault()).perspective == .left)
+    }
+
+    @Test
+    func legacyPresetWithoutPerspectiveDecodesFlat() throws {
+        // Presets saved before 3D existed lack the key; the optional must still decode to flat.
+        let json = """
+        {"name":"Old","paddingFraction":0.08,"cornerFraction":0.03,"shadow":true,\
+        "shadowFraction":0.05,"windowFrame":0}
+        """
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: Data(json.utf8))
+        #expect(decoded.applied(to: .makeDefault()).perspective == .none)
+    }
+}
+
+@MainActor
+struct MeshGradientTests {
+    @Test
+    func meshPresetRoundTrips() throws {
+        var style = BeautifyStyle.makeDefault()
+        style.background = .mesh([.systemPink, .systemBlue, .systemGreen])
+        let preset = BeautifyPreset(name: "Mesh", style: style)
+        let decoded = try JSONDecoder().decode(BeautifyPreset.self, from: JSONEncoder().encode(preset))
+        let applied = decoded.applied(to: .makeDefault())
+        if case .mesh(let colors) = applied.background { #expect(colors.count == 3) }
+        else { Issue.record("expected mesh background") }
+    }
+
+    @Test
+    func meshRendersLargerThanInput() {
+        let base = makeSolidTestImage(width: 80, height: 60)
+        var style = BeautifyStyle.makeDefault()
+        style.background = .mesh([.systemPink, .systemBlue])
+        let out = BeautifyRenderer.render(base: base, style: style)
+        #expect(out != nil)
+        #expect((out?.width ?? 0) > 80)
+    }
+
+    @Test
+    func presetLibraryIsExpandedAndHasMesh() {
+        #expect(BackgroundPreset.all.count >= 28)
+        #expect(BackgroundPreset.all.contains { if case .mesh = $0.fill { return true }; return false })
     }
 }
 

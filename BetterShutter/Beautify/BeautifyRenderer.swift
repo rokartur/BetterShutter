@@ -1,4 +1,6 @@
 import AppKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 /// Composites a screenshot onto a padded, rounded, shadowed background. Native bottom-left
 /// CoreGraphics so the image draws upright and the same code serves preview + full-res export.
@@ -42,32 +44,126 @@ enum BeautifyRenderer {
         let radius = minDim * style.cornerFraction
         let rounded = CGPath(roundedRect: cardRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
 
-        if style.shadow {
+        if style.perspective == .none {
+            if style.shadow {
+                ctx.saveGState()
+                let blur = max(1, minDim * style.shadowFraction)
+                ctx.setShadow(offset: CGSize(width: 0, height: -blur * 0.35), blur: blur,
+                              color: NSColor.black.withAlphaComponent(0.45).cgColor)
+                ctx.addPath(rounded)
+                ctx.setFillColor(NSColor.black.cgColor)
+                ctx.fillPath()
+                ctx.restoreGState()
+            }
+
             ctx.saveGState()
-            let blur = max(1, minDim * style.shadowFraction)
-            ctx.setShadow(offset: CGSize(width: 0, height: -blur * 0.35), blur: blur,
-                          color: NSColor.black.withAlphaComponent(0.45).cgColor)
             ctx.addPath(rounded)
-            ctx.setFillColor(NSColor.black.cgColor)
-            ctx.fillPath()
+            ctx.clip()
+            if style.windowFrame != .none {
+                ctx.setFillColor(chromeColor(style.windowFrame).cgColor)
+                ctx.fill(cardRect)
+                let barRect = CGRect(x: pad + offsetX, y: pad + offsetY + h, width: w, height: barHeight)
+                drawTrafficLights(in: ctx, barRect: barRect)
+            }
+            ctx.draw(base, in: imageRect)
+            ctx.restoreGState()
+        } else if let layer = renderCardLayer(base: base, style: style, w: w, h: h,
+                                              barHeight: barHeight, radius: radius) {
+            // 3D mockup: tilt the card layer and composite it (its alpha drives the shadow).
+            let tilted = perspectiveTransformed(layer, direction: style.perspective) ?? layer
+            let tw = CGFloat(tilted.width), th = CGFloat(tilted.height)
+            let drawRect = CGRect(x: cardRect.midX - tw / 2, y: cardRect.midY - th / 2, width: tw, height: th)
+            ctx.saveGState()
+            if style.shadow {
+                let blur = max(1, minDim * style.shadowFraction)
+                ctx.setShadow(offset: CGSize(width: 0, height: -blur * 0.35), blur: blur,
+                              color: NSColor.black.withAlphaComponent(0.45).cgColor)
+            }
+            ctx.draw(tilted, in: drawRect)
             ctx.restoreGState()
         }
 
-        ctx.saveGState()
-        ctx.addPath(rounded)
+        return ctx.makeImage()
+    }
+
+    private static func chromeColor(_ frame: WindowFrame) -> NSColor {
+        frame == .dark ? NSColor(calibratedWhite: 0.17, alpha: 1) : NSColor(calibratedWhite: 0.93, alpha: 1)
+    }
+
+    /// Render just the rounded card (chrome + image) to a transparent bitmap, for the 3D path.
+    private static func renderCardLayer(base: CGImage, style: BeautifyStyle, w: CGFloat, h: CGFloat,
+                                        barHeight: CGFloat, radius: CGFloat) -> CGImage? {
+        let cw = Int(w), ch = Int(h + barHeight)
+        guard cw > 0, ch > 0 else { return nil }
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: cw, height: ch, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let cardRect = CGRect(x: 0, y: 0, width: w, height: h + barHeight)
+        ctx.addPath(CGPath(roundedRect: cardRect, cornerWidth: radius, cornerHeight: radius, transform: nil))
         ctx.clip()
         if style.windowFrame != .none {
-            let barColor = style.windowFrame == .dark
-                ? NSColor(calibratedWhite: 0.17, alpha: 1)
-                : NSColor(calibratedWhite: 0.93, alpha: 1)
-            ctx.setFillColor(barColor.cgColor)
+            ctx.setFillColor(chromeColor(style.windowFrame).cgColor)
             ctx.fill(cardRect)
-            let barRect = CGRect(x: pad + offsetX, y: pad + offsetY + h, width: w, height: barHeight)
-            drawTrafficLights(in: ctx, barRect: barRect)
+            drawTrafficLights(in: ctx, barRect: CGRect(x: 0, y: h, width: w, height: barHeight))
         }
-        ctx.draw(base, in: imageRect)
-        ctx.restoreGState()
+        ctx.draw(base, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
+    }
 
+    /// Tilt the card with a real perspective trapezoid (the far edge recedes vertically).
+    private static func perspectiveTransformed(_ image: CGImage, direction: BeautifyPerspective) -> CGImage? {
+        guard direction != .none else { return image }
+        let ci = CIImage(cgImage: image)
+        let w = ci.extent.width, h = ci.extent.height
+        let k: CGFloat = 0.12
+        let filter = CIFilter.perspectiveTransform()
+        filter.inputImage = ci
+        switch direction {
+        case .right:
+            filter.topLeft = CGPoint(x: 0, y: h); filter.bottomLeft = CGPoint(x: 0, y: 0)
+            filter.topRight = CGPoint(x: w, y: h - h * k); filter.bottomRight = CGPoint(x: w, y: h * k)
+        case .left:
+            filter.topRight = CGPoint(x: w, y: h); filter.bottomRight = CGPoint(x: w, y: 0)
+            filter.topLeft = CGPoint(x: 0, y: h - h * k); filter.bottomLeft = CGPoint(x: 0, y: h * k)
+        case .none:
+            return image
+        }
+        guard let out = filter.outputImage else { return image }
+        return CIContext().createCGImage(out, from: out.extent)
+    }
+
+    /// Mesh gradient: fill with the first color, then blend soft radial blobs of each color at
+    /// scattered anchors. Pure CoreGraphics, so it renders identically on every macOS version.
+    private static func drawMesh(_ colors: [NSColor], in ctx: CGContext, rect: CGRect) {
+        guard let base = colors.first else { return }
+        ctx.setFillColor((base.usingColorSpace(.sRGB) ?? base).cgColor)
+        ctx.fill(rect)
+        let anchors = [
+            CGPoint(x: 0.18, y: 0.22), CGPoint(x: 0.82, y: 0.18),
+            CGPoint(x: 0.80, y: 0.82), CGPoint(x: 0.20, y: 0.80), CGPoint(x: 0.5, y: 0.5),
+        ]
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        let radius = max(rect.width, rect.height) * 0.78
+        for (index, color) in colors.enumerated() {
+            let a = anchors[index % anchors.count]
+            let center = CGPoint(x: rect.minX + rect.width * a.x, y: rect.minY + rect.height * a.y)
+            let c = color.usingColorSpace(.sRGB) ?? color
+            let cgColors = [c.withAlphaComponent(0.95).cgColor, c.withAlphaComponent(0).cgColor] as CFArray
+            guard let g = CGGradient(colorsSpace: space, colors: cgColors, locations: [0, 1]) else { continue }
+            ctx.drawRadialGradient(g, startCenter: center, startRadius: 0,
+                                   endCenter: center, endRadius: radius, options: [])
+        }
+    }
+
+    /// Render a background fill to a standalone bitmap of `size` — used by the video editor to frame
+    /// a recording on a wallpaper / gradient / mesh background.
+    static func backgroundImage(_ fill: BackgroundFill, size: CGSize) -> CGImage? {
+        let w = Int(size.width.rounded()), h = Int(size.height.rounded())
+        guard w > 0, h > 0 else { return nil }
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        drawBackground(fill, in: ctx, rect: CGRect(x: 0, y: 0, width: w, height: h))
         return ctx.makeImage()
     }
 
@@ -101,6 +197,8 @@ enum BeautifyRenderer {
             let start = CGPoint(x: rect.midX - dx * rect.width / 2, y: rect.midY - dy * rect.height / 2)
             let end = CGPoint(x: rect.midX + dx * rect.width / 2, y: rect.midY + dy * rect.height / 2)
             ctx.drawLinearGradient(gradient, start: start, end: end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        case .mesh(let colors):
+            drawMesh(colors, in: ctx, rect: rect)
         case .image(let cg):
             // Aspect-fill the custom image into the background rect.
             let imageAspect = CGFloat(cg.width) / CGFloat(max(cg.height, 1))

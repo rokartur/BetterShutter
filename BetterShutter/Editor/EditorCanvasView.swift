@@ -11,6 +11,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     private var imageSize: CGSize
     private let ciContext = CIContext()
 
+    /// Non-destructive photo adjustments layered over `baseImage` for display and export.
+    private var adjust = ImageAdjustments()
+    private var adjustedCache: CGImage?
+    private var adjustGesturePending: EditorSnapshot?
+
+    /// The base bitmap with live adjustments applied (cached); falls back to `baseImage` when neutral.
+    private var renderBase: CGImage {
+        if adjust.isIdentity { return baseImage }
+        if let cached = adjustedCache { return cached }
+        let result = adjust.apply(to: baseImage, ciContext: ciContext)
+        adjustedCache = result
+        return result
+    }
+
+    var currentAdjustments: ImageAdjustments { adjust }
+
     private(set) var elements: [AnnotationElement] = []
     private var selected: AnnotationElement?
     /// Elements captured by an area (marquee) drag. Empty for single/no selection; a single hit goes
@@ -68,13 +84,14 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let cropRect: CGRect?
         let baseImage: CGImage
         let imageSize: CGSize
+        let adjust: ImageAdjustments
     }
 
     override var undoManager: UndoManager? { undoMgr }
 
     private func snapshot() -> EditorSnapshot {
         EditorSnapshot(elements: elements.map { $0.clone() }, cropRect: cropRect,
-                       baseImage: baseImage, imageSize: imageSize)
+                       baseImage: baseImage, imageSize: imageSize, adjust: adjust)
     }
 
     /// Register `before` as the state to return to, naming the action for the Edit menu.
@@ -94,11 +111,16 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         cropRect = snap.cropRect
         baseImage = snap.baseImage
         imageSize = snap.imageSize
+        adjust = snap.adjust
+        adjustedCache = nil
+        adjustGesturePending = nil
         selected = nil
         groupSelection = []
         marqueeRect = nil
         creating = nil
         dragMode = .none
+        zoomFactor = 1
+        panOffset = .zero
         needsDisplay = true
     }
 
@@ -110,6 +132,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let before = snapshot()
         baseImage = newBase
         imageSize = newSize
+        adjustedCache = nil
         for element in elements { element.transform(t) }
         if let crop = cropRect { cropRect = crop.applying(t) }
         selected = nil
@@ -122,8 +145,42 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         guard let inverted = ImageTransformer.inverted(baseImage) else { return }
         let before = snapshot()
         baseImage = inverted
+        adjustedCache = nil
         commit(before, "Invert Colors")
         needsDisplay = true
+    }
+
+    /// Apply non-destructive photo adjustments live. `doCommit` registers one undo step at the end
+    /// of a slider drag (caller passes true on mouse-up), coalescing the whole drag into one action.
+    func setAdjustments(_ adjustments: ImageAdjustments, commit doCommit: Bool) {
+        if adjustGesturePending == nil { adjustGesturePending = snapshot() }
+        adjust = adjustments
+        adjustedCache = nil
+        needsDisplay = true
+        if doCommit {
+            commit(adjustGesturePending, "Adjust")
+            adjustGesturePending = nil
+        }
+    }
+
+    func resetAdjustments() { setAdjustments(ImageAdjustments(), commit: true) }
+
+    /// Formatting applied to new text; mirrors the toolbar's rich-text toggles.
+    private var textFormatDefault = TextFormatting()
+
+    /// Apply rich-text formatting to the selected (or in-progress) text element and remember it as
+    /// the default for new text. One undo step for a committed element.
+    func setTextFormatting(_ fmt: TextFormatting) {
+        textFormatDefault = fmt
+        if let editingElement {
+            editingElement.format = fmt
+            needsDisplay = true
+        } else if let text = selected as? TextElement {
+            let before = snapshot()
+            text.format = fmt
+            commit(before, "Text Style")
+            needsDisplay = true
+        }
     }
 
     /// Add another image onto the canvas, centered and scaled to fit, selected for repositioning.
@@ -140,6 +197,66 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         onToolPicked?(.select)
         commit(before, "Add Image")
         needsDisplay = true
+    }
+
+    /// Prompt for watermark text and add it (tiled diagonally across the image by default), one undo.
+    func addWatermark() {
+        let alert = NSAlert()
+        alert.messageText = "Add Watermark"
+        alert.informativeText = "Overlay text across the image."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 28, width: 260, height: 24))
+        field.placeholderString = "Confidential"
+        let tile = NSButton(checkboxWithTitle: "Tile across image", target: nil, action: nil)
+        tile.frame = NSRect(x: 0, y: 0, width: 260, height: 20)
+        tile.state = .on
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 56))
+        accessory.addSubview(field)
+        accessory.addSubview(tile)
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = field
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let before = snapshot()
+        let tiled = tile.state == .on
+        let anchor = tiled ? .zero : CGPoint(x: imageSize.width * 0.06, y: imageSize.height * 0.06)
+        let element = WatermarkElement(text: text, tiled: tiled, anchor: anchor,
+                                       imageSize: imageSize, style: style)
+        elements.append(element)
+        selected = element
+        commit(before, "Watermark")
+        needsDisplay = true
+    }
+
+    /// Detect faces and blur each one (one undo step) — privacy redaction for people in a shot.
+    func autoRedactFaces() {
+        let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
+        let size = imageSize
+        let currentStyle = style
+        Task {
+            let faces = await FaceDetector.detect(image)
+            guard !faces.isEmpty else { HUD.show("No faces found"); return }
+            let before = snapshot()
+            for box in faces {
+                // Vision box is normalized bottom-left → image-pixel bottom-left, padded to the head.
+                let rect = CGRect(x: box.minX * size.width, y: box.minY * size.height,
+                                  width: box.width * size.width, height: box.height * size.height)
+                    .insetBy(dx: -box.width * size.width * 0.12, dy: -box.height * size.height * 0.12)
+                let blur = BlurElement(start: CGPoint(x: rect.minX, y: rect.minY), style: currentStyle)
+                blur.end = CGPoint(x: rect.maxX, y: rect.maxY)
+                blur.style.redactionStrength = 0.9
+                elements.append(blur)
+            }
+            commit(before, "Redact Faces")
+            HUD.show("Redacted \(faces.count) face\(faces.count == 1 ? "" : "s")")
+            needsDisplay = true
+        }
     }
 
     /// Find PII via OCR and cover each matching line with a black-out box (one undo step).
@@ -175,6 +292,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
               let cg = ciContext.createCGImage(output, from: source.extent) else { return }
         let before = snapshot()
         baseImage = cg
+        adjustedCache = nil
         commit(before, "Filter")
         needsDisplay = true
     }
@@ -230,25 +348,95 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         return NSSize(width: pixelSize.width * scale, height: pixelSize.height * scale)
     }
 
+    /// Zoom relative to the aspect-fit baseline: 1 = fit-to-window, up to `maxZoom` zoomed in.
+    private var zoomFactor: CGFloat = 1
+    /// Pan in view points while zoomed in; always 0 at fit.
+    private var panOffset: CGSize = .zero
+    private let maxZoom: CGFloat = 16
+    var isZoomed: Bool { zoomFactor > 1.0001 }
+
+    /// The scale that fits the whole image into the inset bounds (zoom 1).
+    private var fitScale: CGFloat {
+        let inset = bounds.insetBy(dx: 16, dy: 16)
+        guard imageSize.width > 0, imageSize.height > 0 else { return 1 }
+        return min(inset.width / imageSize.width, inset.height / imageSize.height)
+    }
+
     private var displayRect: CGRect {
         let inset = bounds.insetBy(dx: 16, dy: 16)
         guard imageSize.width > 0, imageSize.height > 0 else { return inset }
-        let scale = min(inset.width / imageSize.width, inset.height / imageSize.height)
-        let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-        return CGRect(x: inset.midX - size.width / 2, y: inset.midY - size.height / 2,
+        let s = fitScale * zoomFactor
+        let size = CGSize(width: imageSize.width * s, height: imageSize.height * s)
+        return CGRect(x: inset.midX - size.width / 2 + panOffset.width,
+                      y: inset.midY - size.height / 2 + panOffset.height,
                       width: size.width, height: size.height)
     }
 
     private var scale: CGFloat { displayRect.width / max(imageSize.width, 1) }
 
     private func imagePoint(_ p: CGPoint) -> CGPoint {
-        let x = (p.x - displayRect.minX) / scale
-        let y = (p.y - displayRect.minY) / scale
-        return CGPoint(x: min(max(0, x), imageSize.width), y: min(max(0, y), imageSize.height))
+        let u = imagePointUnclamped(p)
+        return CGPoint(x: min(max(0, u.x), imageSize.width), y: min(max(0, u.y), imageSize.height))
+    }
+
+    /// Image-space point without clamping to the bitmap, so zoom-around-cursor tracks points that
+    /// momentarily fall outside the image.
+    private func imagePointUnclamped(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: (p.x - displayRect.minX) / scale, y: (p.y - displayRect.minY) / scale)
     }
 
     private func viewPoint(_ p: CGPoint) -> CGPoint {
         CGPoint(x: displayRect.minX + p.x * scale, y: displayRect.minY + p.y * scale)
+    }
+
+    // MARK: Zoom & pan
+
+    /// Set the zoom (clamped to 1…maxZoom), keeping the image point under `pivot` (view coords) fixed.
+    private func setZoom(_ newZoom: CGFloat, around pivot: CGPoint) {
+        let clamped = min(max(newZoom, 1), maxZoom)
+        guard abs(clamped - zoomFactor) > 0.0001 else { return }
+        let imgPt = imagePointUnclamped(pivot)
+        zoomFactor = clamped
+        if clamped <= 1.0001 {
+            panOffset = .zero
+        } else {
+            let landed = viewPoint(imgPt)   // where that image point is now, before re-panning
+            panOffset.width += pivot.x - landed.x
+            panOffset.height += pivot.y - landed.y
+            clampPan()
+        }
+        needsDisplay = true
+    }
+
+    /// Keep the (possibly zoomed) image from being dragged entirely out of the inset.
+    private func clampPan() {
+        let inset = bounds.insetBy(dx: 16, dy: 16)
+        let s = fitScale * zoomFactor
+        let size = CGSize(width: imageSize.width * s, height: imageSize.height * s)
+        func clamp(_ offset: CGFloat, _ imgExtent: CGFloat, _ box: CGFloat) -> CGFloat {
+            guard imgExtent > box else { return 0 }    // smaller than the box → stay centered
+            let maxOff = (imgExtent - box) / 2
+            return min(max(offset, -maxOff), maxOff)
+        }
+        panOffset.width = clamp(panOffset.width, size.width, inset.width)
+        panOffset.height = clamp(panOffset.height, size.height, inset.height)
+    }
+
+    func zoomIn() { setZoom(zoomFactor * 1.25, around: CGPoint(x: bounds.midX, y: bounds.midY)) }
+    func zoomOut() { setZoom(zoomFactor / 1.25, around: CGPoint(x: bounds.midX, y: bounds.midY)) }
+    func zoomToFit() { zoomFactor = 1; panOffset = .zero; needsDisplay = true }
+
+    override func magnify(with event: NSEvent) {
+        let pivot = convert(event.locationInWindow, from: nil)
+        setZoom(zoomFactor * (1 + event.magnification), around: pivot)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard isZoomed else { super.scrollWheel(with: event); return }
+        panOffset.width += event.scrollingDeltaX
+        panOffset.height += event.scrollingDeltaY
+        clampPan()
+        needsDisplay = true
     }
 
     // MARK: Drawing
@@ -258,12 +446,13 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         NSColor(calibratedWhite: 0.16, alpha: 1).setFill()
         bounds.fill()
 
-        cg.draw(baseImage, in: displayRect)
+        let display = renderBase
+        cg.draw(display, in: displayRect)
 
         cg.saveGState()
         cg.translateBy(x: displayRect.minX, y: displayRect.minY)
         cg.scaleBy(x: scale, y: scale)
-        let rc = AnnotationRenderContext(baseImage: baseImage, imageSize: imageSize, ciContext: ciContext)
+        let rc = AnnotationRenderContext(baseImage: display, imageSize: imageSize, ciContext: ciContext)
         for element in elements { element.drawRotated(in: cg, context: rc) }
         cg.restoreGState()
 
@@ -690,12 +879,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case .rectangle: return RectangleElement(start: p, style: style)
         case .ellipse: return EllipseElement(start: p, style: style)
         case .line: return LineElement(start: p, style: style)
+        case .pen: return PenElement(start: p, style: style)
+        case .marker: return MarkerElement(start: p, style: style)
         case .measure: return MeasureElement(start: p, style: style)
         case .loupe: return LoupeElement(center: p, style: style)
         case .highlighter: return HighlightElement(start: p, style: style)
         case .pixelate: return PixelateElement(start: p, style: style)
         case .blur: return BlurElement(start: p, style: style)
         case .blackout: return BlackoutElement(start: p, style: style)
+        case .erase: return SmartEraseElement(start: p, style: style)
         case .spotlight: return SpotlightElement(start: p, style: style)
         default: return RectangleElement(start: p, style: style)
         }
@@ -714,6 +906,14 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "p" {
             onPrint?()
             return
+        }
+        if event.modifierFlags.contains(.command), let ch = event.charactersIgnoringModifiers {
+            switch ch {
+            case "=", "+": zoomIn(); return
+            case "-", "_": zoomOut(); return
+            case "0": zoomToFit(); return
+            default: break
+            }
         }
         // Single-key tool shortcuts (no ⌘/⌥/⌃). A text field, when editing, is the first responder
         // instead of the canvas, so these never fire mid-typing.
@@ -794,7 +994,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     private func beginText(at p: CGPoint) {
         textPending = snapshot()   // before the empty TextElement is appended
-        let element = TextElement(origin: p, text: "", style: style)
+        let element = TextElement(origin: p, text: "", style: style, format: textFormatDefault)
         elements.append(element)
         editingElement = element
         selected = element
@@ -873,6 +1073,6 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     func flattened() -> CGImage? {
         finishTextEditing()
-        return AnnotationRenderer.flatten(base: baseImage, elements: elements, ciContext: ciContext, cropRect: cropRect)
+        return AnnotationRenderer.flatten(base: renderBase, elements: elements, ciContext: ciContext, cropRect: cropRect)
     }
 }

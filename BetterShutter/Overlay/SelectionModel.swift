@@ -16,6 +16,21 @@ nonisolated struct SelectionModel {
         )
     }
 
+    /// Build a rect from `anchor` toward `current` constrained to `aspect` (width / height, > 0).
+    /// The dominant cursor axis wins so the rect tracks the pointer naturally; the rect grows in the
+    /// direction of the drag (the anchor corner stays pinned).
+    static func rect(from anchor: CGPoint, to current: CGPoint, aspect: CGFloat) -> CGRect {
+        guard aspect > 0 else { return rect(from: anchor, to: current) }
+        let dx = current.x - anchor.x
+        let dy = current.y - anchor.y
+        var w = abs(dx)
+        var h = abs(dy)
+        if w > aspect * h { h = w / aspect } else { w = h * aspect }
+        let x = dx >= 0 ? anchor.x : anchor.x - w
+        let y = dy >= 0 ? anchor.y : anchor.y - h
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
     mutating func nudge(dx: CGFloat, dy: CGFloat, in bounds: CGRect) {
         guard var r = rect else { return }
         r.origin.x += dx

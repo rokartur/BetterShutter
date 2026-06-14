@@ -31,6 +31,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     var onBeautify: (() -> Void)?
     var onPin: (() -> Void)?
     var onShare: (() -> Void)?
+    var onUpload: (() -> Void)?
     var onHoverChange: ((Bool) -> Void)?
 
     private var dragOrigin: CGPoint?
@@ -132,7 +133,11 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         let share = makeIconButton("square.and.arrow.up", "Share", #selector(shareTapped))
         let pin = makeIconButton("pin", "Pin to Screen", #selector(pinTapped))
 
-        let stack = NSStackView(views: [edit, copy, secondary, share, pin])
+        var buttons = [edit, copy, secondary, share, pin]
+        if CloudUploadService.isEnabled {
+            buttons.append(makeIconButton("icloud.and.arrow.up", "Upload & Copy Link", #selector(uploadTapped)))
+        }
+        let stack = NSStackView(views: buttons)
         stack.orientation = .horizontal
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -141,13 +146,14 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         toolbar.contentView.addSubview(stack)
         addSubview(toolbar)
 
-        // Fixed glass-pill size (5 × 28pt buttons + 4 × 6pt gaps + insets). A fixed size — rather than
-        // tying the glass view to the stack — avoids a layout-recursion loop with NSGlassEffectView
-        // re-laying out its contentView.
+        // Fixed glass-pill size (N × 28pt buttons + (N-1) × 6pt gaps + 16pt insets). A fixed size —
+        // rather than tying the glass view to the stack — avoids a layout-recursion loop with
+        // NSGlassEffectView re-laying out its contentView.
+        let count = CGFloat(buttons.count)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: toolbar.contentView.centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: toolbar.contentView.centerYAnchor),
-            toolbar.widthAnchor.constraint(equalToConstant: 180),
+            toolbar.widthAnchor.constraint(equalToConstant: count * 28 + (count - 1) * 6 + 16),
             toolbar.heightAnchor.constraint(equalToConstant: 38),
             toolbar.centerXAnchor.constraint(equalTo: centerXAnchor),
             toolbar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
@@ -271,6 +277,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     @objc private func editTapped() { onAnnotate?() }
     @objc private func beautifyTapped() { onBeautify?() }
     @objc private func pinTapped() { onPin?() }
+    @objc private func uploadTapped() { onUpload?() }
     @objc private func shareTapped() { onShare?() }
     @objc private func printTapped() { Printing.printImage(image.cgImage) }
     @objc private func revealTapped() {

@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var settingsController: SettingsWindowController?
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
+    private var timerMenuItems: [NSMenuItem] = []
     private var recordingItem: NSMenuItem?
     private var pauseItem: NSMenuItem?
     private var recordingTimer: Timer?
@@ -88,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func dispatch(_ command: URLCommand) {
         switch command {
+        case .allInOne:             CaptureCoordinator.shared.captureAllInOne()
         case .captureRegion:        CaptureCoordinator.shared.capture(.region)
         case .captureWindow:        CaptureCoordinator.shared.capture(.window)
         case .captureFullScreen:    CaptureCoordinator.shared.capture(.fullDisplay)
@@ -97,10 +99,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .record:               RecordingController.shared.toggle()
         case .recordGIF:            RecordingController.shared.toggleGIF()
         case .recordRegion:         CaptureCoordinator.shared.recordRegion()
+        case .recordWindow:         CaptureCoordinator.shared.recordWindow()
         case .capturePreviousArea:  CaptureCoordinator.shared.captureLastRegion()
         case .openBrowser:          CaptureHistoryPanel.shared.show()
         case .openSettings:         openSettings()
         case .pinLast:              pinLastCapture()
+        case .uploadLast:           uploadLast()
         case .unknown(let raw):     HUD.show("Unknown command: \(raw)")
         }
     }
@@ -155,6 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         captureMenuItems.removeAll()
+        addCaptureItem(to: menu, title: "All-in-One Capture", symbol: "square.dashed.inset.filled",
+                       action: #selector(allInOne), name: .allInOne)
         addCaptureItem(to: menu, title: "Quick Screenshot", symbol: "bolt",
                        action: #selector(quickScreenshot), name: .quickScreenshot)
         addCaptureItem(to: menu, title: "Screenshot & Markup", symbol: "pencil.and.outline",
@@ -178,6 +184,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         previous.image = NSImage(systemSymbolName: "arrow.counterclockwise.circle", accessibilityDescription: "Previous Area")
         menu.addItem(previous)
 
+        let timer = NSMenuItem(title: "Capture Timer", action: nil, keyEquivalent: "")
+        timer.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Capture Timer")
+        let timerMenu = NSMenu()
+        timerMenuItems.removeAll()
+        for seconds in [0, 3, 5, 10] {
+            let title = seconds == 0 ? "Off" : "\(seconds) seconds"
+            let sub = NSMenuItem(title: title, action: #selector(changeCaptureTimer(_:)), keyEquivalent: "")
+            sub.target = self
+            sub.tag = seconds
+            timerMenu.addItem(sub)
+            timerMenuItems.append(sub)
+        }
+        timer.submenu = timerMenu
+        menu.addItem(timer)
+
         menu.addItem(.separator())
 
         let record = NSMenuItem(title: "Start Recording", action: #selector(toggleRecording), keyEquivalent: "")
@@ -195,6 +216,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         addCaptureItem(to: menu, title: "Record Region", symbol: "rectangle.dashed",
                        action: #selector(recordRegion), name: .recordRegion)
+        addCaptureItem(to: menu, title: "Record Window", symbol: "macwindow.badge.plus",
+                       action: #selector(recordWindow), name: .recordWindow)
         addCaptureItem(to: menu, title: "Record GIF", symbol: "square.stack.3d.forward.dottedline",
                        action: #selector(recordGIF), name: .recordGIF)
 
@@ -239,6 +262,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         closePins.target = self
         closePins.image = NSImage(systemSymbolName: "pin.slash", accessibilityDescription: "Close Pins")
         menu.addItem(closePins)
+
+        let upload = NSMenuItem(title: "Upload Last & Copy Link", action: #selector(uploadLast), keyEquivalent: "")
+        upload.target = self
+        upload.image = NSImage(systemSymbolName: "icloud.and.arrow.up", accessibilityDescription: "Upload")
+        menu.addItem(upload)
 
         let reopen = NSMenuItem(title: "Reopen Last Capture", action: #selector(reopenLast), keyEquivalent: "")
         reopen.target = self
@@ -294,6 +322,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pauseItem.isHidden = !RecordingController.shared.isRecording
             pauseItem.title = RecordingController.shared.isPaused ? "Resume Recording" : "Pause Recording"
         }
+        let delay = Preferences.captureDelaySeconds
+        for item in timerMenuItems { item.state = item.tag == delay ? .on : .off }
     }
 
     private func applyShortcut(_ name: BetterShortcuts.Name, to item: NSMenuItem) {
@@ -308,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
 
+    @objc private func allInOne() { CaptureCoordinator.shared.captureAllInOne() }
     @objc private func quickScreenshot() { CaptureCoordinator.shared.captureQuick() }
     @objc private func screenshotEdit() { CaptureCoordinator.shared.captureAndEdit() }
     @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }
@@ -317,6 +348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func captureCutout() { CaptureCoordinator.shared.captureCutout() }
     @objc private func captureScrolling() { CaptureCoordinator.shared.captureScrolling() }
     @objc private func capturePreviousArea() { CaptureCoordinator.shared.captureLastRegion() }
+    @objc private func changeCaptureTimer(_ sender: NSMenuItem) { Preferences.captureDelaySeconds = sender.tag }
     @objc private func openHistory() { CaptureHistoryPanel.shared.toggle() }
 
     @objc private func editFromClipboard() {
@@ -351,6 +383,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func restoreClosed() { CaptureCoordinator.shared.restoreClosedPreview() }
+
+    @objc private func uploadLast() {
+        guard let item = CaptureHistory.shared.items.first else { HUD.show("No recent capture"); return }
+        CloudUploadService.upload(item.image.cgImage)
+    }
 
     @objc private func trimVideo() {
         let panel = NSOpenPanel()
@@ -387,6 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleRecording() { RecordingController.shared.toggle() }
     @objc private func togglePauseRecording() { RecordingController.shared.togglePause() }
     @objc private func recordRegion() { CaptureCoordinator.shared.recordRegion() }
+    @objc private func recordWindow() { CaptureCoordinator.shared.recordWindow() }
     @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
 
     @objc private func openSettings() {

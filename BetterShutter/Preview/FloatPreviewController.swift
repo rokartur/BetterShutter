@@ -62,6 +62,7 @@ final class FloatPreviewController {
             let picker = NSSharingServicePicker(items: [NSImage(cgImage: image.cgImage, size: image.pixelSize)])
             picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minX)
         }
+        view.onUpload = { CloudUploadService.upload(image.cgImage) }
         view.onHoverChange = { [weak self, weak panel] hovered in
             guard let self, let panel else { return }
             if hovered { self.beginHover(panel) } else { self.endHover(panel) }

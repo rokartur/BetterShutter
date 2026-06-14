@@ -14,6 +14,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     private var widthSlider: NSSlider?
     private var strengthSlider: NSSlider?
     private var transformControl: NSPopUpButton?
+    private var zoomControl: NSSegmentedControl?
+    private var adjustPopover: NSPopover?
+    private var adjustSliders: [String: NSSlider] = [:]
+    private var textFormatControl: NSSegmentedControl?
     private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     var onClose: (() -> Void)?
 
@@ -100,6 +104,31 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         let transform = makeTransformControl()
         self.transformControl = transform
 
+        let zoom = NSSegmentedControl(
+            images: [
+                NSImage(systemSymbolName: "minus.magnifyingglass", accessibilityDescription: "Zoom out") ?? NSImage(),
+                NSImage(systemSymbolName: "arrow.up.left.and.down.right.magnifyingglass", accessibilityDescription: "Fit") ?? NSImage(),
+                NSImage(systemSymbolName: "plus.magnifyingglass", accessibilityDescription: "Zoom in") ?? NSImage(),
+            ],
+            trackingMode: .momentary, target: self, action: #selector(zoomTapped(_:)))
+        zoom.toolTip = "Zoom (⌘− / ⌘0 / ⌘+, or pinch)"
+        self.zoomControl = zoom
+
+        let adjustButton = NSButton(
+            image: NSImage(systemSymbolName: "slider.horizontal.below.square.filled.and.square", accessibilityDescription: "Adjust") ?? NSImage(),
+            target: self, action: #selector(adjustTapped(_:)))
+        adjustButton.bezelStyle = .texturedRounded
+        adjustButton.imagePosition = .imageOnly
+        adjustButton.toolTip = "Image Adjustments (brightness / contrast / saturation / sharpness)"
+
+        func sym(_ name: String) -> NSImage { NSImage(systemSymbolName: name, accessibilityDescription: name) ?? NSImage() }
+        let textFormat = NSSegmentedControl(
+            images: [sym("bold"), sym("italic"), sym("underline"), sym("strikethrough"),
+                     sym("pencil.and.outline"), sym("highlighter")],
+            trackingMode: .selectAny, target: self, action: #selector(textFormatChanged(_:)))
+        textFormat.toolTip = "Text style: bold / italic / underline / strikethrough / outline / highlight"
+        self.textFormatControl = textFormat
+
         // Action buttons (project / share / copy / save / done) ride the bottom bar, right side.
         let project = makeActionButton(title: "", symbol: "doc.badge.gearshape", action: #selector(saveProjectTapped))
         project.toolTip = "Save Re-editable Project (.bsproj)"
@@ -116,6 +145,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
             label("Stroke"), widthSlider,
             label("Strength"), strengthSlider,
             label("Transform"), transform,
+            label("Text"), textFormat,
+            label("Adjust"), adjustButton,
+            label("Zoom"), zoom,
         ])
         styleStack.orientation = .horizontal
         styleStack.alignment = .centerY
@@ -272,9 +304,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         let redact = NSMenuItem(title: "Auto-Redact PII", action: #selector(autoRedactPicked), keyEquivalent: "")
         redact.target = self
         popup.menu?.addItem(redact)
+        let redactFaces = NSMenuItem(title: "Redact Faces", action: #selector(autoRedactFacesPicked), keyEquivalent: "")
+        redactFaces.target = self
+        popup.menu?.addItem(redactFaces)
         let addImage = NSMenuItem(title: "Add Image…", action: #selector(addImagePicked), keyEquivalent: "")
         addImage.target = self
         popup.menu?.addItem(addImage)
+        let watermark = NSMenuItem(title: "Add Watermark…", action: #selector(addWatermarkPicked), keyEquivalent: "")
+        watermark.target = self
+        popup.menu?.addItem(watermark)
         popup.menu?.addItem(.separator())
         for (title, filter) in Self.filters {
             let item = NSMenuItem(title: title, action: #selector(filterPicked(_:)), keyEquivalent: "")
@@ -315,8 +353,99 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         canvas.applyImageTransform(kind)
     }
 
+    @objc private func textFormatChanged(_ sender: NSSegmentedControl) {
+        var fmt = TextFormatting()
+        fmt.bold = sender.isSelected(forSegment: 0)
+        fmt.italic = sender.isSelected(forSegment: 1)
+        fmt.underline = sender.isSelected(forSegment: 2)
+        fmt.strikethrough = sender.isSelected(forSegment: 3)
+        fmt.outlined = sender.isSelected(forSegment: 4)
+        fmt.background = sender.isSelected(forSegment: 5) ? NSColor.systemYellow.withAlphaComponent(0.4) : nil
+        canvas.setTextFormatting(fmt)
+    }
+
+    // MARK: Image adjustments
+
+    @objc private func adjustTapped(_ sender: NSButton) {
+        let popover = adjustPopover ?? makeAdjustPopover()
+        adjustPopover = popover
+        if popover.isShown { popover.close() }
+        else { popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY) }
+    }
+
+    private func makeAdjustPopover() -> NSPopover {
+        let a = canvas.currentAdjustments
+        adjustSliders = [:]
+        func row(_ key: String, _ title: String, min: Double, max: Double, value: Double) -> NSStackView {
+            let slider = NSSlider(value: value, minValue: min, maxValue: max,
+                                  target: self, action: #selector(adjustSliderChanged))
+            slider.isContinuous = true
+            slider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+            adjustSliders[key] = slider
+            let caption = NSTextField(labelWithString: title)
+            caption.font = .systemFont(ofSize: 11)
+            caption.textColor = .secondaryLabelColor
+            caption.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            let stack = NSStackView(views: [caption, slider])
+            stack.orientation = .horizontal
+            stack.spacing = 8
+            return stack
+        }
+        let reset = NSButton(title: "Reset", target: self, action: #selector(resetAdjustTapped))
+        reset.bezelStyle = .rounded
+        let content = NSStackView(views: [
+            row("brightness", "Brightness", min: -0.5, max: 0.5, value: a.brightness),
+            row("contrast", "Contrast", min: 0.5, max: 1.5, value: a.contrast),
+            row("saturation", "Saturation", min: 0, max: 2, value: a.saturation),
+            row("sharpness", "Sharpness", min: 0, max: 1, value: a.sharpness),
+            reset,
+        ])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 10
+        content.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        let vc = NSViewController()
+        vc.view = content
+
+        let popover = NSPopover()
+        popover.contentViewController = vc
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 300, height: 190)
+        return popover
+    }
+
+    @objc private func adjustSliderChanged() {
+        var a = ImageAdjustments()
+        a.brightness = adjustSliders["brightness"]?.doubleValue ?? 0
+        a.contrast = adjustSliders["contrast"]?.doubleValue ?? 1
+        a.saturation = adjustSliders["saturation"]?.doubleValue ?? 1
+        a.sharpness = adjustSliders["sharpness"]?.doubleValue ?? 0
+        // Coalesce a whole slider drag into one undo step: commit only on mouse-up.
+        canvas.setAdjustments(a, commit: NSApp.currentEvent?.type == .leftMouseUp)
+    }
+
+    @objc private func resetAdjustTapped() {
+        canvas.resetAdjustments()
+        adjustSliders["brightness"]?.doubleValue = 0
+        adjustSliders["contrast"]?.doubleValue = 1
+        adjustSliders["saturation"]?.doubleValue = 1
+        adjustSliders["sharpness"]?.doubleValue = 0
+    }
+
+    @objc private func zoomTapped(_ sender: NSSegmentedControl) {
+        switch sender.selectedSegment {
+        case 0: canvas.zoomOut()
+        case 1: canvas.zoomToFit()
+        default: canvas.zoomIn()
+        }
+    }
+
     @objc private func invertPicked() { canvas.invertColors() }
     @objc private func autoRedactPicked() { canvas.autoRedactPII() }
+    @objc private func autoRedactFacesPicked() { canvas.autoRedactFaces() }
+    @objc private func addWatermarkPicked() { canvas.addWatermark() }
 
     @objc private func addImagePicked() {
         let panel = NSOpenPanel()
