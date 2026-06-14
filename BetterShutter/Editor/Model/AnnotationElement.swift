@@ -593,6 +593,90 @@ final class TextElement: AnnotationElement {
     }
 }
 
+// MARK: - Watermark
+
+/// A text watermark — either a single placed mark or a translucent pattern tiled diagonally across
+/// the whole image (Snapzy-style). Opacity and the fixed tile angle keep it readable but unobtrusive.
+final class WatermarkElement: AnnotationElement {
+    var text: String
+    var tiled: Bool
+    /// Single-mode draw point, or the tiled pattern's phase offset (so it can be nudged).
+    var anchor: CGPoint
+    var imageSize: CGSize
+    var opacity: CGFloat
+    private let angle: CGFloat = .pi / 6   // 30° diagonal for the tiled pattern
+
+    init(text: String, tiled: Bool, anchor: CGPoint, imageSize: CGSize,
+         style: AnnotationStyle, opacity: CGFloat = 0.22) {
+        self.text = text
+        self.tiled = tiled
+        self.anchor = anchor
+        self.imageSize = imageSize
+        self.opacity = opacity
+        super.init(style: style)
+    }
+
+    private func line() -> CTLine {
+        let font = NSFont.systemFont(ofSize: style.fontSize, weight: .semibold)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font, .foregroundColor: style.color.withAlphaComponent(opacity),
+        ]
+        return CTLineCreateWithAttributedString(
+            NSAttributedString(string: text.isEmpty ? " " : text, attributes: attrs))
+    }
+
+    private var textSize: CGSize {
+        var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+        let w = CGFloat(CTLineGetTypographicBounds(line(), &ascent, &descent, &leading))
+        return CGSize(width: w, height: ascent + descent)
+    }
+
+    override var boundingBox: CGRect {
+        if tiled { return CGRect(origin: .zero, size: imageSize) }
+        let s = textSize
+        return CGRect(x: anchor.x, y: anchor.y, width: s.width, height: s.height)
+    }
+
+    override func translate(by delta: CGSize) { anchor.x += delta.width; anchor.y += delta.height }
+    override var isDegenerate: Bool { text.isEmpty }
+    override func transform(_ t: CGAffineTransform) { anchor = anchor.applying(t) }
+
+    override func clone() -> AnnotationElement {
+        let copy = WatermarkElement(text: text, tiled: tiled, anchor: anchor,
+                                    imageSize: imageSize, style: style, opacity: opacity)
+        copy.rotation = rotation
+        return copy
+    }
+
+    override func draw(in cg: CGContext, context rc: AnnotationRenderContext) {
+        guard !text.isEmpty else { return }
+        cg.textMatrix = .identity
+        guard tiled else { drawOne(in: cg, at: anchor); return }
+        let s = textSize
+        let stepX = s.width + max(60, s.width * 0.6)
+        let stepY = max(80, s.height * 3)
+        // Extend the grid beyond the image so the rotated pattern still covers the corners.
+        var y = -stepY + anchor.y.truncatingRemainder(dividingBy: stepY)
+        while y < imageSize.height + stepY {
+            var x = -stepX + anchor.x.truncatingRemainder(dividingBy: stepX)
+            while x < imageSize.width + stepX {
+                drawOne(in: cg, at: CGPoint(x: x, y: y))
+                x += stepX
+            }
+            y += stepY
+        }
+    }
+
+    private func drawOne(in cg: CGContext, at p: CGPoint) {
+        cg.saveGState()
+        cg.translateBy(x: p.x, y: p.y)
+        if tiled { cg.rotate(by: angle) }
+        cg.textPosition = .zero
+        CTLineDraw(line(), cg)
+        cg.restoreGState()
+    }
+}
+
 // MARK: - Numbered step badge
 
 final class StepElement: AnnotationElement {

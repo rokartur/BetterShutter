@@ -275,6 +275,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         let addImage = NSMenuItem(title: "Add Image…", action: #selector(addImagePicked), keyEquivalent: "")
         addImage.target = self
         popup.menu?.addItem(addImage)
+        let watermark = NSMenuItem(title: "Add Watermark…", action: #selector(addWatermarkPicked), keyEquivalent: "")
+        watermark.target = self
+        popup.menu?.addItem(watermark)
         popup.menu?.addItem(.separator())
         for (title, filter) in Self.filters {
             let item = NSMenuItem(title: title, action: #selector(filterPicked(_:)), keyEquivalent: "")
@@ -317,6 +320,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     @objc private func invertPicked() { canvas.invertColors() }
     @objc private func autoRedactPicked() { canvas.autoRedactPII() }
+    @objc private func addWatermarkPicked() { canvas.addWatermark() }
 
     @objc private func addImagePicked() {
         let panel = NSOpenPanel()

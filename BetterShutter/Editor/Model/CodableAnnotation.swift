@@ -50,6 +50,8 @@ nonisolated struct CodableAnnotation: Codable, Sendable {
     var rotation: Double?   // any element, radians
     var imagePNG: Data?     // composed image (base64 in JSON)
     var points: [CGPoint]?  // pen / marker freehand stroke
+    var tiled: Bool?        // watermark
+    var opacity: Double?    // watermark
 }
 
 nonisolated struct AnnotationProject: Codable, Sendable {
@@ -123,6 +125,14 @@ enum AnnotationProjectIO {
             return CodableAnnotation(kind: "marker", style: style, points: x.points)
         case let x as PenElement:
             return CodableAnnotation(kind: "pen", style: style, points: x.points)
+        case let x as WatermarkElement:
+            // `end` carries the image size (width, height) so the tiled pattern restores correctly.
+            var record = CodableAnnotation(kind: "watermark", style: style, start: x.anchor,
+                                           end: CGPoint(x: x.imageSize.width, y: x.imageSize.height),
+                                           text: x.text)
+            record.tiled = x.tiled
+            record.opacity = Double(x.opacity)
+            return record
         case let x as TextElement:
             return CodableAnnotation(kind: "text", style: style, origin: x.origin, text: x.text)
         case let x as StepElement:
@@ -181,6 +191,11 @@ enum AnnotationProjectIO {
                 : PenElement(start: pts.first ?? .zero, style: style)
             if !pts.isEmpty { pen.points = pts }
             return pen
+        case "watermark":
+            let size = c.end.map { CGSize(width: $0.x, height: $0.y) } ?? .zero
+            return WatermarkElement(text: c.text ?? "", tiled: c.tiled ?? true,
+                                    anchor: c.start ?? .zero, imageSize: size, style: style,
+                                    opacity: CGFloat(c.opacity ?? 0.22))
         case "text":      return TextElement(origin: c.origin ?? .zero, text: c.text ?? "", style: style)
         case "step":
             return StepElement(center: c.center ?? .zero, number: c.number ?? 1, style: style,

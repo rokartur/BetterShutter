@@ -142,6 +142,41 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
+    /// Prompt for watermark text and add it (tiled diagonally across the image by default), one undo.
+    func addWatermark() {
+        let alert = NSAlert()
+        alert.messageText = "Add Watermark"
+        alert.informativeText = "Overlay text across the image."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 28, width: 260, height: 24))
+        field.placeholderString = "Confidential"
+        let tile = NSButton(checkboxWithTitle: "Tile across image", target: nil, action: nil)
+        tile.frame = NSRect(x: 0, y: 0, width: 260, height: 20)
+        tile.state = .on
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 56))
+        accessory.addSubview(field)
+        accessory.addSubview(tile)
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = field
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let before = snapshot()
+        let tiled = tile.state == .on
+        let anchor = tiled ? .zero : CGPoint(x: imageSize.width * 0.06, y: imageSize.height * 0.06)
+        let element = WatermarkElement(text: text, tiled: tiled, anchor: anchor,
+                                       imageSize: imageSize, style: style)
+        elements.append(element)
+        selected = element
+        commit(before, "Watermark")
+        needsDisplay = true
+    }
+
     /// Find PII via OCR and cover each matching line with a black-out box (one undo step).
     func autoRedactPII() {
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)

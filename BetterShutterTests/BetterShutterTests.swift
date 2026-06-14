@@ -826,6 +826,37 @@ struct BeautifyPresetTests {
 }
 
 @MainActor
+struct WatermarkElementTests {
+    private let style = AnnotationStyle.makeDefault(imageWidth: 120)
+
+    @Test
+    func tiledFlattensAtSameSize() {
+        let base = makeSolidTestImage(width: 120, height: 90)
+        let wm = WatermarkElement(text: "Confidential", tiled: true, anchor: .zero,
+                                  imageSize: CGSize(width: 120, height: 90), style: style)
+        let out = AnnotationRenderer.flatten(base: base, elements: [wm], ciContext: CIContext())
+        #expect(out?.width == 120)
+        #expect(out?.height == 90)
+        #expect(wm.clone() is WatermarkElement)
+    }
+
+    @Test
+    func projectRoundTripPreservesWatermark() throws {
+        let base = makeSolidTestImage(width: 60, height: 40)
+        let wm = WatermarkElement(text: "Draft", tiled: false,
+                                  anchor: CGPoint(x: 5, y: 6),
+                                  imageSize: CGSize(width: 60, height: 40), style: style, opacity: 0.3)
+        let project = try #require(AnnotationProjectIO.make(base: base, elements: [wm]))
+        let decoded = try JSONDecoder().decode(AnnotationProject.self, from: JSONEncoder().encode(project))
+        let back = try #require(AnnotationProjectIO.elements(decoded).first as? WatermarkElement)
+        #expect(back.text == "Draft")
+        #expect(back.tiled == false)
+        #expect(back.imageSize == CGSize(width: 60, height: 40))
+        #expect(abs(back.opacity - 0.3) < 1e-6)
+    }
+}
+
+@MainActor
 struct PenElementTests {
     private let style = AnnotationStyle.makeDefault(imageWidth: 100)
 
