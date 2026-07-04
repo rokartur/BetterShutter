@@ -129,6 +129,7 @@ nonisolated enum Preferences {
         static let highlightClicks = "highlightClicks"
         static let showCursorInRecording = "showCursorInRecording"
         static let includeWindowShadow = "includeWindowShadow"
+        static let includeWindowBorder = "includeWindowBorder"
         static let hasOnboarded = "hasOnboarded"
         static let recordingFPS = "recordingFPS"
         static let recordingInProgressPath = "recordingInProgressPath"
@@ -266,6 +267,14 @@ nonisolated enum Preferences {
     static var includeWindowShadow: Bool {
         get { defaults.object(forKey: Key.includeWindowShadow) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.includeWindowShadow) }
+    }
+
+    /// Re-stroke the thin light outline along the window edge on single-window captures.
+    /// WindowServer composites it at display time, so ScreenCaptureKit's window snapshot
+    /// lacks it; on by default to match the native screenshot look.
+    static var includeWindowBorder: Bool {
+        get { defaults.object(forKey: Key.includeWindowBorder) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.includeWindowBorder) }
     }
 
     /// Halve Retina (scale > 1) captures to 1× on output for smaller files.

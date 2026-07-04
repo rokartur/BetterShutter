@@ -199,14 +199,19 @@ actor CaptureEngine {
     // MARK: Window
 
     func captureWindow(_ windowID: CGWindowID) async throws -> CapturedImage {
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: true
-        )
-        guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
-            throw CaptureError.windowNotFound
+        // Cached content usually satisfies this (the overlay fetched it moments ago); refetch
+        // once if the window isn't there in case the cache predates it.
+        var window = try await sharedContent().windows.first { $0.windowID == windowID }
+        if window == nil {
+            window = try await refreshedContent().windows.first { $0.windowID == windowID }
         }
+        guard let window else { throw CaptureError.windowNotFound }
         let filter = SCContentFilter(desktopIndependentWindow: window)
-        return try await capture(filter: filter, displayID: nil, includeShadow: Preferences.includeWindowShadow)
+        let captured = try await capture(filter: filter, displayID: nil, includeShadow: Preferences.includeWindowShadow)
+        guard Preferences.includeWindowBorder,
+              let outlined = WindowHairline.stroked(on: captured.cgImage, scale: captured.scale)
+        else { return captured }
+        return CapturedImage(cgImage: outlined, scale: captured.scale, displayID: nil)
     }
 
     // MARK: Core
