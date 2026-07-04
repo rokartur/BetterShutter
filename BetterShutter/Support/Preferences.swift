@@ -132,7 +132,6 @@ nonisolated enum Preferences {
         static let hasOnboarded = "hasOnboarded"
         static let recordingFPS = "recordingFPS"
         static let recordingInProgressPath = "recordingInProgressPath"
-        static let editorToolKeys = "editorToolKeys"
         static let beautifyPresets = "beautifyPresets"
         static let lastRegion = "lastRegion"
         static let stepFormat = "stepFormat"
@@ -243,19 +242,6 @@ nonisolated enum Preferences {
         beautifyPresets = beautifyPresets.filter { $0.name != name }
     }
 
-    /// Effective single-key shortcut for an editor tool: the user's override, else the default.
-    static func editorToolKey(for tool: ToolKind) -> Character {
-        let map = defaults.dictionary(forKey: Key.editorToolKeys) as? [String: String] ?? [:]
-        if let override = map[tool.rawValue]?.lowercased().first { return override }
-        return tool.shortcutKey
-    }
-
-    static func setEditorToolKey(_ key: Character?, for tool: ToolKind) {
-        var map = defaults.dictionary(forKey: Key.editorToolKeys) as? [String: String] ?? [:]
-        map[tool.rawValue] = key.map { String($0).lowercased() }
-        defaults.set(map, forKey: Key.editorToolKeys)
-    }
-
     /// Path of an MP4 currently being recorded, for crash recovery. Nil when idle.
     static var recordingInProgressPath: String? {
         get { defaults.string(forKey: Key.recordingInProgressPath) }
@@ -274,9 +260,11 @@ nonisolated enum Preferences {
         set { defaults.set(newValue, forKey: Key.hasOnboarded) }
     }
 
-    /// Include the macOS drop shadow when capturing a single window.
+    /// Include the macOS drop shadow when capturing a single window. On by
+    /// default so window screenshots keep the soft shadow that frames them,
+    /// matching the native ⌘⇧4-Space look.
     static var includeWindowShadow: Bool {
-        get { defaults.object(forKey: Key.includeWindowShadow) as? Bool ?? false }
+        get { defaults.object(forKey: Key.includeWindowShadow) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.includeWindowShadow) }
     }
 

@@ -1,4 +1,5 @@
 import AppKit
+import BetterShortcuts
 import UniformTypeIdentifiers
 
 /// Hosts the annotation editor: a tool/style/action bar above the canvas. Copy and Save flatten
@@ -222,7 +223,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
         seg.trackingMode = .selectOne
         for (index, kind) in ToolKind.allCases.enumerated() {
             seg.setImage(NSImage(systemSymbolName: kind.symbol, accessibilityDescription: kind.label), forSegment: index)
-            seg.setToolTip("\(kind.label) (\(kind.effectiveShortcutKey.uppercased()))", forSegment: index)
+            let combo = kind.effectiveShortcut.map { " (\($0.presentableDescription))" } ?? ""
+            seg.setToolTip("\(kind.label)\(combo)", forSegment: index)
             seg.setWidth(30, forSegment: index)
         }
         seg.selectedSegment = ToolKind.allCases.firstIndex(of: canvas.tool) ?? 1

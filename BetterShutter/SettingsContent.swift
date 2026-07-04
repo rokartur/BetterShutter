@@ -4,32 +4,56 @@ import BetterShortcuts
 import BetterUpdater
 import ServiceManagement
 
+/// Vertical-gradient sidebar badge in the macOS System Settings style,
+/// `0xRRGGBB` from the top color to the bottom. `scale` nudges the SF Symbol
+/// so optically small or busy glyphs read evenly against the rest.
+private func tabIcon(_ top: UInt32, _ bottom: UInt32, scale: CGFloat = 1.0) -> SettingsTabIconStyle {
+    SettingsTabIconStyle(
+        gradientStart: SettingsColor(hex: top),
+        gradientEnd: SettingsColor(hex: bottom),
+        symbolScale: scale
+    )
+}
+
+/// A compact on/off switch shared by every settings tab, so toggles stay one
+/// size everywhere and sit lighter next to their labels.
+@MainActor
+private func makeToggle(_ isOn: Bool, target: AnyObject, action: Selector) -> NSSwitch {
+    let toggle = NSSwitch()
+    toggle.controlSize = .small
+    toggle.state = isOn ? .on : .off
+    toggle.target = target
+    toggle.action = action
+    return toggle
+}
+
 /// Builds the BetterSettings window configuration for BetterShutter.
 @MainActor
 func makeSettingsConfiguration() -> SettingsConfiguration {
     SettingsConfiguration(
         tabs: [
-            SettingsTab(id: "general", title: "General", icon: "gearshape.fill", iconStyle: .neutral),
+            SettingsTab(id: "general", title: "General", icon: "gearshape.fill",
+                        iconStyle: tabIcon(0x9A9AA0, 0x6C6C70)),
             SettingsTab(id: "shortcuts", title: "Shortcuts", icon: "command",
-                        iconStyle: .solid(SettingsColor(hex: 0x5E5CE6))),
+                        iconStyle: tabIcon(0x7E7CF0, 0x5E5CE6, scale: 1.05)),
             SettingsTab(id: "capture", title: "Capture", icon: "camera.viewfinder",
-                        iconStyle: .solid(SettingsColor(hex: 0x0A84FF))),
-            SettingsTab(id: "overlay", title: "Overlay", icon: "viewfinder",
-                        iconStyle: .solid(SettingsColor(hex: 0x5AC8FA))),
+                        iconStyle: tabIcon(0x3B9EFF, 0x0A84FF)),
+            SettingsTab(id: "overlay", title: "Overlay", icon: "rectangle.dashed",
+                        iconStyle: tabIcon(0x64D2FF, 0x2AA9E0, scale: 1.05)),
             SettingsTab(id: "recording", title: "Recording", icon: "video.fill",
-                        iconStyle: .solid(SettingsColor(hex: 0xFF453A))),
-            SettingsTab(id: "editor", title: "Editor", icon: "pencil.tip.crop.circle",
-                        iconStyle: .solid(SettingsColor(hex: 0xFF375F))),
+                        iconStyle: tabIcon(0xFF6A61, 0xFF453A)),
+            SettingsTab(id: "editor", title: "Editor", icon: "pencil.and.outline",
+                        iconStyle: tabIcon(0xFF6482, 0xFF375F, scale: 1.05)),
             SettingsTab(id: "beautify", title: "Beautify", icon: "wand.and.stars",
-                        iconStyle: .solid(SettingsColor(hex: 0xBF5AF2))),
-            SettingsTab(id: "output", title: "Output", icon: "square.and.arrow.down",
-                        iconStyle: .solid(SettingsColor(hex: 0x30D158))),
-            SettingsTab(id: "cloud", title: "Cloud", icon: "icloud.and.arrow.up",
-                        iconStyle: .solid(SettingsColor(hex: 0x64D2FF))),
-            SettingsTab(id: "advanced", title: "Advanced", icon: "slider.horizontal.3",
-                        iconStyle: .solid(SettingsColor(hex: 0x8E8E93))),
+                        iconStyle: tabIcon(0xCF6FF5, 0xBF5AF2, scale: 0.95)),
+            SettingsTab(id: "output", title: "Output", icon: "square.and.arrow.down.fill",
+                        iconStyle: tabIcon(0x34D65C, 0x28B84C)),
+            SettingsTab(id: "cloud", title: "Cloud", icon: "icloud.and.arrow.up.fill",
+                        iconStyle: tabIcon(0x66D4FF, 0x0A84FF)),
+            SettingsTab(id: "advanced", title: "Advanced", icon: "wrench.and.screwdriver.fill",
+                        iconStyle: tabIcon(0x7C7C82, 0x545458, scale: 0.95)),
             SettingsTab(id: "about", title: "About", icon: "info.circle.fill",
-                        iconStyle: .solid(SettingsColor(hex: 0xFF6F00))),
+                        iconStyle: tabIcon(0xFFA230, 0xFF6F00)),
         ],
         searchItems: [
             SettingsSearchItem(id: "general.launchAtLogin", tabID: "general", sectionAnchor: "general.behavior",
@@ -38,9 +62,9 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
             SettingsSearchItem(id: "general.autoUpdate", tabID: "general", sectionAnchor: "general.updates",
                                title: "Check for updates automatically", tabTitle: "General", sectionTitle: "Updates",
                                keywords: ["update", "upgrade", "auto"]),
-            SettingsSearchItem(id: "shortcuts.region", tabID: "shortcuts", sectionAnchor: "shortcuts.capture",
-                               title: "Capture Region shortcut", tabTitle: "Shortcuts", sectionTitle: "Capture",
-                               keywords: ["hotkey", "shortcut", "region", "selection"]),
+            SettingsSearchItem(id: "shortcuts.screenshot", tabID: "shortcuts", sectionAnchor: "shortcuts.capture",
+                               title: "Capture Screenshot shortcut", tabTitle: "Shortcuts", sectionTitle: "Capture",
+                               keywords: ["hotkey", "shortcut", "region", "window", "selection", "space"]),
             SettingsSearchItem(id: "overlay.magnifier", tabID: "overlay", sectionAnchor: "overlay.main",
                                title: "Show magnifier loupe", tabTitle: "Overlay", sectionTitle: "Selection",
                                keywords: ["zoom", "loupe", "pixel", "color"]),
@@ -89,10 +113,7 @@ final class CloudSettingsTab: SettingsTabViewController {
                subtitle: "CleanShot Cloud is proprietary; bring your own S3-compatible storage or use imgbb.",
                accessory: provider)
 
-        let auto = NSSwitch()
-        auto.state = Preferences.uploadAfterCapture ? .on : .off
-        auto.target = self
-        auto.action = #selector(toggleAuto(_:))
+        let auto = makeToggle(Preferences.uploadAfterCapture, target: self, action: #selector(toggleAuto(_:)))
         addRow(to: providerSection, title: "Upload after capture",
                subtitle: "Automatically upload every capture and copy the link.", accessory: auto)
 
@@ -109,15 +130,9 @@ final class CloudSettingsTab: SettingsTabViewController {
                accessory: field(Preferences.s3Config.endpointHost, #selector(s3Endpoint(_:)), secure: false))
         addRow(to: s3, title: "Public base URL", subtitle: "Optional, e.g. https://cdn.example.com — the share link uses this.",
                accessory: field(Preferences.s3Config.publicBaseURL, #selector(s3PublicURL(_:)), secure: false))
-        let pathStyle = NSSwitch()
-        pathStyle.state = Preferences.s3Config.usePathStyle ? .on : .off
-        pathStyle.target = self
-        pathStyle.action = #selector(s3PathStyle(_:))
+        let pathStyle = makeToggle(Preferences.s3Config.usePathStyle, target: self, action: #selector(s3PathStyle(_:)))
         addRow(to: s3, title: "Path-style URLs", subtitle: "On for R2 / MinIO; off for AWS virtual-hosted.", accessory: pathStyle)
-        let acl = NSSwitch()
-        acl.state = Preferences.s3Config.setPublicACL ? .on : .off
-        acl.target = self
-        acl.action = #selector(s3ACL(_:))
+        let acl = makeToggle(Preferences.s3Config.setPublicACL, target: self, action: #selector(s3ACL(_:)))
         addRow(to: s3, title: "Set public-read ACL", subtitle: "On for AWS S3 public objects; off for R2.", accessory: acl)
 
         let imgbb = addSection(title: "imgbb", anchor: "cloud.imgbb")
@@ -157,19 +172,13 @@ final class GeneralSettingsTab: SettingsTabViewController {
 
     override func setupContent() {
         let behavior = addSection(title: "Behavior", anchor: "general.behavior")
-        let loginSwitch = NSSwitch()
-        loginSwitch.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
-        loginSwitch.target = self
-        loginSwitch.action = #selector(toggleLaunchAtLogin(_:))
+        let loginSwitch = makeToggle(SMAppService.mainApp.status == .enabled, target: self, action: #selector(toggleLaunchAtLogin(_:)))
         addRow(to: behavior, title: "Launch at login",
                subtitle: "Start automatically when you log in.",
                accessory: loginSwitch, searchItemID: "general.launchAtLogin")
 
         let updates = addSection(title: "Updates", anchor: "general.updates")
-        let autoSwitch = NSSwitch()
-        autoSwitch.state = updater.automaticInstallEnabled ? .on : .off
-        autoSwitch.target = self
-        autoSwitch.action = #selector(toggleAutoUpdate(_:))
+        let autoSwitch = makeToggle(updater.automaticInstallEnabled, target: self, action: #selector(toggleAutoUpdate(_:)))
         addRow(to: updates, title: "Check for updates automatically",
                subtitle: "Download and install updates in the background.",
                accessory: autoSwitch, searchItemID: "general.autoUpdate")
@@ -206,18 +215,12 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
         addRecorder(to: section, title: "All-in-One Capture",
                     subtitle: "Region or window with the full action bar; restores your last selection.",
                     name: .allInOne, searchItemID: "shortcuts.allInOne")
-        addRecorder(to: section, title: "Quick Screenshot",
-                    subtitle: "Select an area; deliver it instantly (no action bar).", name: .quickScreenshot,
-                    searchItemID: "shortcuts.quick")
+        addRecorder(to: section, title: "Capture Screenshot",
+                    subtitle: "Drag out a selection; hold Space to click a window instead.", name: .captureScreenshot,
+                    searchItemID: "shortcuts.screenshot")
         addRecorder(to: section, title: "Screenshot & Markup",
                     subtitle: "Select an area, then open the editor with every tool.", name: .screenshotEdit,
                     searchItemID: "shortcuts.markup")
-        addRecorder(to: section, title: "Capture Region",
-                    subtitle: "Drag out a selection to capture.", name: .captureRegion,
-                    searchItemID: "shortcuts.region")
-        addRecorder(to: section, title: "Capture Window",
-                    subtitle: "Click a window to capture it.", name: .captureWindow,
-                    searchItemID: nil)
         addRecorder(to: section, title: "Capture Full Screen",
                     subtitle: "Capture the display under the cursor.", name: .captureFullScreen,
                     searchItemID: nil)
@@ -269,17 +272,11 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: behavior, title: "When a capture is taken",
                subtitle: "Copy to the clipboard and/or show the floating preview.", accessory: popup)
 
-        let downscale = NSSwitch()
-        downscale.state = Preferences.downscaleRetina ? .on : .off
-        downscale.target = self
-        downscale.action = #selector(toggleDownscale(_:))
+        let downscale = makeToggle(Preferences.downscaleRetina, target: self, action: #selector(toggleDownscale(_:)))
         addRow(to: behavior, title: "Downscale Retina to 1×",
                subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
 
-        let hideIcons = NSSwitch()
-        hideIcons.state = Preferences.hideDesktopIcons ? .on : .off
-        hideIcons.target = self
-        hideIcons.action = #selector(toggleHideDesktopIcons(_:))
+        let hideIcons = makeToggle(Preferences.hideDesktopIcons, target: self, action: #selector(toggleHideDesktopIcons(_:)))
         addRow(to: behavior, title: "Hide desktop icons",
                subtitle: "Cover desktop icons with the wallpaper during captures and recordings (no Finder relaunch).",
                accessory: hideIcons)
@@ -336,24 +333,15 @@ final class CaptureSettingsTab: SettingsTabViewController {
 final class OverlaySettingsTab: SettingsTabViewController {
     override func setupContent() {
         let overlay = addSection(title: "Selection", anchor: "overlay.main")
-        let magnifier = NSSwitch()
-        magnifier.state = Preferences.magnifierEnabled ? .on : .off
-        magnifier.target = self
-        magnifier.action = #selector(toggleMagnifier(_:))
+        let magnifier = makeToggle(Preferences.magnifierEnabled, target: self, action: #selector(toggleMagnifier(_:)))
         addRow(to: overlay, title: "Show magnifier loupe",
                subtitle: "Pixel-accurate zoom with a color readout while selecting.",
                accessory: magnifier, searchItemID: "overlay.magnifier")
 
-        let sound = NSSwitch()
-        sound.state = Preferences.captureSoundEnabled ? .on : .off
-        sound.target = self
-        sound.action = #selector(toggleSound(_:))
+        let sound = makeToggle(Preferences.captureSoundEnabled, target: self, action: #selector(toggleSound(_:)))
         addRow(to: overlay, title: "Play capture sound", subtitle: "A shutter sound on capture.", accessory: sound)
 
-        let shadow = NSSwitch()
-        shadow.state = Preferences.includeWindowShadow ? .on : .off
-        shadow.target = self
-        shadow.action = #selector(toggleWindowShadow(_:))
+        let shadow = makeToggle(Preferences.includeWindowShadow, target: self, action: #selector(toggleWindowShadow(_:)))
         addRow(to: overlay, title: "Include window shadow",
                subtitle: "Keep the drop shadow when capturing a single window.", accessory: shadow)
     }
@@ -368,50 +356,14 @@ final class OverlaySettingsTab: SettingsTabViewController {
 final class RecordingSettingsTab: SettingsTabViewController {
     override func setupContent() {
         let audio = addSection(title: "Audio", anchor: "recording.audio")
-        let systemAudio = NSSwitch()
-        systemAudio.state = Preferences.recordSystemAudio ? .on : .off
-        systemAudio.target = self
-        systemAudio.action = #selector(toggleRecordAudio(_:))
+        let systemAudio = makeToggle(Preferences.recordSystemAudio, target: self, action: #selector(toggleRecordAudio(_:)))
         addRow(to: audio, title: "Record system audio",
                subtitle: "Include computer audio in screen recordings.",
                accessory: systemAudio, searchItemID: "recording.audio")
 
-        let mic = NSSwitch()
-        mic.state = Preferences.recordMicrophone ? .on : .off
-        mic.target = self
-        mic.action = #selector(toggleRecordMic(_:))
+        let mic = makeToggle(Preferences.recordMicrophone, target: self, action: #selector(toggleRecordMic(_:)))
         addRow(to: audio, title: "Record microphone",
                subtitle: "Add narration from the mic as a second audio track.", accessory: mic)
-
-        let cursor = addSection(title: "Cursor & Clicks", anchor: "recording.cursor")
-        let showCursor = NSSwitch()
-        showCursor.state = Preferences.showCursorInRecording ? .on : .off
-        showCursor.target = self
-        showCursor.action = #selector(toggleShowCursor(_:))
-        addRow(to: cursor, title: "Show cursor",
-               subtitle: "Include the mouse pointer in recordings.", accessory: showCursor)
-
-        let clicks = NSSwitch()
-        clicks.state = Preferences.highlightClicks ? .on : .off
-        clicks.target = self
-        clicks.action = #selector(toggleHighlightClicks(_:))
-        addRow(to: cursor, title: "Highlight mouse clicks",
-               subtitle: "Show an animated ring at each click in recordings.", accessory: clicks)
-
-        let overlays = addSection(title: "Overlays", anchor: "recording.overlays")
-        let webcam = NSSwitch()
-        webcam.state = Preferences.showWebcam ? .on : .off
-        webcam.target = self
-        webcam.action = #selector(toggleWebcam(_:))
-        addRow(to: overlays, title: "Webcam overlay",
-               subtitle: "Float a round webcam bubble into the recording.", accessory: webcam)
-
-        let keys = NSSwitch()
-        keys.state = Preferences.showKeystrokes ? .on : .off
-        keys.target = self
-        keys.action = #selector(toggleKeystrokes(_:))
-        addRow(to: overlays, title: "Show keystrokes",
-               subtitle: "Display pressed keys (needs Input Monitoring permission).", accessory: keys)
 
         let quality = addSection(title: "Quality", anchor: "recording.quality")
         let fps = NSPopUpButton()
@@ -421,6 +373,24 @@ final class RecordingSettingsTab: SettingsTabViewController {
         fps.action = #selector(changeFPS(_:))
         addRow(to: quality, title: "Frame rate",
                subtitle: "Higher is smoother; lower makes smaller files.", accessory: fps)
+
+        let cursor = addSection(title: "Cursor & Clicks", anchor: "recording.cursor")
+        let showCursor = makeToggle(Preferences.showCursorInRecording, target: self, action: #selector(toggleShowCursor(_:)))
+        addRow(to: cursor, title: "Show cursor",
+               subtitle: "Include the mouse pointer in recordings.", accessory: showCursor)
+
+        let clicks = makeToggle(Preferences.highlightClicks, target: self, action: #selector(toggleHighlightClicks(_:)))
+        addRow(to: cursor, title: "Highlight mouse clicks",
+               subtitle: "Show an animated ring at each click in recordings.", accessory: clicks)
+
+        let overlays = addSection(title: "Overlays", anchor: "recording.overlays")
+        let webcam = makeToggle(Preferences.showWebcam, target: self, action: #selector(toggleWebcam(_:)))
+        addRow(to: overlays, title: "Webcam overlay",
+               subtitle: "Float a round webcam bubble into the recording.", accessory: webcam)
+
+        let keys = makeToggle(Preferences.showKeystrokes, target: self, action: #selector(toggleKeystrokes(_:)))
+        addRow(to: overlays, title: "Show keystrokes",
+               subtitle: "Display pressed keys (needs Input Monitoring permission).", accessory: keys)
 
         let focus = addSection(title: "Focus", anchor: "recording.focus")
         let startField = NSTextField(string: Preferences.focusShortcutStart)
@@ -480,14 +450,10 @@ final class EditorSettingsTab: SettingsTabViewController {
         addRow(to: steps, title: "Start at", subtitle: "The first badge's number.", accessory: start)
 
         let tools = addSection(title: "Tool Shortcuts", anchor: "editor.tools")
-        for (index, tool) in ToolKind.allCases.enumerated() {
-            let field = NSTextField(string: String(tool.effectiveShortcutKey))
-            field.alignment = .center
-            field.tag = index
-            field.target = self
-            field.action = #selector(toolKeyChanged(_:))
-            field.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            addRow(to: tools, title: tool.label, subtitle: "Single-key shortcut in the editor.", accessory: field)
+        for tool in ToolKind.allCases {
+            let recorder = BetterShortcuts.RecorderCocoa(for: tool.shortcutName, policy: .unrestricted)
+            recorder.widthAnchor.constraint(equalToConstant: 170).isActive = true
+            addRow(to: tools, title: tool.label, subtitle: "Active while the editor is open.", accessory: recorder)
         }
 
         let colors = addSection(title: "Colors", anchor: "editor.colors")
@@ -505,14 +471,6 @@ final class EditorSettingsTab: SettingsTabViewController {
     @objc private func changeStepStart(_ sender: NSTextField) {
         Preferences.stepStart = max(1, sender.integerValue)
         sender.integerValue = Preferences.stepStart
-    }
-
-    @objc private func toolKeyChanged(_ sender: NSTextField) {
-        guard ToolKind.allCases.indices.contains(sender.tag) else { return }
-        let tool = ToolKind.allCases[sender.tag]
-        let key = sender.stringValue.lowercased().first
-        Preferences.setEditorToolKey(key, for: tool)
-        sender.stringValue = String(tool.effectiveShortcutKey)
     }
 
     @objc private func clearColors() {

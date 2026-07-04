@@ -1,4 +1,5 @@
 import Foundation
+import BetterShortcuts
 
 /// The annotation tools available in the editor.
 nonisolated enum ToolKind: String, CaseIterable, Sendable {
@@ -73,37 +74,47 @@ nonisolated enum ToolKind: String, CaseIterable, Sendable {
         }
     }
 
-    /// Single-key editor shortcut (no modifiers). Lowercase; matched against typed characters.
-    var shortcutKey: Character {
+    /// Default single-key editor shortcut (no modifiers).
+    private var defaultShortcutKey: BetterShortcuts.Key {
         switch self {
-        case .select: return "v"
-        case .arrow: return "a"
-        case .rectangle: return "r"
-        case .ellipse: return "o"
-        case .line: return "l"
-        case .pen: return "d"
-        case .marker: return "e"
-        case .measure: return "m"
-        case .loupe: return "z"
-        case .text: return "t"
-        case .highlighter: return "h"
-        case .pixelate: return "p"
-        case .blur: return "b"
-        case .blackout: return "k"
-        case .erase: return "x"
-        case .spotlight: return "s"
-        case .eyedropper: return "i"
-        case .stamp: return "g"
-        case .step: return "n"
-        case .crop: return "c"
+        case .select: return .v
+        case .arrow: return .a
+        case .rectangle: return .r
+        case .ellipse: return .o
+        case .line: return .l
+        case .pen: return .d
+        case .marker: return .e
+        case .measure: return .m
+        case .loupe: return .z
+        case .text: return .t
+        case .highlighter: return .h
+        case .pixelate: return .p
+        case .blur: return .b
+        case .blackout: return .k
+        case .erase: return .x
+        case .spotlight: return .s
+        case .eyedropper: return .i
+        case .stamp: return .g
+        case .step: return .n
+        case .crop: return .c
         }
     }
 
-    /// The active key for this tool (user override from Preferences, else the default).
-    var effectiveShortcutKey: Character { Preferences.editorToolKey(for: self) }
+    /// BetterShortcuts name backing this tool's editor shortcut. Never registered as a global
+    /// hotkey (no `onKeyDown`) — the editor canvas matches it against key events while focused.
+    var shortcutName: BetterShortcuts.Name { Self.shortcutNames[self]! }
 
-    static func forShortcut(_ character: Character) -> ToolKind? {
-        allCases.first { $0.effectiveShortcutKey == character }
+    private static let shortcutNames: [ToolKind: BetterShortcuts.Name] = Dictionary(
+        uniqueKeysWithValues: allCases.map {
+            ($0, BetterShortcuts.Name("editorTool_\($0.rawValue)", default: .init($0.defaultShortcutKey)))
+        }
+    )
+
+    /// The active shortcut for this tool (user's recorded combo, else the default).
+    var effectiveShortcut: BetterShortcuts.Shortcut? { shortcutName.shortcut }
+
+    static func forShortcut(_ shortcut: BetterShortcuts.Shortcut) -> ToolKind? {
+        allCases.first { $0.effectiveShortcut == shortcut }
     }
 
     /// Tools that draw by dragging from a start point to an end point.

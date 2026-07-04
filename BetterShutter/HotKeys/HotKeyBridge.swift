@@ -9,17 +9,11 @@ enum HotKeyBridge {
         BetterShortcuts.onKeyDown(for: .allInOne) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.captureAllInOne() }
         }
-        BetterShortcuts.onKeyDown(for: .quickScreenshot) {
-            MainActor.assumeIsolated { CaptureCoordinator.shared.captureQuick() }
+        BetterShortcuts.onKeyDown(for: .captureScreenshot) {
+            MainActor.assumeIsolated { CaptureCoordinator.shared.captureScreenshot() }
         }
         BetterShortcuts.onKeyDown(for: .screenshotEdit) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.captureAndEdit() }
-        }
-        BetterShortcuts.onKeyDown(for: .captureRegion) {
-            MainActor.assumeIsolated { CaptureCoordinator.shared.capture(.region) }
-        }
-        BetterShortcuts.onKeyDown(for: .captureWindow) {
-            MainActor.assumeIsolated { CaptureCoordinator.shared.capture(.window) }
         }
         BetterShortcuts.onKeyDown(for: .captureFullScreen) {
             MainActor.assumeIsolated { CaptureCoordinator.shared.capture(.fullDisplay) }
@@ -49,10 +43,8 @@ enum HotKeyBridge {
         // Friendly labels in the recorder's conflict alert.
         BetterShortcuts.displayName = { name in
             if name == .allInOne { return "All-in-One Capture" }
-            if name == .quickScreenshot { return "Quick Screenshot" }
+            if name == .captureScreenshot { return "Capture Screenshot" }
             if name == .screenshotEdit { return "Screenshot & Markup" }
-            if name == .captureRegion { return "Capture Region" }
-            if name == .captureWindow { return "Capture Window" }
             if name == .captureFullScreen { return "Capture Full Screen" }
             if name == .captureText { return "Capture Text (OCR)" }
             if name == .captureCutout { return "Capture Object (Cutout)" }
@@ -61,6 +53,10 @@ enum HotKeyBridge {
             if name == .recordRegion { return "Record Region" }
             if name == .recordWindow { return "Record Window" }
             if name == .recordGIF { return "Record GIF" }
+            if name.rawValue.hasPrefix("editorTool_"),
+               let tool = ToolKind(rawValue: String(name.rawValue.dropFirst("editorTool_".count))) {
+                return "\(tool.label) (editor tool)"
+            }
             return name.rawValue
         }
     }
