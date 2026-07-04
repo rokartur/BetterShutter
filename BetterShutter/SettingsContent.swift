@@ -528,10 +528,16 @@ final class OutputSettingsTab: SettingsTabViewController {
     override func setupContent() {
         let files = addSection(title: "Files", anchor: "output.files")
 
+        let saveToggle = makeToggle(Preferences.saveScreenshotsToDisk, target: self, action: #selector(toggleSaveToDisk(_:)))
+        addRow(to: files, title: "Save to disk",
+               subtitle: "Automatically write every screenshot to the save location. When off, captures only go to the clipboard, preview, and history.",
+               accessory: saveToggle, searchItemID: "output.savetodisk")
+
         folderButton.bezelStyle = .rounded
         folderButton.title = Preferences.saveDirectory.lastPathComponent
         folderButton.target = self
         folderButton.action = #selector(chooseFolder)
+        folderButton.isEnabled = Preferences.saveScreenshotsToDisk
         addRow(to: files, title: "Save location",
                subtitle: "Where screenshots are written.", accessory: folderButton,
                searchItemID: "output.location")

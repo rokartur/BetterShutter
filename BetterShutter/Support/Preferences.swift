@@ -114,6 +114,7 @@ nonisolated enum Preferences {
 
     private enum Key {
         static let saveDirectory = "saveDirectoryPath"
+        static let saveToDisk = "saveScreenshotsToDisk"
         static let format = "imageFormat"
         static let jpegQuality = "jpegQuality"
         static let filenameTemplate = "filenameTemplate"
@@ -316,6 +317,14 @@ nonisolated enum Preferences {
     static var showKeystrokes: Bool {
         get { defaults.object(forKey: Key.showKeystrokes) as? Bool ?? false }
         set { defaults.set(newValue, forKey: Key.showKeystrokes) }
+    }
+
+    /// Automatically write every screenshot to the save location. When off, captures still go to
+    /// the clipboard / preview / history; only the automatic file on disk is skipped. Explicit
+    /// Save actions (action bar, editor, preview) always write.
+    static var saveScreenshotsToDisk: Bool {
+        get { defaults.object(forKey: Key.saveToDisk) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.saveToDisk) }
     }
 
     /// Directory screenshots are saved to. Defaults to the Desktop.

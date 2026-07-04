@@ -425,16 +425,33 @@ final class CaptureCoordinator {
                     DesktopIconHider.shared.hide()
                     try? await Task.sleep(for: .milliseconds(50))
                 }
-                let image: CapturedImage
-                do { image = try await engine.captureDisplay(displayID) }
+                // Every connected display is captured; the one under the mouse goes through the
+                // full pipeline (clipboard / preview / upload), the rest are archived and saved.
+                let images: [CapturedImage]
+                do { images = try await engine.freezeAllDisplays() }
                 catch { if hideIcons { DesktopIconHider.shared.show() }; throw error }
                 if hideIcons { DesktopIconHider.shared.show() }
-                finish(image, mode: .fullDisplay)
+                guard let main = images.first(where: { $0.displayID == displayID }) ?? images.first else {
+                    throw CaptureError.noDisplays
+                }
+                for image in images where image.displayID != main.displayID {
+                    saveSecondaryDisplay(image)
+                }
+                finish(main, mode: .fullDisplay)
             } catch {
                 isCapturing = false
                 handleError(error)
             }
         }
+    }
+
+    /// Output path for the non-focused displays of a full-screen capture: history + auto-save,
+    /// but no clipboard/preview/upload — those belong to the display under the mouse.
+    private func saveSecondaryDisplay(_ image: CapturedImage) {
+        let output = autoBeautified(outputImage(image))
+        CaptureHistory.shared.add(output, mode: .fullDisplay)
+        guard Preferences.saveScreenshotsToDisk else { return }
+        Task.detached { _ = try? FileSaver.save(output.cgImage, mode: .fullDisplay) }
     }
 
     // MARK: Output
@@ -471,12 +488,13 @@ final class CaptureCoordinator {
         if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
         let wantsUpload = Preferences.uploadAfterCapture && CloudUploadService.isEnabled
         let format = Preferences.format
+        let savesToDisk = Preferences.saveScreenshotsToDisk
 
         Task {
             // Encode PNG once, off the main thread; the bytes are shared by the clipboard, the
             // upload, and (when the save format is PNG) the file on disk. A Retina 5K frame is a
             // ~60 MB bitmap — encoding it repeatedly, on the main thread, stalls the UI.
-            let needsPNG = action.copies || wantsUpload || format == .png
+            let needsPNG = action.copies || wantsUpload || (format == .png && savesToDisk)
             let png: Data? = needsPNG
                 ? await Task.detached { ImageEncoder.encode(output.cgImage, as: .png) }.value
                 : nil
@@ -485,9 +503,12 @@ final class CaptureCoordinator {
             if wantsUpload {
                 if let png { CloudUploadService.upload(png: png) } else { HUD.show("Encode failed") }
             }
-            // Always persist a durable file; reveal it from the preview.
+            // Persist a durable file when auto-save is on; reveal it from the preview. With
+            // auto-save off the capture still lives in the history archive and on the pasteboard.
             let url: URL?
-            if format == .png, let png {
+            if !savesToDisk {
+                url = nil
+            } else if format == .png, let png {
                 url = await Task.detached { try? FileSaver.write(png, format: .png, mode: mode) }.value
             } else {
                 url = await Task.detached { try? FileSaver.save(output.cgImage, mode: mode) }.value
