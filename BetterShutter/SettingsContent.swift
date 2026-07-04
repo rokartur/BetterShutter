@@ -364,15 +364,10 @@ final class OverlaySettingsTab: SettingsTabViewController {
         let shadow = makeToggle(Preferences.includeWindowShadow, target: self, action: #selector(toggleWindowShadow(_:)))
         addRow(to: overlay, title: "Include window shadow",
                subtitle: "Keep the drop shadow when capturing a single window.", accessory: shadow)
-
-        let border = makeToggle(Preferences.includeWindowBorder, target: self, action: #selector(toggleWindowBorder(_:)))
-        addRow(to: overlay, title: "Include window border",
-               subtitle: "Keep the thin edge outline when capturing a single window.", accessory: border)
     }
 
     @objc private func toggleMagnifier(_ sender: NSSwitch) { Preferences.magnifierEnabled = (sender.state == .on) }
     @objc private func toggleWindowShadow(_ sender: NSSwitch) { Preferences.includeWindowShadow = (sender.state == .on) }
-    @objc private func toggleWindowBorder(_ sender: NSSwitch) { Preferences.includeWindowBorder = (sender.state == .on) }
     @objc private func toggleSound(_ sender: NSSwitch) { Preferences.captureSoundEnabled = (sender.state == .on) }
 }
 

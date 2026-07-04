@@ -207,11 +207,7 @@ actor CaptureEngine {
         }
         guard let window else { throw CaptureError.windowNotFound }
         let filter = SCContentFilter(desktopIndependentWindow: window)
-        let captured = try await capture(filter: filter, displayID: nil, includeShadow: Preferences.includeWindowShadow)
-        guard Preferences.includeWindowBorder,
-              let outlined = WindowHairline.stroked(on: captured.cgImage, scale: captured.scale)
-        else { return captured }
-        return CapturedImage(cgImage: outlined, scale: captured.scale, displayID: nil)
+        return try await capture(filter: filter, displayID: nil, includeShadow: Preferences.includeWindowShadow)
     }
 
     // MARK: Core
