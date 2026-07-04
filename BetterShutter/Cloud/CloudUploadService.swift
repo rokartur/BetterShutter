@@ -19,26 +19,44 @@ enum CloudUploadService {
         "\(stamp)-\(random).\(ext)"
     }
 
-    /// Upload an in-memory image (PNG) and copy the resulting link.
+    /// Upload pre-encoded PNG data and copy the resulting link.
+    static func upload(png data: Data) {
+        guard let uploader = uploader() else { HUD.show("Set up Cloud in Settings"); return }
+        let key = currentKey(ext: "png")
+        send { try await uploader.upload(data, key: key, contentType: "image/png") }
+    }
+
+    /// Upload an in-memory image (PNG) and copy the resulting link. Encoding a Retina frame is
+    /// CPU-heavy (~60 MB bitmap), so it runs off the main thread inside the upload task.
     static func upload(_ image: CGImage) {
         guard let uploader = uploader() else { HUD.show("Set up Cloud in Settings"); return }
-        guard let data = ImageEncoder.encode(image, as: .png) else { HUD.show("Encode failed"); return }
-        send(data, key: currentKey(ext: "png"), contentType: "image/png", using: uploader)
+        let key = currentKey(ext: "png")
+        let captured = CapturedImage(cgImage: image, scale: 1, displayID: nil)
+        send {
+            guard let data = await Task.detached(operation: {
+                ImageEncoder.encode(captured.cgImage, as: .png)
+            }).value else { throw CloudError.encodeFailed }
+            return try await uploader.upload(data, key: key, contentType: "image/png")
+        }
     }
 
     /// Upload an existing file (preserves the original format — GIF animation, video, etc.).
+    /// Streamed from disk by providers that support it — recordings can be hundreds of MB, so
+    /// they must never be read into memory whole.
     static func uploadFile(_ fileURL: URL) {
         guard let uploader = uploader() else { HUD.show("Set up Cloud in Settings"); return }
-        guard let data = try? Data(contentsOf: fileURL) else { HUD.show("Couldn't read file"); return }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { HUD.show("Couldn't read file"); return }
         let ext = fileURL.pathExtension.isEmpty ? "png" : fileURL.pathExtension.lowercased()
-        send(data, key: currentKey(ext: ext), contentType: contentType(forExtension: ext), using: uploader)
+        let key = currentKey(ext: ext)
+        let type = contentType(forExtension: ext)
+        send { try await uploader.uploadFile(fileURL, key: key, contentType: type) }
     }
 
-    private static func send(_ data: Data, key: String, contentType: String, using uploader: Uploader) {
+    private static func send(_ perform: @escaping @Sendable () async throws -> URL) {
         HUD.show("Uploading…", duration: 1.0)
         Task {
             do {
-                let url = try await uploader.upload(data, key: key, contentType: contentType)
+                let url = try await perform()
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url.absoluteString, forType: .string)
                 Preferences.cloudLinkHistory = [url.absoluteString] + Preferences.cloudLinkHistory

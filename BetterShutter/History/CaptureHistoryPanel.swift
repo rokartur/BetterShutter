@@ -248,6 +248,11 @@ final class CaptureHistoryPanel: NSObject {
         // Bound the work so a huge save folder never stalls the bar.
         if entries.count > 80 { entries = Array(entries.prefix(80)) }
 
+        // Evict cached thumbnails for files no longer listed (deleted / retention-pruned) — the
+        // panel is a singleton, so without this the cache grows for the app's whole lifetime.
+        let live = Set(entries.map(\.url))
+        thumbCache = thumbCache.filter { live.contains($0.key) }
+
         if let selected, !entries.contains(where: { $0.url == selected }) { self.selected = nil }
         rebuildCards()
     }
@@ -259,19 +264,23 @@ final class CaptureHistoryPanel: NSObject {
         }
     }
 
+    /// Full rebuild (reload path): one card per entry, with the current filter applied via
+    /// `isHidden`. Search/filter changes only toggle visibility — see `applyFilterToCards()`.
     private func rebuildCards() {
         cardStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let shown = shownEntries()
+        let shownURLs = Set(shown.map(\.url))
         emptyLabel.isHidden = !shown.isEmpty
         emptyLabel.stringValue = entries.isEmpty ? "No captures yet" : "Nothing in this filter"
 
-        for entry in shown {
+        for entry in entries {
             let card = HistoryCard(
                 url: entry.url,
                 timeText: Self.relative.localizedString(for: entry.date, relativeTo: Date()),
                 badge: entry.kind.badgeSymbol,
                 thumbnail: thumbCache[entry.url]   // cached if known; otherwise a placeholder is shown
             )
+            card.isHidden = !shownURLs.contains(entry.url)
             card.isSelected = (entry.url == selected)
             card.onSelect = { [weak self] in self?.select(entry.url) }
             card.onRestore = { [weak self] in self?.restore(entry.url) }
@@ -279,6 +288,20 @@ final class CaptureHistoryPanel: NSObject {
             cardStack.addArrangedSubview(card)
         }
         loadThumbnails(for: shown)
+    }
+
+    /// Toggle existing cards instead of tearing down and rebuilding ≤80 views (layers, tracking
+    /// areas, shadows) on every search keystroke or filter tap. NSStackView detaches hidden
+    /// arranged subviews from layout, so order and spacing are preserved.
+    private func applyFilterToCards() {
+        let shown = shownEntries()
+        let shownURLs = Set(shown.map(\.url))
+        for case let card as HistoryCard in cardStack.arrangedSubviews {
+            card.isHidden = !shownURLs.contains(card.url)
+        }
+        emptyLabel.isHidden = !shown.isEmpty
+        emptyLabel.stringValue = entries.isEmpty ? "No captures yet" : "Nothing in this filter"
+        loadThumbnails(for: shown)   // decode thumbnails only for newly revealed cards
     }
 
     /// Decode downscaled thumbnails off the main thread and drop them into their cards as they finish,
@@ -392,14 +415,14 @@ final class CaptureHistoryPanel: NSObject {
 
     @objc private func searchChanged(_ sender: NSSearchField) {
         searchQuery = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        rebuildCards()
+        applyFilterToCards()
     }
 
     @objc private func filterChanged(_ sender: NSSegmentedControl) {
         let index = sender.selectedSegment
         guard HistoryFilter.allCases.indices.contains(index) else { return }
         filter = HistoryFilter.allCases[index]
-        rebuildCards()
+        applyFilterToCards()
     }
 
     private func syncFilter() {
@@ -636,6 +659,10 @@ private final class HistoryCard: NSView, NSDraggingSource {
     override func layout() {
         super.layout()
         scrim.frame = imageView.bounds
+        // An explicit shadow path lets Core Animation skip the per-frame offscreen mask pass it
+        // otherwise needs to derive the shadow shape — noticeable across up to 80 live cards.
+        thumb.layer?.shadowPath = CGPath(roundedRect: thumb.bounds,
+                                         cornerWidth: corner, cornerHeight: corner, transform: nil)
     }
 
     func setThumbnail(_ image: NSImage) {

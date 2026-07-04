@@ -111,14 +111,15 @@ final class OCRResultWindowController: NSObject, NSWindowDelegate {
     @available(macOS 15.0, *)
     @objc private func translateText() {
         guard let window, !rawText.isEmpty else { return }
-        var sheet: NSWindow?
-        let view = OCRTranslationView(sourceText: rawText) {
-            if let sheet { window.endSheet(sheet) }
+        // Don't capture the sheet window in its own content view's closure — that retain cycle
+        // (sheet → hosting controller → view → closure → sheet) leaked a window per Translate.
+        let view = OCRTranslationView(sourceText: rawText) { [weak window] in
+            guard let window, let sheet = window.attachedSheet else { return }
+            window.endSheet(sheet)
         }
         let host = NSHostingController(rootView: view)
         let sheetWindow = NSWindow(contentViewController: host)
         sheetWindow.setContentSize(NSSize(width: 440, height: 320))
-        sheet = sheetWindow
         window.beginSheet(sheetWindow)
     }
 

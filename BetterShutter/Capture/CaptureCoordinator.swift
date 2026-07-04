@@ -47,28 +47,28 @@ final class CaptureCoordinator {
         return true
     }
 
+    /// Legacy mode-based entry (URL scheme / Shortcuts): region and window now share the one merged
+    /// screenshot flow; only full-display still captures directly.
     func capture(_ mode: CaptureMode, afterDelay: Bool = true) {
-        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
-        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
-        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.capture(mode, afterDelay: false) }) { return }
-        sampleBypass()
-
         switch mode {
+        case .region, .window:
+            captureScreenshot(afterDelay: afterDelay)
         case .fullDisplay:
+            guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
+            guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+            if afterDelay, startCountdownIfNeeded({ [weak self] in self?.capture(mode, afterDelay: false) }) { return }
+            sampleBypass()
             captureFullDisplay()
-        case .region:
-            beginRegionCapture(windowSelection: false)
-        case .window:
-            beginRegionCapture(windowSelection: true)
         }
     }
 
-    /// Quick screenshot: select a region (or click a window) and deliver it straight to the normal
-    /// output (quick-access card + clipboard per settings) with NO action-bar step — the fastest path.
-    func captureQuick(afterDelay: Bool = true) {
+    /// The one merged screenshot flow (Quick Screenshot + Capture Region + Capture Window): drag a
+    /// selection and it's delivered straight to the normal output (quick-access card + clipboard per
+    /// settings) with no action-bar step; hold Space to highlight and click a window instead.
+    func captureScreenshot(afterDelay: Bool = true) {
         guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
-        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureQuick(afterDelay: false) }) { return }
+        if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureScreenshot(afterDelay: false) }) { return }
         sampleBypass()
         presentRegion(
             magnifier: Preferences.magnifierEnabled,
@@ -83,8 +83,8 @@ final class CaptureCoordinator {
         )
     }
 
-    /// Screenshot & markup (macshot-style): select a region (or click a window), then open the full
-    /// editor with every annotation / drawing tool ready, instead of parking a quick-access card.
+    /// Screenshot & markup (macshot-style): select a region (or hold Space and click a window), then
+    /// open the full editor with every annotation / drawing tool ready, instead of a quick-access card.
     func captureAndEdit(afterDelay: Bool = true) {
         guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
@@ -105,10 +105,9 @@ final class CaptureCoordinator {
     }
 
     /// Region overlay with a single outcome (no action bar). `onRegion` receives the cropped image
-    /// plus its global rect + display; `onWindow` fires when the user clicks a window instead.
+    /// plus its global rect + display; `onWindow` fires when the user Space-clicks a window instead.
     private func presentRegion(
         magnifier: Bool,
-        windowSelection: Bool = false,
         onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID) -> Void,
         onWindow: @escaping (CGWindowID) -> Void
     ) {
@@ -121,7 +120,8 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: magnifier,
-                    windowSelection: windowSelection,
+                    windowSelection: true,
+                    windowPickRequiresSpace: true,   // hold Space to switch to window pick
                     instantCapture: true,   // release the drag = capture immediately, no extra confirm
                     onRegion: { image, rect, displayID, _ in onRegion(image, rect, displayID) },
                     onWindow: onWindow,
@@ -354,31 +354,6 @@ final class CaptureCoordinator {
         }
     }
 
-    private func beginRegionCapture(windowSelection: Bool) {
-        isCapturing = true
-        Task {
-            do {
-                let frozen = try await frozenDisplays()
-                let content = try await engine.shareableContent()
-                overlay.present(
-                    frozen: frozen,
-                    windows: content.windows,
-                    magnifierEnabled: Preferences.magnifierEnabled,
-                    windowSelection: windowSelection,
-                    toolbarActions: [.capture, .annotate, .copy, .save, .record],
-                    onRegion: { [weak self] image, globalRect, displayID, action in
-                        self?.handleRegionAction(image, globalRect: globalRect, displayID: displayID, action: action)
-                    },
-                    onWindow: { [weak self] id in self?.captureWindow(id) },
-                    onCancel: { [weak self] in self?.isCapturing = false }
-                )
-            } catch {
-                isCapturing = false
-                handleError(error)
-            }
-        }
-    }
-
     private func handleRegionAction(_ rawImage: CapturedImage, globalRect: CGRect, displayID: CGDirectDisplayID, action: OverlayAction) {
         isCapturing = false
         sampleBypass()   // Shift is still held at overlay confirm
@@ -394,9 +369,12 @@ final class CaptureCoordinator {
             edit(image, mode: .region)
         case .copy:
             CaptureHistory.shared.add(image, mode: .region)
-            PasteboardWriter.copy(image.cgImage)
-            if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
-            HUD.show("Copied")
+            Task {
+                let png = await Task.detached { ImageEncoder.encode(image.cgImage, as: .png) }.value
+                if let png { PasteboardWriter.copy(png: png) }
+                if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+                HUD.show(png != nil ? "Copied" : "Copy failed")
+            }
         case .save:
             CaptureHistory.shared.add(image, mode: .region)
             Task {
@@ -489,14 +467,30 @@ final class CaptureCoordinator {
         let output = autoBeautified(outputImage(image))
         CaptureHistory.shared.add(output, mode: mode)
         let action = Preferences.afterCaptureAction
-        if action.copies { PasteboardWriter.copy(output.cgImage) }
         if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
-        // Auto-upload + copy the share link (overwrites the image on the pasteboard, CleanShot-style).
-        if Preferences.uploadAfterCapture, CloudUploadService.isEnabled { CloudUploadService.upload(output.cgImage) }
+        let wantsUpload = Preferences.uploadAfterCapture && CloudUploadService.isEnabled
+        let format = Preferences.format
 
         Task {
+            // Encode PNG once, off the main thread; the bytes are shared by the clipboard, the
+            // upload, and (when the save format is PNG) the file on disk. A Retina 5K frame is a
+            // ~60 MB bitmap — encoding it repeatedly, on the main thread, stalls the UI.
+            let needsPNG = action.copies || wantsUpload || format == .png
+            let png: Data? = needsPNG
+                ? await Task.detached { ImageEncoder.encode(output.cgImage, as: .png) }.value
+                : nil
+            if action.copies, let png { PasteboardWriter.copy(png: png) }
+            // Auto-upload + copy the share link (overwrites the image on the pasteboard, CleanShot-style).
+            if wantsUpload {
+                if let png { CloudUploadService.upload(png: png) } else { HUD.show("Encode failed") }
+            }
             // Always persist a durable file; reveal it from the preview.
-            let url = await Task.detached { try? FileSaver.save(output.cgImage, mode: mode) }.value
+            let url: URL?
+            if format == .png, let png {
+                url = await Task.detached { try? FileSaver.write(png, format: .png, mode: mode) }.value
+            } else {
+                url = await Task.detached { try? FileSaver.save(output.cgImage, mode: mode) }.value
+            }
             if action.previews {
                 preview.show(output, mode: mode, savedURL: url)
             }
@@ -527,15 +521,24 @@ final class CaptureCoordinator {
 
     func edit(_ image: CapturedImage, mode: CaptureMode) {
         let controller = EditorWindowController(image: image, mode: mode)
-        controller.onClose = { [weak self] in self?.editor = nil }
-        editor = controller
-        controller.present()
+        install(editor: controller)
     }
 
     /// Open the editor on a base image plus restored annotation layers (from a `.bsproj` project).
     func editProject(_ image: CapturedImage, elements: [AnnotationElement]) {
         let controller = EditorWindowController(image: image, mode: .region, elements: elements)
-        controller.onClose = { [weak self] in self?.editor = nil }
+        install(editor: controller)
+    }
+
+    /// Close any previous editor before taking ownership of the new one, and only clear the
+    /// reference if it still points at the closing controller — otherwise a lingering old window's
+    /// close would orphan (and leak the full-res image + undo stack of) the current editor.
+    private func install(editor controller: EditorWindowController) {
+        editor?.close()
+        controller.onClose = { [weak self, weak controller] in
+            guard let self, let controller, self.editor === controller else { return }
+            self.editor = nil
+        }
         editor = controller
         controller.present()
     }

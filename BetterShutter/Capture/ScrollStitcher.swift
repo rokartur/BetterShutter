@@ -14,17 +14,16 @@ nonisolated enum ScrollStitcher {
     /// Below this the two frames are considered identical (no scroll) — guards against false shifts.
     static let staticThreshold = 2.5
 
-    /// `@unchecked Sendable`: holds an immutable `CGImage` and a value-type signature, so it is safe
-    /// to pass across actor boundaries (same justification as `CapturedImage`).
-    struct Frame: @unchecked Sendable {
-        let image: CGImage
+    /// The cheap grayscale row signature of a frame — all that shift-matching needs. Deliberately
+    /// does NOT hold the frame's CGImage, so the previous full-res frame isn't pinned between ticks.
+    struct Frame: Sendable {
         let signature: [[UInt8]]
     }
 
-    /// Build a frame (image + cheap grayscale row signature) for matching.
+    /// Build a frame signature for matching.
     static func makeFrame(_ image: CGImage) -> Frame? {
         guard let sig = grayRows(image, columns: columns) else { return nil }
-        return Frame(image: image, signature: sig)
+        return Frame(signature: sig)
     }
 
     /// Estimate the downward scroll (in source pixels) from `prev` to `next`. 0 = no usable scroll.
@@ -66,35 +65,46 @@ nonisolated enum ScrollStitcher {
         return count == 0 ? .greatestFiniteMagnitude : Double(sum) / Double(count)
     }
 
-    /// Append the bottom `rows` visual rows of `next` beneath `canvas`, returning the taller image.
-    static func append(canvas: CGImage, next: CGImage, rows: Int) -> CGImage? {
-        let w = canvas.width
-        guard rows > 0, next.width == w, rows <= next.height else { return canvas }
-        let newH = canvas.height + rows
-        let cs = CGColorSpaceCreateDeviceRGB()
-        guard let ctx = CGContext(
-            data: nil, width: w, height: newH, bitsPerComponent: 8, bytesPerRow: 0,
-            space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return canvas }
+    /// Deep-copy the bottom `rows` visual rows of `next` into a standalone image.
+    ///
+    /// `cropping(to:)` alone shares — and would pin — the whole source frame's backing store
+    /// (~12 MB per tick), so the crop is redrawn into a rows-height bitmap of its own. Strips
+    /// accumulate during the session and are composited once at the end, keeping per-tick work
+    /// O(strip) instead of re-rendering the whole growing canvas (O(n²) over the session).
+    static func strip(from next: CGImage, rows: Int) -> CGImage? {
+        guard rows > 0, rows <= next.height else { return nil }
+        let w = next.width
+        guard let cropped = next.cropping(to: CGRect(x: 0, y: next.height - rows, width: w, height: rows)),
+              let ctx = CGContext(
+                  data: nil, width: w, height: rows, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(rows)))
+        return ctx.makeImage()
+    }
 
-        // Bottom-left user space: place the existing canvas on top, the new strip below it.
-        drawUpright(canvas, in: CGRect(x: 0, y: rows, width: w, height: canvas.height), ctx: ctx)
-        if let strip = next.cropping(to: CGRect(x: 0, y: next.height - rows, width: w, height: rows)) {
-            drawUpright(strip, in: CGRect(x: 0, y: 0, width: w, height: rows), ctx: ctx)
+    /// Stack `head` then each strip beneath it into one tall image. Called once, at session end.
+    static func composite(head: CGImage, strips: [CGImage]) -> CGImage? {
+        let w = head.width
+        let totalH = head.height + strips.reduce(0) { $0 + $1.height }
+        guard strips.allSatisfy({ $0.width == w }),
+              let ctx = CGContext(
+                  data: nil, width: w, height: totalH, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        // Bottom-left user space: the head goes at the visual top, each strip below the previous.
+        var y = totalH - head.height
+        ctx.draw(head, in: CGRect(x: 0, y: CGFloat(y), width: CGFloat(w), height: CGFloat(head.height)))
+        for strip in strips {
+            y -= strip.height
+            ctx.draw(strip, in: CGRect(x: 0, y: CGFloat(y), width: CGFloat(w), height: CGFloat(strip.height)))
         }
-        return ctx.makeImage() ?? canvas
+        return ctx.makeImage()
     }
 
     // MARK: Helpers
-
-    /// Draw a top-left-origin CGImage upright into a bottom-left CGContext rect.
-    private static func drawUpright(_ image: CGImage, in rect: CGRect, ctx: CGContext) {
-        ctx.saveGState()
-        ctx.translateBy(x: rect.minX, y: rect.maxY)
-        ctx.scaleBy(x: 1, y: -1)
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
-        ctx.restoreGState()
-    }
 
     /// Top-first grayscale row signatures, downsampled to `columns` wide.
     static func grayRows(_ image: CGImage, columns w: Int) -> [[UInt8]]? {

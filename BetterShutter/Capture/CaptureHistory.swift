@@ -1,7 +1,9 @@
 import Foundation
 
-/// In-memory ring buffer of the most recent captures, surfaced in the menu's "Recent" submenu so
-/// a capture is never lost if its float preview is dismissed.
+/// The most recent capture, kept in memory so "Pin/Reopen/Upload Last" act instantly even after
+/// the float preview is dismissed. Older captures live only in the on-disk history archive
+/// (`CaptureHistoryStore`) — holding more full-resolution bitmaps here just burns RAM
+/// (a Retina 5K frame is ~60 MB, so a 10-deep ring cost up to ~600 MB).
 @MainActor
 final class CaptureHistory {
     static let shared = CaptureHistory()
@@ -14,7 +16,7 @@ final class CaptureHistory {
     }
 
     private(set) var items: [Item] = []
-    let limit = 10
+    let limit = 1
 
     func add(_ image: CapturedImage, mode: CaptureMode, date: Date = Date()) {
         items.insert(Item(image: image, mode: mode, date: date), at: 0)

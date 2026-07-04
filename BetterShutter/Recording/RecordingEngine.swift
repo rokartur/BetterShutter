@@ -43,10 +43,12 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     /// webcam overlays are deliberately NOT listed, so they remain composited into the video.
     var excludedWindowIDs: [CGWindowID] = []
 
-    // GIF mode: collect downscaled frames instead of writing video.
+    // GIF mode: collect downscaled, PNG-compressed frames instead of writing video. Compressing
+    // each frame keeps a full-length recording at tens of MB instead of hundreds (raw 640px BGRA
+    // is ~1 MB/frame × 300 frames); GIFEncoder decodes them back one at a time on finalize.
     var gifMode = false
     private let ciContext = CIContext()
-    private var gifFrames: [CGImage] = []
+    private var gifFrameData: [Data] = []
     private var lastGIFTime: CMTime?
     private let gifInterval = CMTime(value: 1, timescale: 12)
     private let gifMaxFrames = 300
@@ -98,7 +100,9 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
         if let sourceRect { config.sourceRect = sourceRect }
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.minimumFrameInterval = CMTime(value: 1, timescale: gifMode ? 15 : Int32(max(1, fps)))
-        config.queueDepth = 6
+        // Each queued buffer is a full-resolution BGRA frame (~60 MB at 5K); the writer drops
+        // frames it can't keep up with anyway, so a deep queue mostly just pins memory.
+        config.queueDepth = 4
         config.showsCursor = showsCursor
         config.capturesAudio = captureSystemAudio && !gifMode
         config.sampleRate = 48_000
@@ -245,9 +249,11 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
                 // Reject any sample buffers that are still in flight after this point.
                 self.stopping = true
                 if self.gifMode {
-                    let data = GIFEncoder.encode(frames: self.gifFrames, frameDelay: 1.0 / 12.0)
-                    if let data, let url = self.outputURL { try? data.write(to: url) }
-                    continuation.resume(returning: data != nil ? self.outputURL : nil)
+                    let encoded = self.outputURL.map {
+                        GIFEncoder.encode(frameData: self.gifFrameData, frameDelay: 1.0 / 12.0, to: $0)
+                    } ?? false
+                    self.gifFrameData.removeAll()
+                    continuation.resume(returning: encoded ? self.outputURL : nil)
                     return
                 }
                 self.videoInput?.markAsFinished()
@@ -345,14 +351,19 @@ nonisolated final class RecordingEngine: NSObject, SCStreamOutput, SCStreamDeleg
     private func appendGIFFrame(_ sampleBuffer: CMSampleBuffer, pts: CMTime) {
         if let last = lastGIFTime, CMTimeSubtract(pts, last) < gifInterval { return }
         lastGIFTime = pts
-        guard gifFrames.count < gifMaxFrames,
+        guard gifFrameData.count < gifMaxFrames,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let ci = CIImage(cvPixelBuffer: pixelBuffer)
-        let maxWidth: CGFloat = 640
-        let scale = min(1, maxWidth / max(ci.extent.width, 1))
-        let scaled = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        if let cg = ciContext.createCGImage(scaled, from: scaled.extent) {
-            gifFrames.append(cg)
+        // Pool: CoreImage/ImageIO autorelease full-frame temporaries; without an explicit drain
+        // they pile up on the long-lived writer queue between frames.
+        autoreleasepool {
+            let ci = CIImage(cvPixelBuffer: pixelBuffer)
+            let maxWidth: CGFloat = 640
+            let scale = min(1, maxWidth / max(ci.extent.width, 1))
+            let scaled = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            if let cg = ciContext.createCGImage(scaled, from: scaled.extent),
+               let data = ImageEncoder.encode(cg, as: .png) {
+                gifFrameData.append(data)
+            }
         }
     }
 

@@ -54,12 +54,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Menubar recording timer
 
+    // Cached: the tick fires every second while recording — no reason to re-decode an SF Symbol
+    // per tick (or per launch on the idle icon).
+    private static let idleStatusImage = NSImage(systemSymbolName: "camera.fill",
+                                                 accessibilityDescription: "BetterShutter")
+    private static let recordingStatusImage = NSImage(systemSymbolName: "record.circle",
+                                                      accessibilityDescription: "Recording")
+
     private func recordingStateChanged() {
         if RecordingController.shared.isRecording {
             if recordingTimer == nil {
-                recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                statusItem?.button?.image = Self.recordingStatusImage
+                let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                     MainActor.assumeIsolated { self?.updateRecordingTitle() }
                 }
+                timer.tolerance = 0.1
+                recordingTimer = timer
                 updateRecordingTitle()
             }
         } else {
@@ -67,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             recordingTimer = nil
             if let button = statusItem?.button {
                 button.title = ""
-                button.image = NSImage(systemSymbolName: "camera.fill", accessibilityDescription: "BetterShutter")
+                button.image = Self.idleStatusImage
             }
         }
     }
@@ -75,7 +85,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateRecordingTitle() {
         guard let start = RecordingController.shared.startDate, let button = statusItem?.button else { return }
         let elapsed = Int(Date().timeIntervalSince(start))
-        button.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Recording")
         button.title = String(format: " %d:%02d", elapsed / 60, elapsed % 60)
     }
 
@@ -90,8 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func dispatch(_ command: URLCommand) {
         switch command {
         case .allInOne:             CaptureCoordinator.shared.captureAllInOne()
-        case .captureRegion:        CaptureCoordinator.shared.capture(.region)
-        case .captureWindow:        CaptureCoordinator.shared.capture(.window)
+        case .captureRegion:        CaptureCoordinator.shared.captureScreenshot()
+        case .captureWindow:        CaptureCoordinator.shared.captureScreenshot()
         case .captureFullScreen:    CaptureCoordinator.shared.capture(.fullDisplay)
         case .captureText:          CaptureCoordinator.shared.captureText()
         case .captureScrolling:     CaptureCoordinator.shared.captureScrolling()
@@ -143,32 +152,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = NSImage(
-                systemSymbolName: "camera.fill",
-                accessibilityDescription: "BetterShutter"
-            )
+            button.image = Self.idleStatusImage
             // Fallback so the item is never a zero-width (invisible) button.
             if button.image == nil { button.title = "BetterShutter" }
         }
-        item.menu = makeMenu()
+        // The menu is populated lazily on first open (menuNeedsUpdate) — building ~30 items with
+        // their SF Symbol images belongs to the first click, not to launch of an app that then
+        // sits idle in the menu bar. Global hotkeys live in HotKeyBridge, not menu equivalents,
+        // so nothing is lost while the menu is unbuilt.
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
         statusItem = item
     }
 
-    private func makeMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.delegate = self
+    private var menuPopulated = false
 
+    private func populateMenu(_ menu: NSMenu) {
         captureMenuItems.removeAll()
         addCaptureItem(to: menu, title: "All-in-One Capture", symbol: "square.dashed.inset.filled",
                        action: #selector(allInOne), name: .allInOne)
-        addCaptureItem(to: menu, title: "Quick Screenshot", symbol: "bolt",
-                       action: #selector(quickScreenshot), name: .quickScreenshot)
+        addCaptureItem(to: menu, title: "Capture Screenshot", symbol: "rectangle.dashed",
+                       action: #selector(captureScreenshot), name: .captureScreenshot)
         addCaptureItem(to: menu, title: "Screenshot & Markup", symbol: "pencil.and.outline",
                        action: #selector(screenshotEdit), name: .screenshotEdit)
-        addCaptureItem(to: menu, title: "Capture Region", symbol: "rectangle.dashed",
-                       action: #selector(captureRegion), name: .captureRegion)
-        addCaptureItem(to: menu, title: "Capture Window", symbol: "macwindow",
-                       action: #selector(captureWindow), name: .captureWindow)
         addCaptureItem(to: menu, title: "Capture Full Screen", symbol: "rectangle.inset.filled",
                        action: #selector(captureFullScreen), name: .captureFullScreen)
         addCaptureItem(to: menu, title: "Capture Text", symbol: "text.viewfinder",
@@ -295,8 +302,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
-
-        return menu
     }
 
     private func addCaptureItem(
@@ -309,8 +314,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         captureMenuItems.append((item, name))
     }
 
-    /// Refresh the capture items' key equivalents from the live shortcuts each time the menu opens.
+    /// Build the menu on first open, then refresh the capture items' key equivalents from the
+    /// live shortcuts each time it opens.
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if !menuPopulated {
+            populateMenu(menu)
+            menuPopulated = true
+        }
         for (item, name) in captureMenuItems {
             applyShortcut(name, to: item)
         }
@@ -339,10 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Actions
 
     @objc private func allInOne() { CaptureCoordinator.shared.captureAllInOne() }
-    @objc private func quickScreenshot() { CaptureCoordinator.shared.captureQuick() }
+    @objc private func captureScreenshot() { CaptureCoordinator.shared.captureScreenshot() }
     @objc private func screenshotEdit() { CaptureCoordinator.shared.captureAndEdit() }
-    @objc private func captureRegion() { CaptureCoordinator.shared.capture(.region) }
-    @objc private func captureWindow() { CaptureCoordinator.shared.capture(.window) }
     @objc private func captureFullScreen() { CaptureCoordinator.shared.capture(.fullDisplay) }
     @objc private func captureText() { CaptureCoordinator.shared.captureText() }
     @objc private func captureCutout() { CaptureCoordinator.shared.captureCutout() }
@@ -396,6 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let controller = VideoTrimWindowController(url: url)
+        controller.onClose = { [weak self] in self?.trimController = nil }
         trimController = controller
         controller.show()
     }

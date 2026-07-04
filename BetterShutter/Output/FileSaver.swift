@@ -9,6 +9,12 @@ nonisolated enum FileSaver {
         guard let data = ImageEncoder.encode(cgImage, as: format, quality: Preferences.jpegQuality) else {
             throw CaptureError.emptyCapture
         }
+        return try write(data, format: format, mode: mode)
+    }
+
+    /// Write already-encoded data with the standard directory/naming/collision handling — lets
+    /// callers that encoded once (clipboard + upload + save) skip a redundant encode.
+    static func write(_ data: Data, format: ImageFileFormat, mode: CaptureMode) throws -> URL {
         let directory = Preferences.saveDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 

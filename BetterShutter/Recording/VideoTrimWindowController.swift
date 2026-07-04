@@ -22,6 +22,9 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     private let sizeOptions: [(String, CGFloat?)] = [("Original", nil), ("720p", 720), ("1080p", 1080), ("1440p", 1440)]
     private let followMouseToggle = NSButton(checkboxWithTitle: "Follow Mouse", target: nil, action: nil)
     private var cursorTrack: CursorTrack?
+    /// Fired from `windowWillClose` so the owner can release its strong reference — without it the
+    /// controller (and its whole AVPlayer decode pipeline) lingers until the next trim or app quit.
+    var onClose: (() -> Void)?
 
     init(url: URL) {
         self.url = url
@@ -202,5 +205,9 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    func windowWillClose(_ notification: Notification) { player.pause() }
+    func windowWillClose(_ notification: Notification) {
+        player.pause()
+        player.replaceCurrentItem(with: nil)   // release the asset + decode pipeline now, not at dealloc
+        onClose?()
+    }
 }

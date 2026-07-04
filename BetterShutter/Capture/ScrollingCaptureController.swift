@@ -20,7 +20,12 @@ final class ScrollingCaptureController {
 
     private var displayID: CGDirectDisplayID = CGMainDisplayID()
     private var sourceRectPoints: CGRect = .zero
-    private var canvas: CapturedImage?
+    /// First frame (visual top of the result). Revealed strips accumulate in `strips` and are
+    /// composited once on Done — per-tick work stays O(strip) instead of re-rendering the whole
+    /// growing canvas every 200 ms.
+    private var head: CapturedImage?
+    private var strips: [CapturedImage] = []
+    private var stitchedHeight = 0
     private var lastFrame: ScrollStitcher.Frame?
 
     private let interval: TimeInterval = 0.2
@@ -65,7 +70,9 @@ final class ScrollingCaptureController {
             height: globalRect.height
         )
         self.displayID = displayID
-        self.canvas = nil
+        self.head = nil
+        self.strips = []
+        self.stitchedHeight = 0
         self.lastFrame = nil
 
         showBar(near: screen)
@@ -88,31 +95,49 @@ final class ScrollingCaptureController {
 
     private func ingest(_ image: CapturedImage) async {
         let prevFrame = lastFrame
-        let prevCanvas = canvas
-        let result: (CapturedImage, ScrollStitcher.Frame)? = await Task.detached {
+        let isFirst = head == nil
+        let result: (piece: CapturedImage?, frame: ScrollStitcher.Frame)? = await Task.detached {
             guard let nf = ScrollStitcher.makeFrame(image.cgImage) else { return nil }
-            guard let pf = prevFrame, let canvas = prevCanvas else {
-                return (image, nf) // first frame seeds the canvas
+            guard let pf = prevFrame, !isFirst else {
+                return (image, nf) // first frame seeds the head
             }
             let dy = ScrollStitcher.bestShift(prev: pf.signature, next: nf.signature)
-            guard dy > 0, let appended = ScrollStitcher.append(canvas: canvas.cgImage, next: image.cgImage, rows: dy) else {
-                return (canvas, nf) // no new content; just advance the reference frame
+            guard dy > 0, let strip = ScrollStitcher.strip(from: image.cgImage, rows: dy) else {
+                return (nil, nf) // no new content; just advance the reference frame
             }
-            return (CapturedImage(cgImage: appended, scale: image.scale, displayID: image.displayID), nf)
+            return (CapturedImage(cgImage: strip, scale: image.scale, displayID: image.displayID), nf)
         }.value
 
-        guard active, let (newCanvas, newFrame) = result else { return }
-        canvas = newCanvas
+        guard active, let (piece, newFrame) = result else { return }
         lastFrame = newFrame
-        bar?.update(heightPx: newCanvas.cgImage.height)
+        if isFirst, let piece {
+            head = piece
+            stitchedHeight = piece.cgImage.height
+        } else if let piece {
+            strips.append(piece)
+            stitchedHeight += piece.cgImage.height
+        }
+        bar?.update(heightPx: stitchedHeight)
     }
 
     // MARK: Finish
 
     private func done() {
         stop()
-        if let canvas { CaptureCoordinator.shared.deliver(canvas, mode: .region) }
-        reset()
+        guard let head else { reset(); return }
+        let strips = self.strips
+        if strips.count > 20 { HUD.show("Stitching…", duration: 1.0) }
+        Task {
+            let stitched: CGImage? = strips.isEmpty ? head.cgImage : await Task.detached {
+                ScrollStitcher.composite(head: head.cgImage, strips: strips.map(\.cgImage))
+            }.value
+            if let stitched {
+                CaptureCoordinator.shared.deliver(
+                    CapturedImage(cgImage: stitched, scale: head.scale, displayID: head.displayID),
+                    mode: .region)
+            }
+            reset()
+        }
     }
 
     private func cancel() {
@@ -129,7 +154,9 @@ final class ScrollingCaptureController {
     }
 
     private func reset() {
-        canvas = nil
+        head = nil
+        strips = []
+        stitchedHeight = 0
         lastFrame = nil
     }
 

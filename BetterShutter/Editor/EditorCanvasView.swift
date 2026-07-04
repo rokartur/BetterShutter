@@ -1,4 +1,5 @@
 import AppKit
+import BetterShortcuts
 import CoreImage
 
 /// The editor canvas. Displays the capture aspect-fit and lets the user create, select, move, and
@@ -75,23 +76,61 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     // plus the crop rect, so a single uniform mechanism covers create / delete / move / restyle /
     // text / step / crop without per-operation bookkeeping. `pending` is captured at the start of a
     // gesture (before any mutation) and registered only if the gesture actually changed something.
-    private let undoMgr = UndoManager()
+    private let undoMgr: UndoManager = {
+        let mgr = UndoManager()
+        // Non-destructive ops share the base via one `UndoBaseImage` box; destructive ops
+        // (rotate/flip/invert/filter) create a new box, and boxes past the recent set downgrade
+        // to lossless PNG (~5–15% of raw) — so even 30 destructive steps stay in the low
+        // hundreds of MB instead of pinning ~1.8 GB of full-res bitmaps.
+        mgr.levelsOfUndo = 30
+        return mgr
+    }()
     private var pending: EditorSnapshot?
     private var textPending: EditorSnapshot?
 
     private struct EditorSnapshot {
         let elements: [AnnotationElement]
         let cropRect: CGRect?
-        let baseImage: CGImage
+        let base: UndoBaseImage
         let imageSize: CGSize
         let adjust: ImageAdjustments
     }
+
+    /// Box holding the current `baseImage` for undo snapshots. Snapshots share the box while the
+    /// base is unchanged; destructive ops swap in a fresh one via `setBase`.
+    private var baseBox: UndoBaseImage
+    /// Most-recent-last boxes kept live (undecoded); older ones downgrade to PNG. Current + 2
+    /// previous stay live so a quick undo/redo of a destructive op is instant.
+    private var recentBases: [UndoBaseImage] = []
 
     override var undoManager: UndoManager? { undoMgr }
 
     private func snapshot() -> EditorSnapshot {
         EditorSnapshot(elements: elements.map { $0.clone() }, cropRect: cropRect,
-                       baseImage: baseImage, imageSize: imageSize, adjust: adjust)
+                       base: baseBox, imageSize: imageSize, adjust: adjust)
+    }
+
+    /// Single choke point for destructive base replacements (rotate/flip/invert/filter).
+    private func setBase(_ image: CGImage) {
+        baseImage = image
+        baseBox = UndoBaseImage(image)
+        touchRecent(baseBox)
+    }
+
+    /// Move `box` to the end of the live set and downgrade whatever falls off the front.
+    private func touchRecent(_ box: UndoBaseImage) {
+        recentBases.removeAll { $0 === box }
+        recentBases.append(box)
+        while recentBases.count > 3 {
+            recentBases.removeFirst().downgrade()
+        }
+    }
+
+    /// The redaction elements' interactive caches self-invalidate by key, but when the base bitmap
+    /// is replaced this frees the old ~full-res sources they reference without waiting for the
+    /// next repaint of each element.
+    private func invalidateElementRenderCaches() {
+        for element in elements { element.invalidateRenderCache() }
     }
 
     /// Register `before` as the state to return to, naming the action for the Edit menu.
@@ -104,15 +143,19 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     /// Swap the document to `snap`, registering the inverse so redo (and further undo) works.
     private func restore(_ snap: EditorSnapshot, _ name: String) {
         finishTextEditing()
+        guard let restoredBase = snap.base.image else { return }   // decode failure: keep current state
         let inverse = snapshot()
         undoMgr.registerUndo(withTarget: self) { $0.restore(inverse, name) }
         undoMgr.setActionName(name)
         elements = snap.elements
         cropRect = snap.cropRect
-        baseImage = snap.baseImage
+        baseImage = restoredBase
+        baseBox = snap.base
+        touchRecent(snap.base)
         imageSize = snap.imageSize
         adjust = snap.adjust
         adjustedCache = nil
+        invalidateElementRenderCaches()
         adjustGesturePending = nil
         selected = nil
         groupSelection = []
@@ -130,9 +173,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         guard let newBase = ImageTransformer.apply(kind, to: baseImage) else { return }
         let (t, newSize) = ImageTransformer.affine(kind, width: imageSize.width, height: imageSize.height)
         let before = snapshot()
-        baseImage = newBase
+        setBase(newBase)
         imageSize = newSize
         adjustedCache = nil
+        invalidateElementRenderCaches()
         for element in elements { element.transform(t) }
         if let crop = cropRect { cropRect = crop.applying(t) }
         selected = nil
@@ -144,8 +188,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     func invertColors() {
         guard let inverted = ImageTransformer.inverted(baseImage) else { return }
         let before = snapshot()
-        baseImage = inverted
+        setBase(inverted)
         adjustedCache = nil
+        invalidateElementRenderCaches()
         commit(before, "Invert Colors")
         needsDisplay = true
     }
@@ -156,6 +201,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if adjustGesturePending == nil { adjustGesturePending = snapshot() }
         adjust = adjustments
         adjustedCache = nil
+        invalidateElementRenderCaches()
         needsDisplay = true
         if doCommit {
             commit(adjustGesturePending, "Adjust")
@@ -239,8 +285,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
         let size = imageSize
         let currentStyle = style
-        Task {
+        Task { [weak self] in
             let faces = await FaceDetector.detect(image)
+            guard let self else { return }
             guard !faces.isEmpty else { HUD.show("No faces found"); return }
             let before = snapshot()
             for box in faces {
@@ -264,9 +311,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
         let size = imageSize
         let currentStyle = style
-        Task {
+        Task { [weak self] in
             let observations = await TextRecognizer.observations(image)
             let matches = observations.filter { PIIMatcher.containsPII($0.text) }
+            guard let self else { return }
             guard !matches.isEmpty else { HUD.show("No PII found"); return }
             let before = snapshot()
             for match in matches {
@@ -291,8 +339,9 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         guard let output = filter.outputImage,
               let cg = ciContext.createCGImage(output, from: source.extent) else { return }
         let before = snapshot()
-        baseImage = cg
+        setBase(cg)
         adjustedCache = nil
+        invalidateElementRenderCaches()
         commit(before, "Filter")
         needsDisplay = true
     }
@@ -316,9 +365,11 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     init(image: CapturedImage, elements: [AnnotationElement] = []) {
         self.baseImage = image.cgImage
+        self.baseBox = UndoBaseImage(image.cgImage)
         self.imageSize = image.pixelSize
         self.style = AnnotationStyle.makeDefault(imageWidth: image.pixelSize.width)
         super.init(frame: NSRect(origin: .zero, size: Self.fittedSize(for: image.pixelSize)))
+        self.recentBases = [baseBox]
         self.elements = elements
         // Resume step numbering past any restored badges so new ones don't collide.
         self.stepCounter = (elements.compactMap { ($0 as? StepElement)?.number }.max() ?? 0) + 1
@@ -444,24 +495,56 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     override func draw(_ dirtyRect: NSRect) {
         guard let cg = NSGraphicsContext.current?.cgContext else { return }
         NSColor(calibratedWhite: 0.16, alpha: 1).setFill()
-        bounds.fill()
+        dirtyRect.fill()
 
         let display = renderBase
+        cg.saveGState()
+        cg.clip(to: dirtyRect)
         cg.draw(display, in: displayRect)
+        cg.restoreGState()
 
         cg.saveGState()
         cg.translateBy(x: displayRect.minX, y: displayRect.minY)
         cg.scaleBy(x: scale, y: scale)
-        let rc = AnnotationRenderContext(baseImage: display, imageSize: imageSize, ciContext: ciContext)
-        for element in elements { element.drawRotated(in: cg, context: rc) }
+        let rc = AnnotationRenderContext(baseImage: display, imageSize: imageSize,
+                                         ciContext: ciContext, isInteractive: true)
+        // Cull to the invalidated area — targeted invalidations (drags, nudges) then pay only for
+        // the elements they touched, not a full re-render of every annotation.
+        for element in elements where invalidationRect(for: element).intersects(dirtyRect) {
+            element.drawRotated(in: cg, context: rc)
+        }
         cg.restoreGState()
 
-        if let selected, selected !== editingElement {
+        if let selected, selected !== editingElement,
+           invalidationRect(for: selected).intersects(dirtyRect) {
             drawSelectionHandles(for: selected)
         }
-        for el in groupSelection where el !== editingElement { drawSelectionOutline(for: el) }
+        for el in groupSelection
+        where el !== editingElement && invalidationRect(for: el).intersects(dirtyRect) {
+            drawSelectionOutline(for: el)
+        }
         if let marqueeRect { drawMarquee(marqueeRect) }
         if let cropRect { drawCropOverlay(cropRect) }
+    }
+
+    /// View-space rect to invalidate when `element` changes: painted area plus selection chrome
+    /// (8 pt handle squares straddle the outline) and antialiasing slop.
+    private func invalidationRect(for element: AnnotationElement) -> CGRect {
+        var box = element.paintBounds
+        guard !box.isInfinite else { return bounds }
+        if element.rotation != 0 { box = box.applying(element.rotationTransform) }
+        let origin = viewPoint(box.origin)
+        return CGRect(x: origin.x, y: origin.y, width: box.width * scale, height: box.height * scale)
+            .insetBy(dx: -14, dy: -14)
+    }
+
+    private func invalidationRect(of targets: [AnnotationElement]) -> CGRect {
+        targets.reduce(CGRect.null) { $0.union(invalidationRect(for: $1)) }
+    }
+
+    private func viewRect(forImageRect r: CGRect) -> CGRect {
+        CGRect(origin: viewPoint(r.origin),
+               size: CGSize(width: r.width * scale, height: r.height * scale))
     }
 
     /// Translucent rectangle drawn while dragging an area (marquee) selection.
@@ -552,12 +635,17 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     // MARK: Mouse
 
+    /// Capture the pre-gesture snapshot lazily, only once a mutation actually begins — an empty
+    /// click or pure selection shouldn't deep-clone every element on the canvas.
+    private func ensurePending() {
+        if pending == nil { pending = snapshot() }
+    }
+
     override func mouseDown(with event: NSEvent) {
         finishTextEditing()
         let p = imagePoint(convert(event.locationInWindow, from: nil))
         lastImagePoint = p
         didMove = false
-        pending = snapshot()   // captured before any mutation; committed only if something changes
 
         switch tool {
         case .select:
@@ -586,6 +674,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case .text:
             beginText(at: p)
         case .step:
+            pending = snapshot()
             let element = StepElement(center: p, number: stepCounter, style: style,
                                       format: Preferences.stepFormat, start: Preferences.stepStart)
             stepCounter += 1
@@ -607,10 +696,14 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             }
             dragMode = .none
         case .crop:
+            // Captured eagerly: a lazy snapshot in mouseDragged would record cropRect already
+            // nil-ed below, so undoing a re-crop would lose the previous crop.
+            pending = snapshot()
             cropAnchor = p
             cropRect = nil
             dragMode = .cropping
         default:
+            pending = snapshot()
             let element = makeDragElement(at: p)
             elements.append(element)
             creating = element
@@ -621,36 +714,60 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     override func mouseDragged(with event: NSEvent) {
         let p = imagePoint(convert(event.locationInWindow, from: nil))
+        // Each mode invalidates only the union of the affected elements' before/after rects; the
+        // rest of the canvas keeps its backing store instead of re-rendering per mouse event.
         switch dragMode {
         case .creating:
+            guard let creating else { return }
+            let before = invalidationRect(for: creating)
             var target = p
             // Shift constrains directional tools to 45° increments.
             if event.modifierFlags.contains(.shift), [.line, .arrow, .measure].contains(tool),
                let twoPoint = creating as? TwoPointElement {
                 target = AngleSnap.snap(start: twoPoint.start, end: p)
             }
-            creating?.updateDrag(to: target)
+            creating.updateDrag(to: target)
+            setNeedsDisplay(before.union(invalidationRect(for: creating)))
         case .moving:
+            ensurePending()
+            let targets = groupSelection.isEmpty ? [selected].compactMap { $0 } : groupSelection
+            let before = invalidationRect(of: targets)
             let delta = CGSize(width: p.x - lastImagePoint.x, height: p.y - lastImagePoint.y)
-            if groupSelection.isEmpty { selected?.translate(by: delta) }
-            else { for el in groupSelection { el.translate(by: delta) } }
+            for el in targets { el.translate(by: delta) }
             lastImagePoint = p
             if delta.width != 0 || delta.height != 0 { didMove = true }
+            setNeedsDisplay(before.union(invalidationRect(of: targets)))
         case .marquee:
             if let anchor = marqueeAnchor {
+                let oldGroup = groupSelection
+                var dirty = marqueeRect.map { viewRect(forImageRect: $0).insetBy(dx: -2, dy: -2) } ?? .null
                 let r = SelectionModel.rect(from: anchor, to: p)
                 marqueeRect = r
                 groupSelection = elements.filter { $0.boundingBox.intersects(r) }
+                dirty = dirty.union(viewRect(forImageRect: r).insetBy(dx: -2, dy: -2))
+                // Dashed outlines appear/disappear as elements enter or leave the marquee.
+                for el in oldGroup where !groupSelection.contains(where: { $0 === el }) {
+                    dirty = dirty.union(invalidationRect(for: el))
+                }
+                for el in groupSelection where !oldGroup.contains(where: { $0 === el }) {
+                    dirty = dirty.union(invalidationRect(for: el))
+                }
+                setNeedsDisplay(dirty)
             }
         case .resizing:
-            selected.map { $0.moveHandle(resizeHandle, to: $0.localPoint(p)) }
+            guard let selected else { return }
+            ensurePending()
+            let before = invalidationRect(for: selected)
+            selected.moveHandle(resizeHandle, to: selected.localPoint(p))
             didMove = true
+            setNeedsDisplay(before.union(invalidationRect(for: selected)))
         case .cropping:
             if let anchor = cropAnchor { cropRect = SelectionModel.rect(from: anchor, to: p) }
+            // The crop dim covers the whole image area (not the outer canvas margin).
+            setNeedsDisplay(displayRect.insetBy(dx: -2, dy: -2))
         case .none:
             break
         }
-        needsDisplay = true
     }
 
     /// If a freehand highlight overlaps OCR'd text lines, snap it to cover them (smart highlighter).
@@ -915,11 +1032,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             default: break
             }
         }
-        // Single-key tool shortcuts (no ⌘/⌥/⌃). A text field, when editing, is the first responder
-        // instead of the canvas, so these never fire mid-typing.
-        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
-           let chars = event.charactersIgnoringModifiers, chars.count == 1,
-           let ch = chars.lowercased().first, let picked = ToolKind.forShortcut(ch) {
+        // Tool shortcuts (single keys by default, recordable in Settings ▸ Editor). A text field,
+        // when editing, is the first responder instead of the canvas, so these never fire mid-typing.
+        if let shortcut = BetterShortcuts.Shortcut(event: event),
+           let picked = ToolKind.forShortcut(shortcut) {
             tool = picked
             onToolPicked?(picked)
             return
@@ -955,9 +1071,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         default: break
         }
         let before = snapshot()
+        let dirtyBefore = invalidationRect(of: targets)
         for el in targets { el.translate(by: delta) }
         commit(before, "Nudge")
-        needsDisplay = true
+        setNeedsDisplay(dirtyBefore.union(invalidationRect(of: targets)))
     }
 
     func deleteSelected() {

@@ -154,19 +154,39 @@ final class RecordingController {
         }
     }
 
+    /// Hard backstop: 25 Hz × 1 h ≈ 90k samples ≈ 2 MB of structs. With stationary-run dedupe
+    /// below this is effectively unreachable in real recordings.
+    private static let maxCursorSamples = 90_000
+
     private func startCursorSampling() {
         let start = startDate ?? Date()
-        cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.cursorDisplayFrame.width > 0 else { return }
+                guard self.cursorSamples.count < Self.maxCursorSamples else {
+                    self.stopCursorSampling()
+                    return
+                }
                 let m = NSEvent.mouseLocation
                 let f = self.cursorDisplayFrame
                 let x = min(max(0, (m.x - f.minX) / f.width), 1)
                 let y = min(max(0, (m.y - f.minY) / f.height), 1)
-                self.cursorSamples.append(CursorSample(t: Date().timeIntervalSince(start),
-                                                       x: Double(x), y: Double(y)))
+                let sample = CursorSample(t: Date().timeIntervalSince(start), x: Double(x), y: Double(y))
+                // Run-length dedupe: while the cursor is stationary keep only the run's first and
+                // last sample, sliding the last one's timestamp forward — lossless for the trim
+                // window's linear interpolation, and an idle mouse costs 2 samples instead of 25/s.
+                let n = self.cursorSamples.count
+                if n >= 2,
+                   self.cursorSamples[n - 1].x == sample.x, self.cursorSamples[n - 1].y == sample.y,
+                   self.cursorSamples[n - 2].x == sample.x, self.cursorSamples[n - 2].y == sample.y {
+                    self.cursorSamples[n - 1] = sample
+                } else {
+                    self.cursorSamples.append(sample)
+                }
             }
         }
+        timer.tolerance = 0.008
+        cursorTimer = timer
     }
 
     private func stopCursorSampling() { cursorTimer?.invalidate(); cursorTimer = nil }

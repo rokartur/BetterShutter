@@ -113,6 +113,36 @@ func makeSolidTestImage(width: Int, height: Int) -> CGImage {
     return ctx.makeImage()!
 }
 
+/// A deterministic non-uniform image (hashed per-row colors), for tests that need to detect any
+/// pixel-level divergence — a solid fill would mask flips, shifts, and lossy round-trips.
+@MainActor
+func makeNoisyTestImage(width: Int, height: Int) -> CGImage {
+    let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+    let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                        bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    for y in 0..<height {
+        let h = UInt32(truncatingIfNeeded: y &* 2654435761)
+        ctx.setFillColor(red: CGFloat(h & 0xFF) / 255, green: CGFloat((h >> 8) & 0xFF) / 255,
+                         blue: CGFloat((h >> 16) & 0xFF) / 255, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: CGFloat(y), width: CGFloat(width), height: 1))
+    }
+    return ctx.makeImage()!
+}
+
+/// Rasterize `image` into raw RGBA8 bytes (sRGB, premultiplied) for exact pixel comparisons.
+@MainActor
+func rgbaBytes(of image: CGImage) -> [UInt8] {
+    var buf = [UInt8](repeating: 0, count: image.width * image.height * 4)
+    buf.withUnsafeMutableBytes { raw in
+        guard let ctx = CGContext(data: raw.baseAddress, width: image.width, height: image.height,
+                                  bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    }
+    return buf
+}
+
 @MainActor
 struct AnnotationRendererTests {
     private func solidImage(width: Int, height: Int) -> CGImage {
@@ -328,12 +358,49 @@ struct ScrollStitcherTests {
     }
 
     @Test
-    func appendGrowsCanvasByRowCount() {
-        let a = makeSolidTestImage(width: 100, height: 200)
-        let b = makeSolidTestImage(width: 100, height: 200)
-        let out = ScrollStitcher.append(canvas: a, next: b, rows: 40)
+    func stripAndCompositeGrowByRowCount() throws {
+        let head = makeSolidTestImage(width: 100, height: 200)
+        let next = makeSolidTestImage(width: 100, height: 200)
+        let strip = try #require(ScrollStitcher.strip(from: next, rows: 40))
+        #expect(strip.width == 100)
+        #expect(strip.height == 40)
+        let out = ScrollStitcher.composite(head: head, strips: [strip])
         #expect(out?.width == 100)
         #expect(out?.height == 240)
+    }
+
+    @Test
+    func stripCopiesBottomRows() throws {
+        let source = gradient(width: 60, height: 100, offset: 0)
+        let strip = try #require(ScrollStitcher.strip(from: source, rows: 30))
+        for y in [0, 14, 29] {
+            let got = try #require(PixelSampler.rgb(in: strip, x: 5, y: y))
+            let want = try #require(PixelSampler.rgb(in: source, x: 5, y: source.height - 30 + y))
+            #expect(abs(got.r - want.r) <= 2)
+            #expect(abs(got.g - want.g) <= 2)
+            #expect(abs(got.b - want.b) <= 2)
+        }
+    }
+
+    /// Orientation spec for the one-shot composite: head at the visual top, strips stacked below,
+    /// none of them flipped.
+    @Test
+    func compositeStacksTopToBottom() throws {
+        let head = gradient(width: 40, height: 60, offset: 0)
+        let strip1 = try #require(ScrollStitcher.strip(from: gradient(width: 40, height: 60, offset: 20), rows: 20))
+        let strip2 = try #require(ScrollStitcher.strip(from: gradient(width: 40, height: 60, offset: 40), rows: 20))
+        let out = try #require(ScrollStitcher.composite(head: head, strips: [strip1, strip2]))
+        #expect(out.height == 100)
+        // The gradient rows are keyed by (visualRow + offset), so a seamless stitch means output
+        // row y matches gradient row key y for the full height.
+        let reference = gradient(width: 40, height: 100, offset: 0)
+        for y in [0, 30, 59, 60, 75, 79, 80, 99] {
+            let got = try #require(PixelSampler.rgb(in: out, x: 7, y: y))
+            let want = try #require(PixelSampler.rgb(in: reference, x: 7, y: y))
+            #expect(abs(got.r - want.r) <= 2, "row \(y)")
+            #expect(abs(got.g - want.g) <= 2, "row \(y)")
+            #expect(abs(got.b - want.b) <= 2, "row \(y)")
+        }
     }
 }
 
@@ -376,6 +443,92 @@ struct AnnotationCloneTests {
         step.translate(by: CGSize(width: 10, height: 10))
         #expect(copy?.center.x == 7)
         #expect(copy?.center.y == 8)
+    }
+}
+
+@MainActor
+struct UndoBaseImageTests {
+    @Test
+    func downgradeRoundTripIsLossless() async throws {
+        let source = makeNoisyTestImage(width: 64, height: 48)
+        let box = UndoBaseImage(source)
+        box.downgrade()
+        for _ in 0..<300 where !box.isDowngraded {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(box.isDowngraded)
+        let decoded = try #require(box.image)
+        #expect(rgbaBytes(of: decoded) == rgbaBytes(of: source))
+        // Promotion drops the encoded copy and keeps the bitmap live again.
+        #expect(!box.isDowngraded)
+    }
+}
+
+@MainActor
+struct RedactionCacheTests {
+    private func draw(_ element: AnnotationElement, base: CGImage,
+                      rc: AnnotationRenderContext) -> [UInt8] {
+        var buf = [UInt8](repeating: 0, count: base.width * base.height * 4)
+        buf.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(data: raw.baseAddress, width: base.width, height: base.height,
+                                      bitsPerComponent: 8, bytesPerRow: base.width * 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            ctx.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
+            element.draw(in: ctx, context: rc)
+        }
+        return buf
+    }
+
+    /// The interactive cache must be a pure speedup: a cache-hit repaint renders the exact same
+    /// pixels as the uncached (export) pipeline.
+    @Test
+    func pixelateCacheHitMatchesUncachedDraw() {
+        let base = makeNoisyTestImage(width: 120, height: 90)
+        let ciContext = CIContext()
+        let size = CGSize(width: 120, height: 90)
+        let style = AnnotationStyle.makeDefault(imageWidth: 120)
+
+        func makeElement() -> PixelateElement {
+            let e = PixelateElement(start: CGPoint(x: 10, y: 12), style: style)
+            e.end = CGPoint(x: 84, y: 66)
+            return e
+        }
+        let exportRC = AnnotationRenderContext(baseImage: base, imageSize: size, ciContext: ciContext)
+        let interactiveRC = AnnotationRenderContext(baseImage: base, imageSize: size,
+                                                    ciContext: ciContext, isInteractive: true)
+
+        let reference = draw(makeElement(), base: base, rc: exportRC)
+        let cachedElement = makeElement()
+        _ = draw(cachedElement, base: base, rc: interactiveRC)                    // populates the cache
+        let cacheHit = draw(cachedElement, base: base, rc: interactiveRC)         // must blit the cache
+        #expect(cacheHit == reference)
+    }
+
+    /// `clone()` (used by undo snapshots) must not carry the render cache — a clone drawn against
+    /// a different base image renders from that base, not a stale cached patch.
+    @Test
+    func cloneRedrawsAgainstNewBase() {
+        let baseA = makeNoisyTestImage(width: 80, height: 60)
+        let baseB = makeSolidTestImage(width: 80, height: 60)
+        let ciContext = CIContext()
+        let size = CGSize(width: 80, height: 60)
+        let style = AnnotationStyle.makeDefault(imageWidth: 80)
+
+        let element = PixelateElement(start: CGPoint(x: 8, y: 8), style: style)
+        element.end = CGPoint(x: 60, y: 44)
+        let rcA = AnnotationRenderContext(baseImage: baseA, imageSize: size,
+                                          ciContext: ciContext, isInteractive: true)
+        _ = draw(element, base: baseA, rc: rcA)   // warm the cache against base A
+
+        let clone = element.clone()
+        let rcB = AnnotationRenderContext(baseImage: baseB, imageSize: size,
+                                          ciContext: ciContext, isInteractive: true)
+        let cloneOnB = draw(clone, base: baseB, rc: rcB)
+        let freshOnB = draw({ let e = PixelateElement(start: CGPoint(x: 8, y: 8), style: style)
+                              e.end = CGPoint(x: 60, y: 44); return e }(),
+                            base: baseB, rc: rcB)
+        #expect(cloneOnB == freshOnB)
     }
 }
 
@@ -560,22 +713,27 @@ struct AnnotationResizeTests {
 @MainActor
 struct GIFEncoderTests {
     @Test
-    func encodesFramesToGIF() {
-        let frames = [
-            makeSolidTestImage(width: 8, height: 8),
-            makeSolidTestImage(width: 8, height: 8),
-            makeSolidTestImage(width: 8, height: 8),
-        ]
-        let data = GIFEncoder.encode(frames: frames, frameDelay: 0.1)
-        #expect(data != nil)
-        // GIF magic header "GIF8".
-        let prefix = data?.prefix(4)
-        #expect(prefix.map { Array($0) } == Array("GIF8".utf8))
+    func encodesCompressedFramesToFile() throws {
+        let frameData = (0..<3).compactMap { _ in
+            ImageEncoder.encode(makeSolidTestImage(width: 8, height: 8), as: .png)
+        }
+        #expect(frameData.count == 3)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gif-encoder-test-\(UUID().uuidString).gif")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(GIFEncoder.encode(frameData: frameData, frameDelay: 0.1, to: url))
+        let data = try Data(contentsOf: url)
+        #expect(Array(data.prefix(4)) == Array("GIF8".utf8))
+        let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+        #expect(CGImageSourceGetCount(source) == 3)
     }
 
     @Test
-    func emptyFramesReturnsNil() {
-        #expect(GIFEncoder.encode(frames: [], frameDelay: 0.1) == nil)
+    func emptyCompressedFramesFails() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gif-encoder-empty-\(UUID().uuidString).gif")
+        #expect(!GIFEncoder.encode(frameData: [], frameDelay: 0.1, to: url))
     }
 }
 
@@ -1044,6 +1202,28 @@ struct CloudConfigTests {
     func keyFormat() {
         #expect(CloudUploadService.makeKey(stamp: "2026-06-14-090000", random: "ab12cd34", ext: "png")
                 == "2026-06-14-090000-ab12cd34.png")
+    }
+}
+
+struct ImgbbMultipartTests {
+    @Test
+    func bodyWrapsRawPayloadVerbatim() {
+        let payload = Data((0...255).map { UInt8($0) })   // exercises every byte value
+        let boundary = "test-boundary-123"
+        let body = ImgbbUploader.multipartBody(data: payload, boundary: boundary,
+                                               filename: "shot.png", contentType: "image/png")
+
+        let prefix = Data((
+            "--\(boundary)\r\n" +
+            "Content-Disposition: form-data; name=\"image\"; filename=\"shot.png\"\r\n" +
+            "Content-Type: image/png\r\n\r\n"
+        ).utf8)
+        let suffix = Data("\r\n--\(boundary)--\r\n".utf8)
+
+        #expect(body.prefix(prefix.count) == prefix)
+        #expect(body.suffix(suffix.count) == suffix)
+        #expect(body.count == prefix.count + payload.count + suffix.count)
+        #expect(body.dropFirst(prefix.count).prefix(payload.count) == payload)
     }
 }
 

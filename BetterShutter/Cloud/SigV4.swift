@@ -50,6 +50,19 @@ nonisolated enum SigV4 {
     static func hex(_ digest: SHA256.Digest) -> String { digest.map { String(format: "%02x", $0) }.joined() }
     static func sha256Hex(_ data: Data) -> String { hex(SHA256.hash(data: data)) }
 
+    /// SHA-256 of a file, hashed in 1 MB chunks so signing a multi-hundred-MB recording never
+    /// loads the whole file into memory.
+    static func sha256HexOfFile(_ url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            guard let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+        return hex(hasher.finalize())
+    }
+
     // MARK: Internals
 
     /// The SigV4 derived signing key (HMAC chain: date → region → service → "aws4_request").
