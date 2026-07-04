@@ -67,14 +67,15 @@ enum MagnifierLoupe {
         let clamped = sourceRect.intersection(imageRect)
         if !clamped.isNull, !clamped.isEmpty, let crop = image.cropping(to: clamped) {
             ctx.interpolationQuality = .none
-            // CGImage is top-left origin; flip vertically into the bottom-left view space.
-            ctx.saveGState()
-            ctx.translateBy(x: frame.minX, y: frame.maxY)
-            ctx.scaleBy(x: 1, y: -1)
+            // A plain CGContext.draw renders the (top-left-origin) crop upright in bottom-left
+            // view space — no flip transform. Only the placement converts between origins: the
+            // crop's offset from the sample window's top edge becomes an offset down from the
+            // loupe frame's maxY.
             let dx = (clamped.minX - sourceRect.minX) * cell
-            let dy = (clamped.minY - sourceRect.minY) * cell
-            ctx.draw(crop, in: CGRect(x: dx, y: dy, width: clamped.width * cell, height: clamped.height * cell))
-            ctx.restoreGState()
+            let dyFromTop = (clamped.minY - sourceRect.minY) * cell
+            ctx.draw(crop, in: CGRect(x: frame.minX + dx,
+                                      y: frame.maxY - dyFromTop - clamped.height * cell,
+                                      width: clamped.width * cell, height: clamped.height * cell))
         }
 
         // Faint pixel grid — subtle, so it reads as precision rather than a checkerboard.

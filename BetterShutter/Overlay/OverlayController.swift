@@ -30,6 +30,7 @@ final class OverlayController {
         windows: [WindowInfo],
         magnifierEnabled: Bool,
         windowSelection: Bool = true,
+        windowPickRequiresSpace: Bool = false,
         toolbarActions: [OverlayAction] = [],
         instantCapture: Bool = false,
         lockedAspect: CGFloat? = nil,
@@ -59,10 +60,14 @@ final class OverlayController {
             let container = window.contentView ?? NSView(frame: NSRect(origin: .zero, size: frame.size))
             container.wantsLayer = true
 
-            let background = NSImageView(frame: container.bounds)
-            background.image = NSImage(cgImage: image.cgImage, size: frame.size)
-            background.imageScaling = .scaleAxesIndependently
+            // The frozen bitmap goes straight into a layer's contents: the ScreenCaptureKit image is
+            // IOSurface-backed, so this is zero-copy to the window server. An NSImageView would
+            // re-render it into its own screen-sized backing store (~60 MB per Retina 5K display).
+            let background = NSView(frame: container.bounds)
+            background.wantsLayer = true
             background.autoresizingMask = [.width, .height]
+            background.layer?.contents = image.cgImage
+            background.layer?.contentsGravity = .resize
             container.addSubview(background)
 
             let view = OverlayView(
@@ -89,6 +94,7 @@ final class OverlayController {
             view.windowHits = windowSelection
                 ? WindowHighlighter.viewRects(windows: windows, primaryHeight: primaryHeight, screenGlobalFrame: frame)
                 : []
+            view.windowPickRequiresSpace = windowPickRequiresSpace
             container.addSubview(view)
 
             let pane = Pane(window: window, view: view, screenFrame: frame, image: image)
@@ -157,8 +163,24 @@ final class OverlayController {
             onCancel?()
             return
         }
-        onRegion?(CapturedImage(cgImage: cropped, scale: pane.image.scale, displayID: pane.image.displayID),
+        // `cropping(to:)` only references the parent bitmap — handing it out as-is would pin the
+        // whole ~60 MB frozen screen frame in memory for as long as the capture lives (history,
+        // preview, editor). Re-render into a right-sized bitmap so the frame frees on dismiss.
+        let detached = Self.detachedCopy(of: cropped)
+        onRegion?(CapturedImage(cgImage: detached, scale: pane.image.scale, displayID: pane.image.displayID),
                   globalRect, displayID, action)
+    }
+
+    /// A deep copy backed by its own, crop-sized buffer (BGRA, matching ScreenCaptureKit output).
+    private static func detachedCopy(of image: CGImage) -> CGImage {
+        guard let ctx = CGContext(
+            data: nil, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return image }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return ctx.makeImage() ?? image
     }
 
     private func handleWindow(_ id: CGWindowID) {
@@ -202,7 +224,17 @@ final class OverlayController {
             NotificationCenter.default.removeObserver(screenObserver)
             self.screenObserver = nil
         }
-        for pane in panes { pane.window.orderOut(nil) }
+        for pane in panes {
+            // Break the retain cycle view → onRegionSelected closure → pane → view/window/image.
+            // Without this every presentation leaks its overlay windows AND the frozen full-res
+            // bitmaps (~60 MB per Retina 5K display), growing the footprint on each capture.
+            pane.view.onRegionSelected = nil
+            pane.view.onWindowSelected = nil
+            pane.view.onCancel = nil
+            pane.view.setCursorHidden = nil
+            pane.window.orderOut(nil)
+            pane.window.contentView = nil
+        }
         panes.removeAll()
         showCursor()
         onRegion = nil

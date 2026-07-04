@@ -1,13 +1,18 @@
 import AppKit
 
 /// The interactive, transparent front layer of one screen's capture overlay — styled after
-/// CleanShot X. It draws a dark dim with the selection cut out crisp, a thin white selection
+/// CleanShot X. It shows a dark dim with the selection cut out crisp, a thin white selection
 /// border with eight grab handles, a rule-of-thirds grid, a live dimension pill, the magnifier
 /// loupe, and a floating liquid-glass action bar. The selection is adjustable after drawing:
 /// drag a handle to resize, drag inside to move, drag outside to start over.
 ///
-/// The crisp frozen screenshot is shown by a sibling image view behind this one; this view leaves
-/// the selected region undrawn so it shows through.
+/// The crisp frozen screenshot is shown by a sibling view behind this one; this view leaves
+/// the selected region uncovered so it shows through.
+///
+/// All chrome is plain CALayers (solid colors, borders) rather than a `draw(_:)` override: a
+/// full-screen layer-backed view with custom drawing allocates a screen-sized backing bitmap
+/// (~60 MB per Retina 5K display), while solid-color layers cost effectively nothing. Only the
+/// small loupe (`LoupeView`) and dimension text rasterize, both a few hundred KB.
 @MainActor
 final class OverlayView: NSView {
 
@@ -15,6 +20,9 @@ final class OverlayView: NSView {
     private let frozenImage: CGImage
     private let pixelSize: CGSize
     var windowHits: [WindowHighlighter.Hit] = []
+    /// When true, window hover-highlight and click-to-pick are only active while Space is held —
+    /// the merged screenshot flow: drag = region, hold Space = pick a window (native-screenshot style).
+    var windowPickRequiresSpace = false
     var magnifierEnabled = true
     /// When true, releasing the drag captures immediately (no adjustable pending state / handles) —
     /// used by the Quick Screenshot and Screenshot & Markup flows.
@@ -54,6 +62,17 @@ final class OverlayView: NSView {
     private var actionBar: CaptureActionBar?
     private var finished = false   // one-shot guard: a confirmed selection fires exactly once
 
+    // Chrome layers (created once, laid out by refreshChrome()).
+    private let dimLayers = (0..<4).map { _ in CALayer() }           // top, bottom, left, right
+    private let windowHighlightLayer = CALayer()
+    private let crosshairLayers = (0..<2).map { _ in CALayer() }     // vertical, horizontal
+    private let borderLayer = CALayer()
+    private let gridLayers = (0..<4).map { _ in CALayer() }          // 2 vertical, 2 horizontal
+    private let handleLayers = Handle.allCases.map { _ in CALayer() }
+    private let dimensionPill = CALayer()
+    private let dimensionText = CATextLayer()
+    private var loupe: LoupeView?
+
     private let minSelectionSide: CGFloat = 4
     private let handleHitRadius: CGFloat = 11
     private let handleSize: CGFloat = 9
@@ -64,6 +83,7 @@ final class OverlayView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = .clear
+        setupChromeLayers()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -71,6 +91,171 @@ final class OverlayView: NSView {
     override var isFlipped: Bool { false }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // MARK: Chrome layers
+
+    private func setupChromeLayers() {
+        guard let root = layer else { return }
+        for l in dimLayers {
+            l.backgroundColor = NSColor.black.withAlphaComponent(0.40).cgColor
+            root.addSublayer(l)
+        }
+        windowHighlightLayer.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
+        windowHighlightLayer.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.9).cgColor
+        windowHighlightLayer.borderWidth = 2
+        windowHighlightLayer.isHidden = true
+        root.addSublayer(windowHighlightLayer)
+        for l in crosshairLayers {
+            l.backgroundColor = NSColor.white.withAlphaComponent(0.45).cgColor
+            root.addSublayer(l)
+        }
+        borderLayer.borderColor = NSColor.white.withAlphaComponent(0.95).cgColor
+        borderLayer.borderWidth = 1
+        borderLayer.isHidden = true
+        root.addSublayer(borderLayer)
+        for l in gridLayers {
+            l.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
+            l.isHidden = true
+            root.addSublayer(l)
+        }
+        for l in handleLayers {
+            l.backgroundColor = NSColor.white.cgColor
+            l.cornerRadius = 2
+            l.borderColor = NSColor.black.withAlphaComponent(0.35).cgColor
+            l.borderWidth = 0.5
+            l.isHidden = true
+            root.addSublayer(l)
+        }
+        dimensionPill.backgroundColor = GlassTokens.Fixed.dimensionPill.cgColor
+        dimensionPill.cornerRadius = 6
+        dimensionPill.isHidden = true
+        dimensionPill.addSublayer(dimensionText)
+        root.addSublayer(dimensionPill)
+    }
+
+    /// Re-lays out every chrome layer from the current state. The layer-based equivalent of the
+    /// old full-view `draw(_:)` — called wherever the view used to set `needsDisplay`.
+    private func refreshChrome() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+
+        // Only an actual selection brightens (cuts a hole). Hovering a window keeps the whole
+        // screen dimmed and just outlines the clickable window — it does NOT brighten it.
+        let hole = activeRect
+        layoutDim(around: hole)
+
+        if let r = hole {
+            // A CALayer border draws inside its frame; outset by half the line so it straddles the
+            // rect edge like the old centered NSBezierPath stroke.
+            borderLayer.isHidden = false
+            borderLayer.frame = r.insetBy(dx: -0.5, dy: -0.5)
+            layoutGrid(in: r)
+            let showHandles = hasCommittedSelection
+            for (i, h) in Handle.allCases.enumerated() {
+                handleLayers[i].isHidden = !showHandles
+                guard showHandles else { continue }
+                let c = handlePoint(h, in: r)
+                handleLayers[i].frame = CGRect(
+                    x: c.x - handleSize / 2, y: c.y - handleSize / 2,
+                    width: handleSize, height: handleSize
+                )
+            }
+            layoutDimensionPill(for: r)
+        } else {
+            borderLayer.isHidden = true
+            gridLayers.forEach { $0.isHidden = true }
+            handleLayers.forEach { $0.isHidden = true }
+            dimensionPill.isHidden = true
+        }
+
+        if hole == nil, phase == .idle, let h = hoveredWindow?.rect {
+            windowHighlightLayer.isHidden = false
+            windowHighlightLayer.frame = h
+        } else {
+            windowHighlightLayer.isHidden = true
+        }
+
+        // Crosshair + loupe only while pointing (idle / dragging), not while adjusting.
+        let pointing = !hasCommittedSelection
+        crosshairLayers.forEach { $0.isHidden = !pointing }
+        if pointing {
+            crosshairLayers[0].frame = CGRect(x: mousePoint.x - 0.5, y: bounds.minY, width: 1, height: bounds.height)
+            crosshairLayers[1].frame = CGRect(x: bounds.minX, y: mousePoint.y - 0.5, width: bounds.width, height: 1)
+        }
+        updateLoupe(visible: pointing && magnifierEnabled)
+    }
+
+    private func layoutDim(around hole: CGRect?) {
+        let b = bounds
+        guard let h = hole else {
+            dimLayers[0].frame = b
+            for l in dimLayers.dropFirst() { l.frame = .zero }
+            return
+        }
+        dimLayers[0].frame = CGRect(x: b.minX, y: h.maxY, width: b.width, height: max(0, b.maxY - h.maxY))
+        dimLayers[1].frame = CGRect(x: b.minX, y: b.minY, width: b.width, height: max(0, h.minY - b.minY))
+        dimLayers[2].frame = CGRect(x: b.minX, y: h.minY, width: max(0, h.minX - b.minX), height: h.height)
+        dimLayers[3].frame = CGRect(x: h.maxX, y: h.minY, width: max(0, b.maxX - h.maxX), height: h.height)
+    }
+
+    private func layoutGrid(in r: CGRect) {
+        let show = r.width > 40 && r.height > 40
+        for (i, l) in gridLayers.enumerated() {
+            l.isHidden = !show
+            guard show else { continue }
+            if i < 2 {
+                let x = r.minX + r.width * CGFloat(i + 1) / 3
+                l.frame = CGRect(x: x - 0.25, y: r.minY, width: 0.5, height: r.height)
+            } else {
+                let y = r.minY + r.height * CGFloat(i - 1) / 3
+                l.frame = CGRect(x: r.minX, y: y - 0.25, width: r.width, height: 0.5)
+            }
+        }
+    }
+
+    private static let dimensionAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+        .foregroundColor: NSColor.white,
+    ]
+    private var dimensionString = ""
+    private var dimensionTextSize: CGSize = .zero
+
+    private func layoutDimensionPill(for r: CGRect) {
+        let wpx = Int((r.width * sx).rounded())
+        let hpx = Int((r.height * sy).rounded())
+        let text = "\(wpx) × \(hpx)"
+        let padding: CGFloat = 6
+        // Re-measure and re-rasterize the text layer only when the label actually changed; the
+        // pill frame math still runs every event so it follows a fixed-size selection being moved.
+        if text != dimensionString {
+            dimensionString = text
+            dimensionTextSize = (text as NSString).size(withAttributes: Self.dimensionAttrs)
+            dimensionText.string = NSAttributedString(string: text, attributes: Self.dimensionAttrs)
+            dimensionText.frame = CGRect(x: padding, y: padding / 2,
+                                         width: ceil(dimensionTextSize.width),
+                                         height: ceil(dimensionTextSize.height))
+        }
+        let size = dimensionTextSize
+        let boxW = size.width + padding * 2
+        let boxH = size.height + padding
+        var origin = CGPoint(x: r.minX, y: r.maxY + 7)
+        if origin.y + boxH > bounds.maxY { origin.y = r.minY - boxH - 7 }
+        origin.x = min(max(bounds.minX + 2, origin.x), bounds.maxX - boxW - 2)
+        dimensionPill.isHidden = false
+        dimensionPill.frame = CGRect(origin: origin, size: CGSize(width: boxW, height: boxH))
+    }
+
+    private func updateLoupe(visible: Bool) {
+        guard visible else { loupe?.isHidden = true; return }
+        if loupe == nil {
+            let v = LoupeView(image: frozenImage)
+            addSubview(v)
+            loupe = v
+        }
+        loupe?.isHidden = false
+        loupe?.update(anchor: mousePoint, pixelPoint: pixelPoint(for: mousePoint), overlayBounds: bounds)
+    }
 
     // MARK: Tracking
 
@@ -85,6 +270,11 @@ final class OverlayView: NSView {
         )
         addTrackingArea(area)
         trackingArea = area
+    }
+
+    override func layout() {
+        super.layout()
+        refreshChrome()
     }
 
     // MARK: Scale helpers
@@ -122,6 +312,11 @@ final class OverlayView: NSView {
 
     private var hasCommittedSelection: Bool {
         switch phase { case .pending, .moving, .resizing: return true; default: return false }
+    }
+
+    /// Whether hovering/clicking a window picks it right now.
+    private var windowPickActive: Bool {
+        !windowHits.isEmpty && (!windowPickRequiresSpace || spaceHeld)
     }
 
     // MARK: Handle geometry
@@ -189,6 +384,7 @@ final class OverlayView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        dimensionText.contentsScale = window?.backingScaleFactor ?? 2
         updateCursor()
         if phase == .idle, let rect = initialSelection?.intersection(bounds),
            rect.width >= minSelectionSide, rect.height >= minSelectionSide {
@@ -196,15 +392,16 @@ final class OverlayView: NSView {
             enterPending()   // adjustable + action bar shown, ready to confirm or tweak
         }
         initialSelection = nil
+        refreshChrome()
     }
 
     override func mouseMoved(with event: NSEvent) {
         mousePoint = convert(event.locationInWindow, from: nil)
         if phase == .idle {
-            hoveredWindow = WindowHighlighter.window(at: mousePoint, in: windowHits)
+            hoveredWindow = windowPickActive ? WindowHighlighter.window(at: mousePoint, in: windowHits) : nil
         }
         updateCursor()
-        needsDisplay = true
+        refreshChrome()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -214,7 +411,7 @@ final class OverlayView: NSView {
         if hasCommittedSelection {
             if let h = handle(at: mousePoint, in: selectionRect) {
                 phase = .resizing(h)
-                needsDisplay = true
+                refreshChrome()
                 return
             }
             if selectionRect.contains(mousePoint) {
@@ -231,7 +428,7 @@ final class OverlayView: NSView {
         dragAnchor = mousePoint
         phase = .dragging
         updateCursor()
-        needsDisplay = true
+        refreshChrome()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -259,7 +456,7 @@ final class OverlayView: NSView {
         }
         mousePoint = p
         updateCursor()
-        needsDisplay = true
+        refreshChrome()
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -283,10 +480,10 @@ final class OverlayView: NSView {
                 // Treated as a click: capture the window under the cursor, if any.
                 phase = .idle
                 updateCursor()
-                if let hit = WindowHighlighter.window(at: mousePoint, in: windowHits) {
+                if windowPickActive, let hit = WindowHighlighter.window(at: mousePoint, in: windowHits) {
                     onWindowSelected?(hit.id)
                 } else {
-                    needsDisplay = true
+                    refreshChrome()
                 }
                 return
             }
@@ -295,7 +492,7 @@ final class OverlayView: NSView {
         default:
             break
         }
-        needsDisplay = true
+        refreshChrome()
     }
 
     // MARK: Keyboard
@@ -307,7 +504,9 @@ final class OverlayView: NSView {
         case 36, 76: // return / keypad enter
             if hasCommittedSelection { confirm(.capture) }
         case 49: // space
+            guard !event.isARepeat else { return }
             spaceHeld = true
+            enteredWindowPick()
         case 123, 124, 125, 126: // arrows
             handleArrow(event)
         default:
@@ -316,7 +515,26 @@ final class OverlayView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
-        if event.keyCode == 49 { spaceHeld = false }
+        guard event.keyCode == 49 else { return }
+        spaceHeld = false
+        leftWindowPick()
+    }
+
+    /// Space pressed: with space-gated window pick, refresh the hover highlight so the window under
+    /// the cursor lights up immediately (not only on the next mouse move).
+    private func enteredWindowPick() {
+        guard windowPickRequiresSpace, phase == .idle else { return }
+        hoveredWindow = windowPickActive ? WindowHighlighter.window(at: mousePoint, in: windowHits) : nil
+        updateCursor()
+        refreshChrome()
+    }
+
+    /// Space released: drop back to plain region selection.
+    private func leftWindowPick() {
+        guard windowPickRequiresSpace else { return }
+        hoveredWindow = nil
+        updateCursor()
+        refreshChrome()
     }
 
     override func flagsChanged(with event: NSEvent) {
@@ -328,7 +546,7 @@ final class OverlayView: NSView {
             selectionRect = resized(selectionRect, handle: h, to: mousePoint)
             layoutActionBar()
         }
-        needsDisplay = true
+        refreshChrome()
     }
 
     private func handleArrow(_ event: NSEvent) {
@@ -346,7 +564,7 @@ final class OverlayView: NSView {
         }
         if let r = model.rect { selectionRect = r }
         layoutActionBar()
-        needsDisplay = true
+        refreshChrome()
     }
 
     // MARK: Phase transitions
@@ -355,7 +573,7 @@ final class OverlayView: NSView {
         phase = .pending
         updateCursor()
         showActionBar()
-        needsDisplay = true
+        refreshChrome()
     }
 
     // MARK: Cursor
@@ -368,7 +586,8 @@ final class OverlayView: NSView {
         let cursor: NSCursor
         switch phase {
         case .idle:
-            cursor = WindowHighlighter.window(at: mousePoint, in: windowHits) != nil ? .pointingHand : .crosshair
+            cursor = windowPickActive && WindowHighlighter.window(at: mousePoint, in: windowHits) != nil
+                ? .pointingHand : .crosshair
         case .dragging:
             cursor = .crosshair
         case .moving:
@@ -428,129 +647,5 @@ final class OverlayView: NSView {
         if y < bounds.minY + 6 { y = selectionRect.maxY + gap } // flip above
         y = min(max(bounds.minY + 6, y), bounds.maxY - h - 6)
         bar.frame = NSRect(x: x, y: y, width: w, height: h)
-    }
-
-    // MARK: Drawing
-
-    override func draw(_ dirtyRect: NSRect) {
-        // Only an actual selection brightens (cuts a hole). Hovering a window keeps the whole screen
-        // dimmed and just outlines the clickable window — it does NOT brighten it.
-        drawDim(around: activeRect)
-
-        if let r = activeRect {
-            drawSelectionChrome(r)
-        } else if phase == .idle, let h = hoveredWindow?.rect {
-            drawWindowHighlight(rect: h)
-        }
-
-        // Magnifier + crosshair only while pointing (idle / dragging), not while adjusting.
-        if !hasCommittedSelection {
-            drawCrosshair(at: mousePoint)
-            if magnifierEnabled {
-                MagnifierLoupe.draw(
-                    at: mousePoint,
-                    image: frozenImage,
-                    pixelPoint: pixelPoint(for: mousePoint),
-                    viewBounds: bounds
-                )
-            }
-        }
-    }
-
-    private func fill(_ rect: NSRect) { NSBezierPath(rect: rect).fill() }
-
-    private func drawDim(around hole: CGRect?) {
-        NSColor.black.withAlphaComponent(0.40).setFill()
-        guard let h = hole else { fill(bounds); return }
-        let b = bounds
-        fill(NSRect(x: b.minX, y: h.maxY, width: b.width, height: b.maxY - h.maxY))            // top
-        fill(NSRect(x: b.minX, y: b.minY, width: b.width, height: h.minY - b.minY))            // bottom
-        fill(NSRect(x: b.minX, y: h.minY, width: h.minX - b.minX, height: h.height))           // left
-        fill(NSRect(x: h.maxX, y: h.minY, width: b.maxX - h.maxX, height: h.height))           // right
-    }
-
-    private func drawSelectionChrome(_ r: CGRect) {
-        // Thin white border.
-        NSColor.white.withAlphaComponent(0.95).setStroke()
-        let border = NSBezierPath(rect: r)
-        border.lineWidth = 1
-        border.stroke()
-
-        drawThirdsGrid(in: r)
-        if hasCommittedSelection { drawHandles(in: r) }
-        drawDimensions(for: r)
-    }
-
-    private func drawThirdsGrid(in r: CGRect) {
-        guard r.width > 40, r.height > 40 else { return }
-        NSColor.white.withAlphaComponent(0.18).setStroke()
-        let path = NSBezierPath()
-        path.lineWidth = 0.5
-        for i in 1...2 {
-            let x = r.minX + r.width * CGFloat(i) / 3
-            let y = r.minY + r.height * CGFloat(i) / 3
-            path.move(to: CGPoint(x: x, y: r.minY)); path.line(to: CGPoint(x: x, y: r.maxY))
-            path.move(to: CGPoint(x: r.minX, y: y)); path.line(to: CGPoint(x: r.maxX, y: y))
-        }
-        path.stroke()
-    }
-
-    private func drawHandles(in r: CGRect) {
-        let s = handleSize
-        for h in Handle.allCases {
-            let c = handlePoint(h, in: r)
-            let box = CGRect(x: c.x - s / 2, y: c.y - s / 2, width: s, height: s)
-            let path = NSBezierPath(roundedRect: box, xRadius: 2, yRadius: 2)
-            NSColor.white.setFill()
-            path.fill()
-            NSColor.black.withAlphaComponent(0.35).setStroke()
-            path.lineWidth = 0.5
-            path.stroke()
-        }
-    }
-
-    private func drawWindowHighlight(rect: CGRect) {
-        NSColor.controlAccentColor.withAlphaComponent(0.12).setFill()
-        NSBezierPath(rect: rect).fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.9).setStroke()
-        let path = NSBezierPath(rect: rect)
-        path.lineWidth = 2
-        path.stroke()
-    }
-
-    private func drawCrosshair(at p: CGPoint) {
-        NSColor.white.withAlphaComponent(0.45).setStroke()
-        let path = NSBezierPath()
-        path.lineWidth = 1
-        path.move(to: CGPoint(x: bounds.minX, y: p.y))
-        path.line(to: CGPoint(x: bounds.maxX, y: p.y))
-        path.move(to: CGPoint(x: p.x, y: bounds.minY))
-        path.line(to: CGPoint(x: p.x, y: bounds.maxY))
-        path.stroke()
-    }
-
-    private func drawDimensions(for r: CGRect) {
-        let wpx = Int((r.width * sx).rounded())
-        let hpx = Int((r.height * sy).rounded())
-        let text = "\(wpx) × \(hpx)"
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: NSColor.white,
-        ]
-        let size = (text as NSString).size(withAttributes: attrs)
-        let padding: CGFloat = 6
-        let boxW = size.width + padding * 2
-        let boxH = size.height + padding
-        var origin = CGPoint(x: r.minX, y: r.maxY + 7)
-        if origin.y + boxH > bounds.maxY { origin.y = r.minY - boxH - 7 }
-        origin.x = min(max(bounds.minX + 2, origin.x), bounds.maxX - boxW - 2)
-        let box = CGRect(origin: origin, size: CGSize(width: boxW, height: boxH))
-
-        GlassTokens.Fixed.dimensionPill.setFill()
-        NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6).fill()
-        (text as NSString).draw(
-            at: CGPoint(x: box.minX + padding, y: box.minY + padding / 2),
-            withAttributes: attrs
-        )
     }
 }
