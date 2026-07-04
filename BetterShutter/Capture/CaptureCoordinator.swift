@@ -64,7 +64,7 @@ final class CaptureCoordinator {
 
     /// The one merged screenshot flow (Quick Screenshot + Capture Region + Capture Window): drag a
     /// selection and it's delivered straight to the normal output (quick-access card + clipboard per
-    /// settings) with no action-bar step; hold Space to highlight and click a window instead.
+    /// settings) with no action-bar step; tap Space to switch to window pick and click a window instead.
     func captureScreenshot(afterDelay: Bool = true) {
         guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
@@ -83,7 +83,7 @@ final class CaptureCoordinator {
         )
     }
 
-    /// Screenshot & markup (macshot-style): select a region (or hold Space and click a window), then
+    /// Screenshot & markup (macshot-style): select a region (or tap Space and click a window), then
     /// open the full editor with every annotation / drawing tool ready, instead of a quick-access card.
     func captureAndEdit(afterDelay: Bool = true) {
         guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
@@ -121,7 +121,7 @@ final class CaptureCoordinator {
                     windows: content.windows,
                     magnifierEnabled: magnifier,
                     windowSelection: true,
-                    windowPickRequiresSpace: true,   // hold Space to switch to window pick
+                    windowPickRequiresSpace: true,   // tap Space to toggle window pick
                     instantCapture: true,   // release the drag = capture immediately, no extra confirm
                     onRegion: { image, rect, displayID, _ in onRegion(image, rect, displayID) },
                     onWindow: onWindow,

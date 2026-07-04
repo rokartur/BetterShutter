@@ -20,8 +20,9 @@ final class OverlayView: NSView {
     private let frozenImage: CGImage
     private let pixelSize: CGSize
     var windowHits: [WindowHighlighter.Hit] = []
-    /// When true, window hover-highlight and click-to-pick are only active while Space is held —
-    /// the merged screenshot flow: drag = region, hold Space = pick a window (native-screenshot style).
+    /// When true, window hover-highlight and click-to-pick are gated behind a Space toggle —
+    /// the merged screenshot flow: drag = region, tap Space to switch into window pick (tap again
+    /// to switch back), then click a window.
     var windowPickRequiresSpace = false
     var magnifierEnabled = true
     /// When true, releasing the drag captures immediately (no adjustable pending state / handles) —
@@ -54,6 +55,9 @@ final class OverlayView: NSView {
     private var moveOrigin: CGRect = .zero
     private var didMove = false
     private var hoveredWindow: WindowHighlighter.Hit?
+    /// Space toggled window-pick mode on (persists until toggled off), distinct from `spaceHeld`
+    /// which tracks the physical key for drag-repositioning.
+    private var windowPickOn = false
     private var spaceHeld = false
     private var shiftHeld = false
     private var trackingArea: NSTrackingArea?
@@ -273,7 +277,7 @@ final class OverlayView: NSView {
 
     /// Whether hovering/clicking a window picks it right now.
     private var windowPickActive: Bool {
-        !windowHits.isEmpty && (!windowPickRequiresSpace || spaceHeld)
+        !windowHits.isEmpty && (!windowPickRequiresSpace || windowPickOn)
     }
 
     // MARK: Handle geometry
@@ -462,7 +466,7 @@ final class OverlayView: NSView {
         case 49: // space
             guard !event.isARepeat else { return }
             spaceHeld = true
-            enteredWindowPick()
+            toggleWindowPick()
         case 123, 124, 125, 126: // arrows
             handleArrow(event)
         default:
@@ -472,23 +476,16 @@ final class OverlayView: NSView {
 
     override func keyUp(with event: NSEvent) {
         guard event.keyCode == 49 else { return }
+        // Only the physical key state resets here; the toggled window-pick mode persists.
         spaceHeld = false
-        leftWindowPick()
     }
 
-    /// Space pressed: with space-gated window pick, refresh the hover highlight so the window under
-    /// the cursor lights up immediately (not only on the next mouse move).
-    private func enteredWindowPick() {
+    /// Space tapped: flip window-pick mode. Turning it on highlights the window under the cursor
+    /// immediately (not only on the next mouse move); turning it off drops back to region select.
+    private func toggleWindowPick() {
         guard windowPickRequiresSpace, phase == .idle else { return }
+        windowPickOn.toggle()
         hoveredWindow = windowPickActive ? WindowHighlighter.window(at: mousePoint, in: windowHits) : nil
-        updateCursor()
-        refreshChrome()
-    }
-
-    /// Space released: drop back to plain region selection.
-    private func leftWindowPick() {
-        guard windowPickRequiresSpace else { return }
-        hoveredWindow = nil
         updateCursor()
         refreshChrome()
     }
