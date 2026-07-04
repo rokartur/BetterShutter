@@ -13,7 +13,6 @@ final class OverlayController {
     }
 
     private var panes: [Pane] = []
-    private var cursorHidden = false
     private var screenObserver: NSObjectProtocol?
     private var escMonitor: Any?
 
@@ -89,7 +88,6 @@ final class OverlayController {
                     height: restore.height
                 )
             }
-            view.setCursorHidden = { [weak self] hidden in hidden ? self?.hideCursor() : self?.showCursor() }
             // Empty hits → no window hover-highlight and no click-to-pick (region-only flows).
             view.windowHits = windowSelection
                 ? WindowHighlighter.viewRects(windows: windows, primaryHeight: primaryHeight, screenGlobalFrame: frame)
@@ -121,9 +119,6 @@ final class OverlayController {
         }
 
         NSApp.activate(ignoringOtherApps: true)
-        // The magnifier draws its own loupe in place of the pointer, so hide the system cursor then.
-        // Otherwise the OverlayView sets a context-appropriate cursor (crosshair / pointing hand / …).
-        if magnifierEnabled { hideCursor() }
 
         // Esc must always cancel, even if the key window / first responder isn't the pane the user
         // expects (wrong display, lost focus). A local monitor catches Esc anywhere in the app for the
@@ -231,29 +226,13 @@ final class OverlayController {
             pane.view.onRegionSelected = nil
             pane.view.onWindowSelected = nil
             pane.view.onCancel = nil
-            pane.view.setCursorHidden = nil
             pane.window.orderOut(nil)
             pane.window.contentView = nil
         }
         panes.removeAll()
-        showCursor()
         onRegion = nil
         onWindow = nil
         onCancel = nil
-    }
-
-    // MARK: Cursor balance
-
-    private func hideCursor() {
-        guard !cursorHidden else { return }
-        NSCursor.hide()
-        cursorHidden = true
-    }
-
-    private func showCursor() {
-        guard cursorHidden else { return }
-        NSCursor.unhide()
-        cursorHidden = false
     }
 
     // MARK: Geometry

@@ -2,7 +2,7 @@ import AppKit
 
 /// The interactive, transparent front layer of one screen's capture overlay — styled after
 /// CleanShot X. It shows a dark dim with the selection cut out crisp, a thin white selection
-/// border with eight grab handles, a rule-of-thirds grid, a live dimension pill, the magnifier
+/// border with eight grab handles, a rule-of-thirds grid, the magnifier
 /// loupe, and a floating liquid-glass action bar. The selection is adjustable after drawing:
 /// drag a handle to resize, drag inside to move, drag outside to start over.
 ///
@@ -12,7 +12,7 @@ import AppKit
 /// All chrome is plain CALayers (solid colors, borders) rather than a `draw(_:)` override: a
 /// full-screen layer-backed view with custom drawing allocates a screen-sized backing bitmap
 /// (~60 MB per Retina 5K display), while solid-color layers cost effectively nothing. Only the
-/// small loupe (`LoupeView`) and dimension text rasterize, both a few hundred KB.
+/// small loupe (`LoupeView`) rasterizes, a few hundred KB.
 @MainActor
 final class OverlayView: NSView {
 
@@ -41,8 +41,6 @@ final class OverlayView: NSView {
     var onRegionSelected: ((CGRect, OverlayAction) -> Void)?
     var onWindowSelected: ((CGWindowID) -> Void)?
     var onCancel: (() -> Void)?
-    /// Asks the owning controller to hide/show the system cursor (it owns the balance counter).
-    var setCursorHidden: ((Bool) -> Void)?
 
     // State
     private enum Phase: Equatable { case idle, dragging, pending, moving, resizing(Handle) }
@@ -69,8 +67,6 @@ final class OverlayView: NSView {
     private let borderLayer = CALayer()
     private let gridLayers = (0..<4).map { _ in CALayer() }          // 2 vertical, 2 horizontal
     private let handleLayers = Handle.allCases.map { _ in CALayer() }
-    private let dimensionPill = CALayer()
-    private let dimensionText = CATextLayer()
     private var loupe: LoupeView?
 
     private let minSelectionSide: CGFloat = 4
@@ -126,11 +122,6 @@ final class OverlayView: NSView {
             l.isHidden = true
             root.addSublayer(l)
         }
-        dimensionPill.backgroundColor = GlassTokens.Fixed.dimensionPill.cgColor
-        dimensionPill.cornerRadius = 6
-        dimensionPill.isHidden = true
-        dimensionPill.addSublayer(dimensionText)
-        root.addSublayer(dimensionPill)
     }
 
     /// Re-lays out every chrome layer from the current state. The layer-based equivalent of the
@@ -161,12 +152,10 @@ final class OverlayView: NSView {
                     width: handleSize, height: handleSize
                 )
             }
-            layoutDimensionPill(for: r)
         } else {
             borderLayer.isHidden = true
             gridLayers.forEach { $0.isHidden = true }
             handleLayers.forEach { $0.isHidden = true }
-            dimensionPill.isHidden = true
         }
 
         if hole == nil, phase == .idle, let h = hoveredWindow?.rect {
@@ -212,38 +201,6 @@ final class OverlayView: NSView {
                 l.frame = CGRect(x: r.minX, y: y - 0.25, width: r.width, height: 0.5)
             }
         }
-    }
-
-    private static let dimensionAttrs: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-        .foregroundColor: NSColor.white,
-    ]
-    private var dimensionString = ""
-    private var dimensionTextSize: CGSize = .zero
-
-    private func layoutDimensionPill(for r: CGRect) {
-        let wpx = Int((r.width * sx).rounded())
-        let hpx = Int((r.height * sy).rounded())
-        let text = "\(wpx) × \(hpx)"
-        let padding: CGFloat = 6
-        // Re-measure and re-rasterize the text layer only when the label actually changed; the
-        // pill frame math still runs every event so it follows a fixed-size selection being moved.
-        if text != dimensionString {
-            dimensionString = text
-            dimensionTextSize = (text as NSString).size(withAttributes: Self.dimensionAttrs)
-            dimensionText.string = NSAttributedString(string: text, attributes: Self.dimensionAttrs)
-            dimensionText.frame = CGRect(x: padding, y: padding / 2,
-                                         width: ceil(dimensionTextSize.width),
-                                         height: ceil(dimensionTextSize.height))
-        }
-        let size = dimensionTextSize
-        let boxW = size.width + padding * 2
-        let boxH = size.height + padding
-        var origin = CGPoint(x: r.minX, y: r.maxY + 7)
-        if origin.y + boxH > bounds.maxY { origin.y = r.minY - boxH - 7 }
-        origin.x = min(max(bounds.minX + 2, origin.x), bounds.maxX - boxW - 2)
-        dimensionPill.isHidden = false
-        dimensionPill.frame = CGRect(origin: origin, size: CGSize(width: boxW, height: boxH))
     }
 
     private func updateLoupe(visible: Bool) {
@@ -384,7 +341,6 @@ final class OverlayView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        dimensionText.contentsScale = window?.backingScaleFactor ?? 2
         updateCursor()
         if phase == .idle, let rect = initialSelection?.intersection(bounds),
            rect.width >= minSelectionSide, rect.height >= minSelectionSide {
@@ -578,37 +534,16 @@ final class OverlayView: NSView {
 
     // MARK: Cursor
 
-    /// Sets a context-appropriate pointer. With the magnifier on, the loupe stands in for the cursor,
-    /// so the system cursor stays hidden instead.
+    /// The capture overlay always shows the crosshair — a single, predictable pointer for the whole
+    /// selection flow (hover, drag, move, resize). The loupe floats offset beside it.
     private func updateCursor() {
-        if magnifierEnabled { setCursorHidden?(true); return }
-        setCursorHidden?(false)
-        let cursor: NSCursor
-        switch phase {
-        case .idle:
-            cursor = windowPickActive && WindowHighlighter.window(at: mousePoint, in: windowHits) != nil
-                ? .pointingHand : .crosshair
-        case .dragging:
-            cursor = .crosshair
-        case .moving:
-            cursor = .closedHand
-        case .resizing(let h):
-            cursor = Self.resizeCursor(for: h)
-        case .pending:
-            if let h = handle(at: mousePoint, in: selectionRect) { cursor = Self.resizeCursor(for: h) }
-            else if selectionRect.contains(mousePoint) { cursor = .openHand }
-            else { cursor = .crosshair }
-        }
-        cursor.set()
+        NSCursor.crosshair.set()
     }
 
-    /// Public NSCursor lacks diagonal-resize variants, so corners fall back to the nearest axis cursor.
-    private static func resizeCursor(for handle: Handle) -> NSCursor {
-        switch handle {
-        case .l, .r: return .resizeLeftRight
-        case .t, .b: return .resizeUpDown
-        case .tl, .br, .tr, .bl: return .crosshair
-        }
+    override func resetCursorRects() {
+        // A cursor rect makes AppKit reassert the crosshair whenever it tries to restore a default
+        // cursor (window ordering, focus changes) — without it the arrow can flicker back.
+        addCursorRect(bounds, cursor: .crosshair)
     }
 
     private func confirm(_ action: OverlayAction) {
