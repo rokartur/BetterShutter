@@ -50,6 +50,7 @@ final class ScrollingCaptureController {
                 )
             } catch {
                 active = false
+                PermissionsService.shared.handleCaptureError(error)
             }
         }
     }

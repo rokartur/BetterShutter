@@ -213,6 +213,7 @@ final class RecordingController {
     }
 
     private func showError(_ error: Error) {
+        if PermissionsService.shared.handleCaptureError(error) { return }
         let alert = NSAlert()
         alert.messageText = "Recording Failed"
         alert.informativeText = error.localizedDescription

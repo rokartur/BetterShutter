@@ -575,6 +575,7 @@ final class CaptureCoordinator {
     }
 
     private func handleError(_ error: Error) {
+        if PermissionsService.shared.handleCaptureError(error) { return }
         let alert = NSAlert()
         alert.messageText = "Capture Failed"
         alert.informativeText = error.localizedDescription

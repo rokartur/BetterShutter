@@ -6,6 +6,9 @@ import AppKit
 final class PermissionsService {
     static let shared = PermissionsService()
 
+    /// A guide alert is on screen — don't stack a second one when several flows fail at once.
+    private var guideOnScreen = false
+
     /// Cheap synchronous check — does not prompt. Use to gate UI before showing the overlay.
     var isAuthorized: Bool { CGPreflightScreenCaptureAccess() }
 
@@ -13,24 +16,57 @@ final class PermissionsService {
     @discardableResult
     func requestAccess() -> Bool { CGRequestScreenCaptureAccess() }
 
-    /// Ensures access, prompting / guiding the user if needed. Returns true if already authorized.
-    /// When not authorized it returns false so the caller aborts this capture.
+    /// Gate a capture. Returns true to proceed.
     ///
-    /// `requestAccess()` shows the native TCC prompt only while the state is "not determined". Once
-    /// macOS has a stored decision it returns silently and never re-prompts (an app relaunch does
-    /// NOT reset this — only `tccutil reset ScreenCapture <bundleID>` does), so we fall back to our
-    /// own guidance alert pointing at System Settings + relaunch.
+    /// `CGPreflightScreenCaptureAccess()` is only a hint: it caches per-process and routinely
+    /// reports a stale `false` even when access is granted — most visibly in a long-running
+    /// menu-bar agent and after the in-place updater swaps the bundle out from under the running
+    /// process. Blocking on that false was surfacing the "grant permission" alert while capture
+    /// would actually have worked.
+    ///
+    /// So preflight-true is trusted as a fast path; on false we still proceed (firing the native
+    /// prompt first in case the state is genuinely undetermined) and let ScreenCaptureKit be the
+    /// authority. A real denial throws when the engine runs, and `handleCaptureError` turns that
+    /// into the guidance alert — a stale false no longer blocks a working capture.
     @discardableResult
     func ensureAuthorizedOrGuide() -> Bool {
         if isAuthorized { return true }
-        if requestAccess() { return true }   // native prompt if undetermined; silent if already decided
-        presentDeniedAlert()
+        requestAccess()   // native prompt only while undetermined; silent once decided
+        return true
+    }
+
+    /// Route a capture failure: if it's a Screen-Recording denial, show the guidance alert and
+    /// report it handled; otherwise return false so the caller shows its own error.
+    @discardableResult
+    func handleCaptureError(_ error: Error) -> Bool {
+        guard Self.isDenialError(error) else { return false }
+        guideDenied()
+        return true
+    }
+
+    /// Whether an error is ScreenCaptureKit / TCC reporting that screen recording is not permitted.
+    static func isDenialError(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain.contains("SCStreamError") || ns.domain.contains("ScreenCaptureKit") {
+            // -3801 = userDeclined; treat the whole SCK error family as "not permitted" since the
+            // engine only throws these when the capture itself can't proceed.
+            return true
+        }
+        if ns.domain == "com.apple.TCC" { return true }
         return false
     }
 
     func openSystemSettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
         NSWorkspace.shared.open(url)
+    }
+
+    /// Show the "grant + relaunch" guidance alert (coalesced so concurrent failures show one).
+    func guideDenied() {
+        guard !guideOnScreen else { return }
+        guideOnScreen = true
+        defer { guideOnScreen = false }
+        presentDeniedAlert()
     }
 
     private func presentDeniedAlert() {
