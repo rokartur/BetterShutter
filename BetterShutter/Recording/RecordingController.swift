@@ -193,21 +193,17 @@ final class RecordingController {
 
     // MARK: Helpers
 
+    /// Recordings share the screenshot filename template (mp4/gif extension, "Recording" mode tag).
     private static func recordingURL(ext: String) -> URL {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         let dir = Preferences.saveDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-
-        let stamp = formatter.string(from: Date())
-        var url = dir.appendingPathComponent("Recording \(stamp).\(ext)")
-        var index = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = dir.appendingPathComponent("Recording \(stamp) (\(index)).\(ext)")
-            index += 1
-        }
-        return url
+        let filename = FilenameTemplate.render(
+            Preferences.filenameTemplate,
+            modeTag: "Recording",
+            fileExtension: ext,
+            counter: Preferences.nextCaptureCounter()
+        )
+        return FileSaver.uniqueURL(in: dir, filename: filename)
     }
 
     private func displayUnderMouse() -> CGDirectDisplayID {

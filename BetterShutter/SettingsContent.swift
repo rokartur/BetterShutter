@@ -556,12 +556,18 @@ final class OutputSettingsTab: SettingsTabViewController {
                accessory: qualitySlider, searchItemID: "output.quality")
 
         templateField.stringValue = Preferences.filenameTemplate
-        templateField.placeholderString = "Screenshot {date} at {time}"
+        templateField.placeholderString = FilenameTemplate.defaultTemplate
         templateField.target = self
         templateField.action = #selector(changeTemplate(_:))
-        templateField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        templateField.widthAnchor.constraint(equalToConstant: 260).isActive = true
         addRow(to: files, title: "Filename template",
-               subtitle: "Tokens: {date} {time} {datetime} {n} {mode}.", accessory: templateField)
+               subtitle: "Tokens: %y year, %n month, %d day, %w weekday, %H %M %S time, %r random. Also {date} {time} {datetime} {n} {mode}.",
+               accessory: templateField)
+    }
+
+    @objc private func toggleSaveToDisk(_ sender: NSSwitch) {
+        Preferences.saveScreenshotsToDisk = (sender.state == .on)
+        folderButton.isEnabled = Preferences.saveScreenshotsToDisk
     }
 
     @objc private func chooseFolder() {

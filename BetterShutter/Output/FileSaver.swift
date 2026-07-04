@@ -30,7 +30,7 @@ nonisolated enum FileSaver {
     }
 
     /// Appends " (k)" before the extension if the target already exists.
-    private static func uniqueURL(in directory: URL, filename: String) -> URL {
+    static func uniqueURL(in directory: URL, filename: String) -> URL {
         let candidate = directory.appendingPathComponent(filename)
         guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
 

@@ -341,7 +341,7 @@ nonisolated enum Preferences {
     }
 
     static var filenameTemplate: String {
-        get { defaults.string(forKey: Key.filenameTemplate) ?? "Screenshot {date} at {time}" }
+        get { defaults.string(forKey: Key.filenameTemplate) ?? FilenameTemplate.defaultTemplate }
         set { defaults.set(newValue, forKey: Key.filenameTemplate) }
     }
 
