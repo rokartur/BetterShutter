@@ -6,9 +6,10 @@ import Quartz
 /// Wraps a CGImage so it can cross the detached-task → main-actor boundary (CGImage is immutable).
 private struct ThumbBox: @unchecked Sendable { let cg: CGImage }
 
-/// Type filter for the Capture History bar (mirrors the All / Screenshots / Videos / GIFs pills).
+/// Type filter for the Capture History bar (mirrors the All / Screenshots / Videos / GIFs / OCR
+/// pills). The OCR tab shows recognized-text history from the keychain store, not files.
 private enum HistoryFilter: CaseIterable {
-    case all, screenshots, videos, gifs
+    case all, screenshots, videos, gifs, ocr
 
     var title: String {
         switch self {
@@ -16,6 +17,7 @@ private enum HistoryFilter: CaseIterable {
         case .screenshots: return "Screenshots"
         case .videos: return "Videos"
         case .gifs: return "GIFs"
+        case .ocr: return "OCR"
         }
     }
 
@@ -25,11 +27,12 @@ private enum HistoryFilter: CaseIterable {
         case .screenshots: return kind == .image
         case .videos: return kind == .video
         case .gifs: return kind == .gif
+        case .ocr: return false   // file cards never show on the OCR tab
         }
     }
 }
 
-private enum HistoryKind {
+private nonisolated enum HistoryKind: Sendable {
     case image, video, gif
 
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tiff", "webp"]
@@ -52,7 +55,7 @@ private enum HistoryKind {
     }
 }
 
-private struct HistoryEntry {
+private nonisolated struct HistoryEntry: Sendable {
     let url: URL
     let date: Date
     let kind: HistoryKind
@@ -76,9 +79,15 @@ final class CaptureHistoryPanel: NSObject {
 
     private var filter: HistoryFilter = .all
     private var entries: [HistoryEntry] = []
+    private var ocrEntries: [OCRHistoryEntry] = []
     private var selected: URL?
     private var clickMonitor: Any?
     private var thumbCache: [URL: NSImage] = [:]
+    /// OCR cards are built lazily, first time the OCR tab is shown (50 wrapping labels are not free).
+    private var ocrCardsBuilt = false
+    /// Filename → OCR'd text of archived screenshots, so search matches image *content* too.
+    private var searchIndex: [String: String] = [:]
+    private var indexingTask: Task<Void, Never>?
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -92,8 +101,7 @@ final class CaptureHistoryPanel: NSObject {
 
     func show() {
         if panel == nil { build() }
-        reload()
-        if selected == nil, let first = shownEntries().first { select(first.url) }
+        reload()   // async — the bar opens instantly with the previous content, then refreshes
         position()
         panel?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -175,7 +183,7 @@ final class CaptureHistoryPanel: NSObject {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(emptyLabel)
 
-        searchField.placeholderString = "Search filenames"
+        searchField.placeholderString = "Search names & text"
         searchField.target = self
         searchField.action = #selector(searchChanged(_:))
         searchField.sendsSearchStringImmediately = false
@@ -226,41 +234,146 @@ final class CaptureHistoryPanel: NSObject {
 
     // MARK: Data
 
+    /// Refresh off the main thread: prune, directory listing, date reads, and the keychain fetch
+    /// all happen in a detached task, then the UI applies the result — opening the bar never
+    /// blocks on file I/O.
     private func reload() {
-        CaptureHistoryStore.prune()
-        let directory = CaptureHistoryStore.directory
-        let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
-        )) ?? []
-
-        let cutoff = Preferences.captureHistoryRetention.maxAge.map { Date().addingTimeInterval(-$0) }
-
-        entries = files.compactMap { url -> HistoryEntry? in
-            guard let kind = HistoryKind(extension: url.pathExtension) else { return nil }
-            let values = try? url.resourceValues(forKeys: Set(keys))
-            let date = values?.contentModificationDate ?? .distantPast
-            if let cutoff, date < cutoff { return nil }
-            return HistoryEntry(url: url, date: date, kind: kind)
+        let retention = Preferences.captureHistoryRetention
+        Task.detached(priority: .userInitiated) { [weak self] in
+            CaptureHistoryStore.prune(retention: retention)
+            let keys: [URLResourceKey] = [.contentModificationDateKey]
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: CaptureHistoryStore.directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
+            )) ?? []
+            let cutoff = retention.maxAge.map { Date().addingTimeInterval(-$0) }
+            var list = files.compactMap { url -> HistoryEntry? in
+                guard let kind = HistoryKind(extension: url.pathExtension) else { return nil }
+                let values = try? url.resourceValues(forKeys: Set(keys))
+                let date = values?.contentModificationDate ?? .distantPast
+                if let cutoff, date < cutoff { return nil }
+                return HistoryEntry(url: url, date: date, kind: kind)
+            }
+            list.sort { $0.date > $1.date }
+            // Bound the work so a huge archive never stalls the bar.
+            if list.count > 80 { list = Array(list.prefix(80)) }
+            let ocr = OCRHistoryStore.all()
+            let index = HistorySearchIndex.load()
+            await MainActor.run { self?.apply(entries: list, ocr: ocr, index: index) }
         }
-        .sorted { $0.date > $1.date }
+    }
 
-        // Bound the work so a huge save folder never stalls the bar.
-        if entries.count > 80 { entries = Array(entries.prefix(80)) }
+    /// Apply a freshly loaded snapshot. Cards are only torn down and rebuilt when the content
+    /// actually changed — reopening the bar with the same history reuses every view and just
+    /// refreshes captions and visibility.
+    private func apply(entries newEntries: [HistoryEntry], ocr: [OCRHistoryEntry], index: [String: String]) {
+        let sameContent = newEntries.map(\.url) == entries.map(\.url) && ocr == ocrEntries
+        entries = newEntries
+        ocrEntries = ocr
 
         // Evict cached thumbnails for files no longer listed (deleted / retention-pruned) — the
         // panel is a singleton, so without this the cache grows for the app's whole lifetime.
         let live = Set(entries.map(\.url))
         thumbCache = thumbCache.filter { live.contains($0.key) }
 
+        // Adopt the persisted OCR index, dropping entries whose files are gone, then scan whatever
+        // is new in the background so content search keeps getting better as the user works.
+        let liveNames = Set(entries.map { $0.url.lastPathComponent })
+        let pruned = index.filter { liveNames.contains($0.key) }
+        searchIndex = pruned
+        if pruned.count != index.count {
+            Task.detached(priority: .utility) { HistorySearchIndex.save(pruned) }
+        }
+        indexMissingEntries()
+
         if let selected, !entries.contains(where: { $0.url == selected }) { self.selected = nil }
-        rebuildCards()
+        if selected == nil, let first = shownEntries().first { selected = first.url }
+
+        if sameContent, ocrCardsBuilt || shownOCRIndices().isEmpty {
+            refreshCaptions()
+            applyFilterToCards()
+            if let selected { select(selected) }
+        } else {
+            rebuildCards()
+        }
+    }
+
+    /// Update the "… ago" captions in place (reused cards would otherwise show stale times).
+    private func refreshCaptions() {
+        let now = Date()
+        let dates = Dictionary(entries.map { ($0.url, $0.date) }, uniquingKeysWith: { a, _ in a })
+        for card in cardStack.arrangedSubviews {
+            switch card {
+            case let file as HistoryCard:
+                if let date = dates[file.url] {
+                    file.setTimeText(Self.relative.localizedString(for: date, relativeTo: now))
+                }
+            case let ocr as OCRTextCard:
+                if ocrEntries.indices.contains(ocr.index) {
+                    ocr.setTimeText(Self.relative.localizedString(for: ocrEntries[ocr.index].date, relativeTo: now))
+                }
+            default: break
+            }
+        }
+    }
+
+    /// Scan archived screenshots that aren't in the OCR index yet, one at a time in the background.
+    /// Each result lands in the live index (and on disk), so a content search improves as it runs.
+    private func indexMissingEntries() {
+        guard indexingTask == nil else { return }
+        let missing = entries
+            .filter { $0.kind == .image && searchIndex[$0.url.lastPathComponent] == nil }
+            .map(\.url)
+        guard !missing.isEmpty else { return }
+        indexingTask = Task { [weak self] in
+            for url in missing {
+                let text = await HistorySearchIndex.recognizeText(at: url)
+                guard let self else { return }
+                self.searchIndex[url.lastPathComponent] = text
+                // Refresh live results while the user is mid-search.
+                if !self.searchQuery.isEmpty, !text.isEmpty { self.applyFilterToCards() }
+            }
+            guard let self else { return }
+            let snapshot = self.searchIndex
+            Task.detached(priority: .utility) { HistorySearchIndex.save(snapshot) }
+            self.indexingTask = nil
+            self.indexMissingEntries()   // catch files that arrived while this batch ran
+        }
+    }
+
+    private func matchesSearch(_ entry: HistoryEntry) -> Bool {
+        if searchQuery.isEmpty { return true }
+        if entry.url.lastPathComponent.localizedCaseInsensitiveContains(searchQuery) { return true }
+        if let text = searchIndex[entry.url.lastPathComponent],
+           text.localizedCaseInsensitiveContains(searchQuery) { return true }
+        return false
     }
 
     private func shownEntries() -> [HistoryEntry] {
-        entries.filter {
-            filter.matches($0.kind)
-                && (searchQuery.isEmpty || $0.url.lastPathComponent.localizedCaseInsensitiveContains(searchQuery))
+        entries.filter { filter.matches($0.kind) && matchesSearch($0) }
+    }
+
+    /// OCR entries surface on their own tab always, and on the All tab while a search is active —
+    /// a content search should pull matching recognized-text results in next to the files.
+    private func ocrVisible() -> Bool {
+        filter == .ocr || (filter == .all && !searchQuery.isEmpty)
+    }
+
+    /// Indices into `ocrEntries` currently visible (search matches the recognized text).
+    private func shownOCRIndices() -> Set<Int> {
+        guard ocrVisible() else { return [] }
+        return Set(ocrEntries.indices.filter {
+            searchQuery.isEmpty || ocrEntries[$0].text.localizedCaseInsensitiveContains(searchQuery)
+        })
+    }
+
+    private func updateEmptyLabel(anyShown: Bool) {
+        emptyLabel.isHidden = anyShown
+        if filter == .ocr {
+            emptyLabel.stringValue = Preferences.ocrHistoryEnabled
+                ? (ocrEntries.isEmpty ? "No OCR history yet" : "Nothing in this filter")
+                : "OCR history is off (Settings ▸ Capture)"
+        } else {
+            emptyLabel.stringValue = entries.isEmpty ? "No captures yet" : "Nothing in this filter"
         }
     }
 
@@ -270,8 +383,8 @@ final class CaptureHistoryPanel: NSObject {
         cardStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let shown = shownEntries()
         let shownURLs = Set(shown.map(\.url))
-        emptyLabel.isHidden = !shown.isEmpty
-        emptyLabel.stringValue = entries.isEmpty ? "No captures yet" : "Nothing in this filter"
+        let shownOCR = shownOCRIndices()
+        updateEmptyLabel(anyShown: !shown.isEmpty || !shownOCR.isEmpty)
 
         for entry in entries {
             let card = HistoryCard(
@@ -287,6 +400,23 @@ final class CaptureHistoryPanel: NSObject {
             card.onMenu = { [weak self] event in self?.showContextMenu(for: entry.url, event: event, in: card) }
             cardStack.addArrangedSubview(card)
         }
+
+        // Recognized-text cards trail the file cards. They are only materialized once OCR entries
+        // can actually show — no point building dozens of text views the user may never look at.
+        ocrCardsBuilt = ocrVisible()
+        if ocrCardsBuilt {
+            for (index, entry) in ocrEntries.enumerated() {
+                let card = OCRTextCard(
+                    index: index,
+                    text: entry.text,
+                    timeText: Self.relative.localizedString(for: entry.date, relativeTo: Date())
+                )
+                card.isHidden = !shownOCR.contains(index)
+                card.onRestore = { [weak self] in self?.restoreOCR(index) }
+                card.onMenu = { [weak self] event in self?.showOCRContextMenu(index: index, event: event, in: card) }
+                cardStack.addArrangedSubview(card)
+            }
+        }
         loadThumbnails(for: shown)
     }
 
@@ -296,11 +426,15 @@ final class CaptureHistoryPanel: NSObject {
     private func applyFilterToCards() {
         let shown = shownEntries()
         let shownURLs = Set(shown.map(\.url))
-        for case let card as HistoryCard in cardStack.arrangedSubviews {
-            card.isHidden = !shownURLs.contains(card.url)
+        let shownOCR = shownOCRIndices()
+        for card in cardStack.arrangedSubviews {
+            switch card {
+            case let file as HistoryCard: file.isHidden = !shownURLs.contains(file.url)
+            case let ocr as OCRTextCard: ocr.isHidden = !shownOCR.contains(ocr.index)
+            default: break
+            }
         }
-        emptyLabel.isHidden = !shown.isEmpty
-        emptyLabel.stringValue = entries.isEmpty ? "No captures yet" : "Nothing in this filter"
+        updateEmptyLabel(anyShown: !shown.isEmpty || !shownOCR.isEmpty)
         loadThumbnails(for: shown)   // decode thumbnails only for newly revealed cards
     }
 
@@ -308,12 +442,14 @@ final class CaptureHistoryPanel: NSObject {
     /// so the bar opens instantly instead of blocking on full-resolution image/video decodes.
     private func loadThumbnails(for shown: [HistoryEntry]) {
         let scale = panel?.backingScaleFactor ?? 2
-        let maxPixel = 160 * scale
+        // Exactly the tile size in device pixels: the bitmap fills the card edge-to-edge (clean
+        // rounded corners) and every cached thumbnail has the same small, fixed footprint.
+        let pixelSize = CGSize(width: HistoryCard.thumbWidth * scale, height: HistoryCard.thumbHeight * scale)
         for entry in shown where thumbCache[entry.url] == nil {
             let url = entry.url
             let kind = entry.kind
             Task.detached(priority: .userInitiated) {
-                guard let cg = Self.makeThumbnail(url: url, kind: kind, maxPixel: maxPixel) else { return }
+                guard let cg = Self.makeThumbnail(url: url, kind: kind, pixelSize: pixelSize) else { return }
                 let box = ThumbBox(cg: cg)
                 await MainActor.run { [weak self] in self?.applyThumbnail(box.cg, for: url) }
             }
@@ -321,7 +457,7 @@ final class CaptureHistoryPanel: NSObject {
     }
 
     private func applyThumbnail(_ cg: CGImage, for url: URL) {
-        let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        let image = NSImage(cgImage: cg, size: NSSize(width: HistoryCard.thumbWidth, height: HistoryCard.thumbHeight))
         thumbCache[url] = image
         for case let card as HistoryCard in cardStack.arrangedSubviews where card.url == url {
             card.setThumbnail(image)
@@ -392,37 +528,71 @@ final class CaptureHistoryPanel: NSObject {
     // MARK: Thumbnails
 
     /// Nonisolated so it can run in a detached task. Uses ImageIO's thumbnail path (decodes only a
-    /// downscaled bitmap, never the full image) for stills/GIFs, and a single frame for videos.
-    private nonisolated static func makeThumbnail(url: URL, kind: HistoryKind, maxPixel: CGFloat) -> CGImage? {
+    /// downscaled bitmap, never the full image) for stills/GIFs, and a single frame for videos,
+    /// then center-crops to exactly the tile's pixel size.
+    private nonisolated static func makeThumbnail(url: URL, kind: HistoryKind, pixelSize: CGSize) -> CGImage? {
+        let decoded: CGImage?
         switch kind {
         case .image, .gif:
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
             let options: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+                kCGImageSourceThumbnailMaxPixelSize: max(pixelSize.width, pixelSize.height),
             ]
-            return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+            decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         case .video:
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: maxPixel, height: maxPixel)
-            return try? generator.copyCGImage(at: CMTime(value: 1, timescale: 4), actualTime: nil)
+            generator.maximumSize = pixelSize
+            decoded = try? generator.copyCGImage(at: CMTime(value: 1, timescale: 4), actualTime: nil)
         }
+        guard let decoded else { return nil }
+        return fillCrop(decoded, to: pixelSize)
+    }
+
+    /// Scale-and-center-crop to exactly `size` (aspect fill). The tile's rounded-corner mask then
+    /// clips real pixels on every edge — aspect-fit gaps were what made the card corners look
+    /// mismatched against the border.
+    private nonisolated static func fillCrop(_ image: CGImage, to size: CGSize) -> CGImage? {
+        let w = Int(size.width.rounded()), h = Int(size.height.rounded())
+        guard w > 0, h > 0 else { return image }
+        if image.width == w && image.height == h { return image }
+        let scale = max(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
+        let dw = CGFloat(image.width) * scale
+        let dh = CGFloat(image.height) * scale
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                  data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+              ) else { return image }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: (size.width - dw) / 2, y: (size.height - dh) / 2, width: dw, height: dh))
+        return ctx.makeImage() ?? image
     }
 
     // MARK: Actions
 
     @objc private func searchChanged(_ sender: NSSearchField) {
         searchQuery = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        applyFilterToCards()
+        refreshAfterFilterChange()
     }
 
     @objc private func filterChanged(_ sender: NSSegmentedControl) {
         let index = sender.selectedSegment
         guard HistoryFilter.allCases.indices.contains(index) else { return }
         filter = HistoryFilter.allCases[index]
-        applyFilterToCards()
+        refreshAfterFilterChange()
+    }
+
+    /// Cheap visibility pass, unless OCR entries just became visible for the first time — their
+    /// cards are lazy and must be materialized with a rebuild.
+    private func refreshAfterFilterChange() {
+        if !ocrCardsBuilt, !shownOCRIndices().isEmpty {
+            rebuildCards()
+        } else {
+            applyFilterToCards()
+        }
     }
 
     private func syncFilter() {
@@ -494,6 +664,50 @@ final class CaptureHistoryPanel: NSObject {
         picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
     }
 
+    // MARK: OCR entries
+
+    /// Open a recognized-text entry in the OCR result window.
+    private func restoreOCR(_ index: Int) {
+        guard ocrEntries.indices.contains(index) else { return }
+        OCRResultWindowController.shared.show(text: ocrEntries[index].text, barcodes: [])
+        close()
+    }
+
+    private func showOCRContextMenu(index: Int, event: NSEvent, in view: NSView) {
+        let menu = NSMenu()
+        for (title, sel) in [
+            ("Open", #selector(ocrMenuOpen(_:))),
+            ("Copy Text", #selector(ocrMenuCopy(_:))),
+            ("Delete", #selector(ocrMenuDelete(_:))),
+            ("Clear OCR History", #selector(ocrMenuClear)),
+        ] {
+            let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            menu.addItem(item)
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+
+    @objc private func ocrMenuOpen(_ sender: NSMenuItem) { restoreOCR(sender.tag) }
+
+    @objc private func ocrMenuCopy(_ sender: NSMenuItem) {
+        guard ocrEntries.indices.contains(sender.tag) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(ocrEntries[sender.tag].text, forType: .string)
+        HUD.show("Copied")
+    }
+
+    @objc private func ocrMenuDelete(_ sender: NSMenuItem) {
+        OCRHistoryStore.remove(at: sender.tag)
+        reload()
+    }
+
+    @objc private func ocrMenuClear() {
+        OCRHistoryStore.clear()
+        reload()
+    }
+
     @objc private func menuDelete() {
         guard let selected else { return }
         try? FileManager.default.trashItem(at: selected, resultingItemURL: nil)
@@ -533,7 +747,8 @@ private final class HistoryCard: NSView, NSDraggingSource {
 
     private var mouseDownPoint: CGPoint?
 
-    private let thumb = NSView()
+    private let thumb = NSView()   // shadow host — must NOT mask, or the shadow disappears
+    private let clip = NSView()    // rounded clip + border, drawn over the image for crisp corners
     private let imageView = NSImageView()
     private let scrim = CAGradientLayer()
     private let restoreButton = NSButton()
@@ -552,23 +767,28 @@ private final class HistoryCard: NSView, NSDraggingSource {
         wantsLayer = true
 
         // Thumbnail tile: rounded, hairline-bordered, with a soft drop shadow that grows on hover.
+        // The shadow lives on `thumb` (unmasked) while `clip` masks the image and draws the border
+        // on top of it — one layer doing both would either lose the shadow or leave the image's
+        // antialiased edge poking past the border at the corners.
         thumb.translatesAutoresizingMaskIntoConstraints = false
         thumb.wantsLayer = true
-        thumb.layer?.cornerRadius = corner
-        thumb.layer?.cornerCurve = .continuous
-        thumb.layer?.borderWidth = 1
         thumb.layer?.shadowColor = NSColor.black.cgColor
         thumb.layer?.shadowOpacity = 0.18
         thumb.layer?.shadowRadius = 6
         thumb.layer?.shadowOffset = CGSize(width: 0, height: -2)
         addSubview(thumb)
 
+        clip.translatesAutoresizingMaskIntoConstraints = false
+        clip.wantsLayer = true
+        clip.layer?.cornerRadius = corner
+        clip.layer?.cornerCurve = .continuous
+        clip.layer?.masksToBounds = true
+        clip.layer?.borderWidth = 1
+        thumb.addSubview(clip)
+
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageScaling = .scaleAxesIndependently   // thumbnails arrive pre-cropped to tile size
         imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = corner
-        imageView.layer?.cornerCurve = .continuous
-        imageView.layer?.masksToBounds = true
         imageView.image = thumbnail
         imageView.symbolConfiguration = GlassTokens.symbol(22, .regular)
         if thumbnail == nil {
@@ -576,7 +796,7 @@ private final class HistoryCard: NSView, NSDraggingSource {
             imageView.contentTintColor = .tertiaryLabelColor
             imageView.imageScaling = .scaleNone
         }
-        thumb.addSubview(imageView)
+        clip.addSubview(imageView)
 
         // Scrim behind the Restore button for legibility over bright captures.
         scrim.colors = [NSColor.clear.cgColor, GlassTokens.scrimBottom.cgColor]
@@ -630,10 +850,15 @@ private final class HistoryCard: NSView, NSDraggingSource {
             thumb.trailingAnchor.constraint(equalTo: trailingAnchor),
             thumb.heightAnchor.constraint(equalToConstant: Self.thumbHeight),
 
-            imageView.topAnchor.constraint(equalTo: thumb.topAnchor),
-            imageView.leadingAnchor.constraint(equalTo: thumb.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: thumb.trailingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: thumb.bottomAnchor),
+            clip.topAnchor.constraint(equalTo: thumb.topAnchor),
+            clip.leadingAnchor.constraint(equalTo: thumb.leadingAnchor),
+            clip.trailingAnchor.constraint(equalTo: thumb.trailingAnchor),
+            clip.bottomAnchor.constraint(equalTo: thumb.bottomAnchor),
+
+            imageView.topAnchor.constraint(equalTo: clip.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: clip.bottomAnchor),
 
             badge.trailingAnchor.constraint(equalTo: thumb.trailingAnchor, constant: -7),
             badge.bottomAnchor.constraint(equalTo: thumb.bottomAnchor, constant: -7),
@@ -668,7 +893,11 @@ private final class HistoryCard: NSView, NSDraggingSource {
     func setThumbnail(_ image: NSImage) {
         imageView.image = image
         imageView.contentTintColor = nil
-        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageScaling = .scaleAxesIndependently
+    }
+
+    func setTimeText(_ text: String) {
+        if caption.stringValue != text { caption.stringValue = text }
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -677,8 +906,8 @@ private final class HistoryCard: NSView, NSDraggingSource {
     }
 
     private func applyAppearanceColors() {
-        thumb.layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
-        thumb.layer?.borderColor = isSelected
+        clip.layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
+        clip.layer?.borderColor = isSelected
             ? NSColor.controlAccentColor.cgColor
             : GlassTokens.cg(GlassTokens.hairline, for: self)
         badge.layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
@@ -690,8 +919,8 @@ private final class HistoryCard: NSView, NSDraggingSource {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.16
             ctx.allowsImplicitAnimation = true
-            thumb.layer?.borderWidth = isSelected ? 2.5 : 1
-            thumb.layer?.borderColor = isSelected
+            clip.layer?.borderWidth = isSelected ? 2.5 : 1
+            clip.layer?.borderColor = isSelected
                 ? NSColor.controlAccentColor.cgColor
                 : GlassTokens.cg(GlassTokens.hairline, for: self)
             thumb.layer?.shadowOpacity = hovering ? 0.32 : 0.18
@@ -756,6 +985,183 @@ private final class HistoryCard: NSView, NSDraggingSource {
     override func rightMouseDown(with event: NSEvent) { onMenu?(event) }
 
     @objc private func restoreTapped() { onRestore?() }
+}
+
+/// One recognized-text (OCR) entry in the history bar: a rounded tile with the text excerpt, a type
+/// badge, and a "… ago" caption. Hover reveals an Open button that reopens the entry in the
+/// Recognized Text window; right-click offers Copy / Delete / Clear.
+private final class OCRTextCard: NSView {
+    private let corner: CGFloat = 16
+
+    let index: Int
+    var onRestore: (() -> Void)?
+    var onMenu: ((NSEvent) -> Void)?
+
+    private let tile = NSView()
+    private let excerpt = NSTextField(wrappingLabelWithString: "")
+    private let caption = NSTextField(labelWithString: "")
+    private let badge = NSView()
+    private let badgeIcon = NSImageView()
+    private let openButton = NSButton()
+    private var trackingArea: NSTrackingArea?
+    private var hovering = false
+
+    init(index: Int, text: String, timeText: String) {
+        self.index = index
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+
+        tile.translatesAutoresizingMaskIntoConstraints = false
+        tile.wantsLayer = true
+        tile.layer?.cornerRadius = corner
+        tile.layer?.cornerCurve = .continuous
+        tile.layer?.borderWidth = 1
+        tile.layer?.shadowColor = NSColor.black.cgColor
+        tile.layer?.shadowOpacity = 0.18
+        tile.layer?.shadowRadius = 6
+        tile.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        addSubview(tile)
+
+        excerpt.translatesAutoresizingMaskIntoConstraints = false
+        excerpt.stringValue = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        excerpt.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        excerpt.textColor = .labelColor
+        excerpt.maximumNumberOfLines = 6
+        excerpt.lineBreakMode = .byTruncatingTail
+        excerpt.cell?.truncatesLastVisibleLine = true
+        tile.addSubview(excerpt)
+
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = 9
+        badge.layer?.cornerCurve = .continuous
+        badge.layer?.masksToBounds = true
+        badgeIcon.translatesAutoresizingMaskIntoConstraints = false
+        badgeIcon.image = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil)?
+            .withSymbolConfiguration(GlassTokens.symbol(10, .semibold))
+        badgeIcon.contentTintColor = .white
+        badge.addSubview(badgeIcon)
+        tile.addSubview(badge)
+
+        openButton.title = "Open"
+        openButton.image = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: "Open")?
+            .withSymbolConfiguration(GlassTokens.symbol(11, .semibold))
+        openButton.imagePosition = .imageLeading
+        openButton.controlSize = .regular
+        openButton.bezelColor = .controlAccentColor
+        openButton.contentTintColor = .white
+        if #available(macOS 26.0, *) { openButton.bezelStyle = .glass } else { openButton.bezelStyle = .rounded }
+        openButton.target = self
+        openButton.action = #selector(openTapped)
+        openButton.translatesAutoresizingMaskIntoConstraints = false
+        openButton.alphaValue = 0
+        tile.addSubview(openButton)
+
+        caption.translatesAutoresizingMaskIntoConstraints = false
+        caption.stringValue = timeText
+        caption.font = .systemFont(ofSize: 11, weight: .medium)
+        caption.textColor = .secondaryLabelColor
+        caption.alignment = .center
+        caption.lineBreakMode = .byTruncatingTail
+        addSubview(caption)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: HistoryCard.thumbWidth),
+
+            tile.topAnchor.constraint(equalTo: topAnchor),
+            tile.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tile.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tile.heightAnchor.constraint(equalToConstant: HistoryCard.thumbHeight),
+
+            excerpt.topAnchor.constraint(equalTo: tile.topAnchor, constant: 10),
+            excerpt.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 10),
+            excerpt.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -10),
+            excerpt.bottomAnchor.constraint(lessThanOrEqualTo: tile.bottomAnchor, constant: -10),
+
+            badge.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -7),
+            badge.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -7),
+            badge.widthAnchor.constraint(equalToConstant: 22),
+            badge.heightAnchor.constraint(equalToConstant: 18),
+            badgeIcon.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
+            badgeIcon.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+
+            openButton.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+            openButton.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+
+            caption.topAnchor.constraint(equalTo: tile.bottomAnchor, constant: 8),
+            caption.leadingAnchor.constraint(equalTo: leadingAnchor),
+            caption.trailingAnchor.constraint(equalTo: trailingAnchor),
+            caption.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+        ])
+
+        applyAppearanceColors()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        tile.layer?.shadowPath = CGPath(roundedRect: tile.bounds,
+                                        cornerWidth: corner, cornerHeight: corner, transform: nil)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyAppearanceColors()
+    }
+
+    private func applyAppearanceColors() {
+        tile.layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
+        tile.layer?.borderColor = GlassTokens.cg(GlassTokens.hairline, for: self)
+        badge.layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
+    }
+
+    private func updateState() {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.16
+            ctx.allowsImplicitAnimation = true
+            tile.layer?.shadowOpacity = hovering ? 0.32 : 0.18
+            tile.layer?.shadowRadius = hovering ? 10 : 6
+            openButton.animator().alphaValue = hovering ? 1 : 0
+            caption.animator().textColor = hovering ? .labelColor : .secondaryLabelColor
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true; updateState() }
+    override func mouseExited(with event: NSEvent) { hovering = false; updateState() }
+
+    func setTimeText(_ text: String) {
+        if caption.stringValue != text { caption.stringValue = text }
+    }
+
+    /// Route hits to the card so double-click / right-click land here, except over the revealed
+    /// Open button which must stay clickable (subviews otherwise swallow every event).
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if openButton.alphaValue > 0.5 {
+            let local = openButton.convert(point, from: superview)
+            if openButton.bounds.contains(local) { return openButton }
+        }
+        let p = convert(point, from: superview)
+        return bounds.contains(p) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount >= 2 { onRestore?() }
+    }
+
+    override func rightMouseDown(with event: NSEvent) { onMenu?(event) }
+
+    @objc private func openTapped() { onRestore?() }
 }
 
 /// Borderless glass panel that can become key (so it receives arrow / space / return / esc) and hosts

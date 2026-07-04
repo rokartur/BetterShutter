@@ -300,6 +300,26 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: history, title: "Keep history for",
                subtitle: "How far back the Capture History bar shows captures. Your saved files are never deleted.",
                accessory: retention)
+
+        let ocrHistory = makeToggle(Preferences.ocrHistoryEnabled, target: self, action: #selector(toggleOCRHistory(_:)))
+        addRow(to: history, title: "OCR history",
+               subtitle: "Keep the last \(OCRHistoryStore.maxEntries) recognized-text results, stored encrypted in your keychain.",
+               accessory: ocrHistory, searchItemID: "capture.ocrhistory")
+
+        let clearOCR = NSButton(title: "Clear", target: self, action: #selector(clearOCRHistory))
+        clearOCR.bezelStyle = .rounded
+        addRow(to: history, title: "Clear OCR history",
+               subtitle: "Delete all stored recognized-text results from the keychain.", accessory: clearOCR)
+    }
+
+    @objc private func toggleOCRHistory(_ sender: NSSwitch) {
+        Preferences.ocrHistoryEnabled = (sender.state == .on)
+        if !Preferences.ocrHistoryEnabled { OCRHistoryStore.clear() }
+    }
+
+    @objc private func clearOCRHistory() {
+        OCRHistoryStore.clear()
+        HUD.show("OCR history cleared")
     }
 
     @objc private func changeAfterAction(_ sender: NSPopUpButton) {

@@ -409,6 +409,8 @@ final class CaptureCoordinator {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
                 pasteboard.setString(text, forType: .string)
+                // Keychain round-trip off the main thread; the store itself honors the toggle.
+                Task.detached(priority: .utility) { OCRHistoryStore.add(text) }
             }
             if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
             OCRResultWindowController.shared.show(text: text, barcodes: barcodes)

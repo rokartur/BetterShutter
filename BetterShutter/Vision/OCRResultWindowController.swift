@@ -34,6 +34,9 @@ final class OCRResultWindowController: NSObject, NSWindowDelegate {
             backing: .buffered, defer: false
         )
         window.title = "Recognized Text"
+        // The controller keeps this window across close/reopen; without this AppKit would release
+        // it on close and the next show() would message a dangling pointer (unrecognized selector).
+        window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.delegate = self

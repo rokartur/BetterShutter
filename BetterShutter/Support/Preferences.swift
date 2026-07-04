@@ -115,6 +115,7 @@ nonisolated enum Preferences {
     private enum Key {
         static let saveDirectory = "saveDirectoryPath"
         static let saveToDisk = "saveScreenshotsToDisk"
+        static let ocrHistory = "ocrHistoryEnabled"
         static let format = "imageFormat"
         static let jpegQuality = "jpegQuality"
         static let filenameTemplate = "filenameTemplate"
@@ -325,6 +326,12 @@ nonisolated enum Preferences {
     static var saveScreenshotsToDisk: Bool {
         get { defaults.object(forKey: Key.saveToDisk) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.saveToDisk) }
+    }
+
+    /// Keep a history of recognized (OCR) text, stored encrypted in the user's keychain.
+    static var ocrHistoryEnabled: Bool {
+        get { defaults.object(forKey: Key.ocrHistory) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.ocrHistory) }
     }
 
     /// Directory screenshots are saved to. Defaults to the Desktop.
