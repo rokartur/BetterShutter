@@ -162,6 +162,7 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: false,
+                    instantCapture: true,   // release the drag = OCR immediately, no action bar
                     onRegion: { [weak self] image, _, _, _ in self?.recognizeText(image) },
                     onWindow: { [weak self] _ in self?.isCapturing = false },
                     onCancel: { [weak self] in self?.isCapturing = false }
