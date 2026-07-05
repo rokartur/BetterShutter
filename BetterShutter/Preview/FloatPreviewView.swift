@@ -192,55 +192,57 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         hoverControls = [center, pin, close, edit, trailingBottom]
     }
 
-    /// A 24pt circular glass icon button (corner chrome).
+    /// A 24pt circular icon button (corner chrome), CleanShot-style: flat over the dark hover blur,
+    /// white glyph, with a soft rounded highlight that fades in on hover / press. Uses a custom
+    /// `IconTile` (not NSButton) so the frame is exactly 24×24 — a true circle, never an egg.
     private func cornerButton(_ symbol: String, _ tip: String, _ action: Selector) -> NSView {
-        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
-            .withSymbolConfiguration(GlassTokens.symbol(11)) ?? NSImage(), target: self, action: action)
-        button.imagePosition = .imageOnly
-        button.isBordered = false
-        button.bezelStyle = .smallSquare
-        button.contentTintColor = .labelColor
-        button.toolTip = tip
-        button.setAccessibilityLabel(tip)
-        return glassHost(button, cornerRadius: 12, size: NSSize(width: 24, height: 24))
+        let tile = IconTile(symbol: symbol, tip: tip)
+        tile.target = self
+        tile.action = action
+        return tile
     }
 
-    /// A glass capsule with a bold label — the prominent primary/secondary actions, same Liquid Glass
-    /// material as the corner icons, fully pill-rounded.
+    /// A pill with a bold label — the prominent primary/secondary actions. Flat white text over the
+    /// dark hover blur, with the same rounded hover/press highlight as the corner icons.
     private func makeTextButton(_ title: String, action: Selector) -> NSView {
-        let button = NSButton(title: title, target: self, action: action)
-        button.isBordered = false
-        button.bezelStyle = .regularSquare
-        button.contentTintColor = .labelColor
+        let button = QuickAccessButton(cornerRadius: 15)
+        button.target = self
+        button.action = action
         let font = NSFont.systemFont(ofSize: 14, weight: .semibold)
         button.attributedTitle = NSAttributedString(string: title, attributes: [
             .font: font,
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: NSColor.white,
         ])
         button.setAccessibilityLabel(title)
         // Pill hugs its label (+ side padding) so it fits both short words and longer translations,
         // with a floor so a single-glyph title still reads as a tappable capsule.
         let textWidth = (title as NSString).size(withAttributes: [.font: font]).width
         let width = max(72, (textWidth + 32).rounded(.up))
-        return glassHost(button, cornerRadius: 15, size: NSSize(width: width, height: 30))
+        return sized(button, NSSize(width: width, height: 30))
     }
 
-    /// Wraps a borderless button in a fixed-size `GlassPanelView` at an explicit corner radius, so the
-    /// shape is a true circle (radius = half-size) or pill regardless of the system's default bezel.
-    private func glassHost(_ button: NSButton, cornerRadius: CGFloat, size: NSSize) -> NSView {
-        let host = GlassPanelView(cornerRadius: cornerRadius)
+    /// Forces a button to an exact size by pinning it to all four edges of a fixed-size box. NSButton
+    /// imposes a minimum content height that overrides a size constraint set on the button directly
+    /// (stretching the 24×24 corner icons into eggs); edge-pinning to a sized container beats it, so
+    /// the corner icons come out as true circles and the text actions as clean pills.
+    private func sized(_ button: NSButton, _ size: NSSize) -> NSView {
+        let box = NSView()
+        box.translatesAutoresizingMaskIntoConstraints = false
         button.translatesAutoresizingMaskIntoConstraints = false
-        host.contentView.addSubview(button)
-        host.translatesAutoresizingMaskIntoConstraints = false
+        for axis in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
+            button.setContentHuggingPriority(.defaultLow, for: axis)
+            button.setContentCompressionResistancePriority(.defaultLow, for: axis)
+        }
+        box.addSubview(button)
         NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: host.contentView.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: host.contentView.trailingAnchor),
-            button.topAnchor.constraint(equalTo: host.contentView.topAnchor),
-            button.bottomAnchor.constraint(equalTo: host.contentView.bottomAnchor),
-            host.widthAnchor.constraint(equalToConstant: size.width),
-            host.heightAnchor.constraint(equalToConstant: size.height),
+            box.widthAnchor.constraint(equalToConstant: size.width),
+            box.heightAnchor.constraint(equalToConstant: size.height),
+            button.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            button.topAnchor.constraint(equalTo: box.topAnchor),
+            button.bottomAnchor.constraint(equalTo: box.bottomAnchor),
         ])
-        return host
+        return box
     }
 
     private func setControls(visible: Bool, animated: Bool) {
@@ -497,5 +499,163 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         }
         draggedTempURL = url
         return url
+    }
+}
+
+/// A flat, borderless quick-access action button, styled like CleanShot's overlay toolbar: white
+/// glyph/label over the card's dark hover blur, with a soft rounded highlight that fades in on hover
+/// and deepens on press. No per-button glass — the color is fixed, so it never bleeds the wallpaper.
+@MainActor
+private final class QuickAccessButton: NSButton {
+    private let highlight = CALayer()
+    private var tracking: NSTrackingArea?
+    private var hovering = false { didSet { refreshHighlight() } }
+    private var pressing = false { didSet { refreshHighlight() } }
+
+    init(cornerRadius: CGFloat) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        isBordered = false
+        bezelStyle = .regularSquare
+        imageScaling = .scaleNone
+        // Resting chip: a subtle translucent fill + hairline so the button reads as a distinct control
+        // on top of the dark hover blur, not a bare glyph floating on it.
+        layer?.cornerRadius = cornerRadius
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        // Hover/press brightening, layered over the resting fill (behind the glyph/label).
+        highlight.cornerRadius = cornerRadius
+        highlight.cornerCurve = .continuous
+        highlight.backgroundColor = NSColor.white.cgColor
+        highlight.opacity = 0
+        layer?.insertSublayer(highlight, at: 0)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    // NSButton otherwise forces a minimum content height that overrides the explicit size constraints,
+    // stretching the 24×24 corner icons into vertical capsules. Contribute no intrinsic size so the
+    // width/height constraints alone define a true square (→ circle at radius = half the side).
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+
+    override func layout() {
+        super.layout()
+        highlight.frame = bounds
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override func mouseDown(with event: NSEvent) {
+        // `super.mouseDown` runs the button's own tracking loop until mouse-up (and fires the action),
+        // so `pressing` frames the whole press.
+        pressing = true
+        super.mouseDown(with: event)
+        pressing = false
+    }
+
+    /// Fixed opacities — never appearance-dependent — so the affordance reads the same everywhere.
+    private func refreshHighlight() {
+        let target: Float = pressing ? 0.24 : (hovering ? 0.14 : 0)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.11)
+        highlight.opacity = target
+        CATransaction.commit()
+    }
+}
+
+/// A circular icon action for the corner chrome, built on `NSControl` (not `NSButton`) so nothing
+/// imposes a minimum height — the size constraints alone define an exact square, giving a true circle.
+/// Same look/behavior as `QuickAccessButton`: resting chip + hover/press highlight, white glyph.
+@MainActor
+private final class IconTile: NSControl {
+    private let highlight = CALayer()
+    private let iconView = NSImageView()
+    private var tracking: NSTrackingArea?
+    private var hovering = false { didSet { refresh() } }
+    private var pressing = false { didSet { refresh() } }
+
+    init(symbol: String, tip: String, diameter: CGFloat = 24) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = diameter / 2
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+
+        highlight.backgroundColor = NSColor.white.cgColor
+        highlight.opacity = 0
+        layer?.addSublayer(highlight)
+
+        iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+            .withSymbolConfiguration(GlassTokens.symbol(11))
+        iconView.contentTintColor = .white
+        iconView.imageScaling = .scaleNone
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconView)
+
+        toolTip = tip
+        setAccessibilityLabel(tip)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: diameter),
+            heightAnchor.constraint(equalToConstant: diameter),
+            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        highlight.frame = bounds
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override func mouseDown(with event: NSEvent) {
+        pressing = true
+        var inside = true
+        // Track the drag so the press highlight follows the pointer and the action only fires on an
+        // in-bounds mouse-up (standard button behavior), without needing an NSButton.
+        trackLoop: while let next = window?.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+            inside = bounds.contains(convert(next.locationInWindow, from: nil))
+            pressing = inside
+            if next.type == .leftMouseUp { break trackLoop }
+        }
+        pressing = false
+        if inside, let action { NSApp.sendAction(action, to: target, from: self) }
+    }
+
+    private func refresh() {
+        let target: Float = pressing ? 0.24 : (hovering ? 0.14 : 0)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.11)
+        highlight.opacity = target
+        CATransaction.commit()
     }
 }
