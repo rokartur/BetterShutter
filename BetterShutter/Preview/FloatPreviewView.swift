@@ -11,9 +11,11 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     /// Every quick-access card is a fixed 16:9 tile so the bottom-right stack reads as a clean,
     /// uniform column. The capture is aspect-fit inside (centered, with a thin dark frame for shots
     /// that aren't 16:9).
-    static let cardWidth: CGFloat = 224
-    static let cardHeight: CGFloat = 126   // 224 × 9/16 = exact 16:9
-    static let cardSize = NSSize(width: cardWidth, height: cardHeight)
+    /// Width follows the user's Quick Access size preference (Small…Extra Large); the tile stays a
+    /// fixed 16:9 so the bottom-right stack reads as a uniform column at any size.
+    static var cardWidth: CGFloat { Preferences.quickAccessSize.cardWidth }
+    static var cardHeight: CGFloat { (cardWidth * 9 / 16).rounded() }
+    static var cardSize: NSSize { NSSize(width: cardWidth, height: cardHeight) }
 
     /// Fixed 16:9 regardless of the capture's own aspect (kept as a function for call-site clarity).
     static func cardSize(for pixelSize: CGSize) -> NSSize { cardSize }
@@ -35,13 +37,13 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     var onHoverChange: ((Bool) -> Void)?
 
     private var dragOrigin: CGPoint?
-    private var activePromiseDelegate: ImageFilePromiseDelegate?
+    /// Temp PNG materialized for a drag when there is no saved file; removed when the drag ends.
+    private var draggedTempURL: URL?
     private var trackingArea: NSTrackingArea?
     private let thumbnail: NSImage
 
-    private let toolbar = GlassPanelView(cornerRadius: GlassTokens.Radius.bar)
-    private var closeButton: NSView!
-    private let scrim = CAGradientLayer()
+    private let scrim = CALayer()
+    private var hoverControls: [NSView] = []
     private var controlsVisible = false
     private var copyBadge: NSView?
 
@@ -98,14 +100,9 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
 
     // MARK: Controls
 
-    /// A bottom gradient so the toolbar icons stay legible over bright screenshots. Only visible with
-    /// the toolbar.
+    /// A full-card dim so the centered Copy/Save pills and corner icons stay legible over bright
+    /// screenshots. Only visible on hover. Color set in `applyAppearanceColors`.
     private func setupScrim() {
-        // Dark end at the BOTTOM (under the toolbar). Layer geometry is bottom-up, so start at the
-        // top (clear) and end at the bottom (dark). Colors are set in `applyAppearanceColors`.
-        scrim.startPoint = CGPoint(x: 0.5, y: 1)
-        scrim.endPoint = CGPoint(x: 0.5, y: 0)
-        scrim.locations = [0.45, 1.0]
         scrim.cornerRadius = corner
         scrim.cornerCurve = .continuous
         layer?.addSublayer(scrim)
@@ -116,7 +113,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     private func applyAppearanceColors() {
         layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
         layer?.borderColor = GlassTokens.cg(GlassTokens.hairline, for: self)
-        scrim.colors = [NSColor.clear.cgColor, GlassTokens.cg(GlassTokens.scrimBottom, for: self)]
+        scrim.backgroundColor = GlassTokens.cg(GlassTokens.scrimBottom, for: self)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -124,78 +121,108 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         applyAppearanceColors()
     }
 
+    /// Hover chrome, CleanShot-style quick access: two prominent capsule buttons (Copy + Save/Reveal)
+    /// centered on the dimmed card, plus four corner icon buttons — pin (top-left), dismiss
+    /// (top-right), edit (bottom-left), and upload-or-share (bottom-right).
     private func setupControls() {
-        let edit = makeIconButton("pencil.tip.crop.circle", "Edit (⌘E)", #selector(editTapped))
-        let copy = makeIconButton("doc.on.doc", "Copy", #selector(copyTapped))
+        let copy = makeTextButton("Copy", action: #selector(copyTapped))
         let secondary = (savedURL != nil)
-            ? makeIconButton("folder", "Show in Finder", #selector(revealTapped))
-            : makeIconButton("arrow.down.circle", "Save", #selector(saveTapped))
-        let share = makeIconButton("square.and.arrow.up", "Share", #selector(shareTapped))
-        let pin = makeIconButton("pin", "Pin to Screen", #selector(pinTapped))
-
-        var buttons = [edit, copy, secondary, share, pin]
-        if CloudUploadService.isEnabled {
-            buttons.append(makeIconButton("icloud.and.arrow.up", "Upload & Copy Link", #selector(uploadTapped)))
-        }
-        let stack = NSStackView(views: buttons)
-        stack.orientation = .horizontal
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.contentView.addSubview(stack)
-        addSubview(toolbar)
-
-        // Fixed glass-pill size (N × 28pt buttons + (N-1) × 6pt gaps + 16pt insets). A fixed size —
-        // rather than tying the glass view to the stack — avoids a layout-recursion loop with
-        // NSGlassEffectView re-laying out its contentView.
-        let count = CGFloat(buttons.count)
+            ? makeTextButton("Reveal", action: #selector(revealTapped))
+            : makeTextButton("Save", action: #selector(saveTapped))
+        let center = NSStackView(views: [copy, secondary])
+        center.orientation = .vertical
+        center.spacing = 8
+        center.alignment = .centerX
+        center.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(center)
         NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: toolbar.contentView.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: toolbar.contentView.centerYAnchor),
-            toolbar.widthAnchor.constraint(equalToConstant: count * 28 + (count - 1) * 6 + 16),
-            toolbar.heightAnchor.constraint(equalToConstant: 38),
-            toolbar.centerXAnchor.constraint(equalTo: centerXAnchor),
-            toolbar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            center.centerXAnchor.constraint(equalTo: centerXAnchor),
+            center.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        let close = GlassIconButton.make(symbol: "xmark", tooltip: "Dismiss (⌘W)",
-                                         target: self, action: #selector(closeTapped),
-                                         pointSize: 10, standalone: true)
-        close.translatesAutoresizingMaskIntoConstraints = false
-        closeButton = close
-        addSubview(close)
+        let pin = cornerButton("pin", "Pin to Screen", #selector(pinTapped))
+        let close = cornerButton("xmark", "Dismiss (⌘W)", #selector(closeTapped))
+        let edit = cornerButton("pencil.tip.crop.circle", "Edit (⌘E)", #selector(editTapped))
+        let trailingBottom = CloudUploadService.isEnabled
+            ? cornerButton("icloud.and.arrow.up", "Upload & Copy Link", #selector(uploadTapped))
+            : cornerButton("square.and.arrow.up", "Share", #selector(shareTapped))
+
+        for b in [pin, close, edit, trailingBottom] { addSubview(b) }
         NSLayoutConstraint.activate([
-            close.widthAnchor.constraint(equalToConstant: 22),
-            close.heightAnchor.constraint(equalToConstant: 22),
+            pin.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            pin.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             close.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            edit.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            edit.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            trailingBottom.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            trailingBottom.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
+
+        hoverControls = [center, pin, close, edit, trailingBottom]
     }
 
-    private func makeIconButton(_ symbol: String, _ label: String, _ action: Selector) -> NSButton {
-        let button = NSButton(title: "", target: self, action: action)
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
-            .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
+    /// A 24pt circular glass icon button (corner chrome).
+    private func cornerButton(_ symbol: String, _ tip: String, _ action: Selector) -> NSView {
+        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+            .withSymbolConfiguration(GlassTokens.symbol(11)) ?? NSImage(), target: self, action: action)
         button.imagePosition = .imageOnly
+        button.isBordered = false
+        button.bezelStyle = .smallSquare
+        button.contentTintColor = .labelColor
+        button.toolTip = tip
+        button.setAccessibilityLabel(tip)
+        return glassHost(button, cornerRadius: 12, size: NSSize(width: 24, height: 24))
+    }
+
+    /// A glass capsule with a bold label — the prominent primary/secondary actions, same Liquid Glass
+    /// material as the corner icons, fully pill-rounded.
+    private func makeTextButton(_ title: String, action: Selector) -> NSView {
+        let button = NSButton(title: title, target: self, action: action)
         button.isBordered = false
         button.bezelStyle = .regularSquare
         button.contentTintColor = .labelColor
-        button.toolTip = label
-        button.setAccessibilityLabel(label)
-        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        return button
+        let font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        button.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+        ])
+        button.setAccessibilityLabel(title)
+        // Pill hugs its label (+ side padding) so it fits both short words and longer translations,
+        // with a floor so a single-glyph title still reads as a tappable capsule.
+        let textWidth = (title as NSString).size(withAttributes: [.font: font]).width
+        let width = max(72, (textWidth + 32).rounded(.up))
+        return glassHost(button, cornerRadius: 15, size: NSSize(width: width, height: 30))
+    }
+
+    /// Wraps a borderless button in a fixed-size `GlassPanelView` at an explicit corner radius, so the
+    /// shape is a true circle (radius = half-size) or pill regardless of the system's default bezel.
+    private func glassHost(_ button: NSButton, cornerRadius: CGFloat, size: NSSize) -> NSView {
+        let host = GlassPanelView(cornerRadius: cornerRadius)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        host.contentView.addSubview(button)
+        host.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: host.contentView.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: host.contentView.trailingAnchor),
+            button.topAnchor.constraint(equalTo: host.contentView.topAnchor),
+            button.bottomAnchor.constraint(equalTo: host.contentView.bottomAnchor),
+            host.widthAnchor.constraint(equalToConstant: size.width),
+            host.heightAnchor.constraint(equalToConstant: size.height),
+        ])
+        return host
     }
 
     private func setControls(visible: Bool, animated: Bool) {
         guard visible != controlsVisible || !animated else { return }
         controlsVisible = visible
-        if visible { toolbar.isHidden = false; closeButton.isHidden = false; scrim.isHidden = false }
+        if visible {
+            scrim.isHidden = false
+            hoverControls.forEach { $0.isHidden = false }
+        }
         let apply = {
-            self.toolbar.animator().alphaValue = visible ? 1 : 0
-            self.closeButton.animator().alphaValue = visible ? 1 : 0
             self.scrim.opacity = visible ? 1 : 0
+            self.hoverControls.forEach { $0.animator().alphaValue = visible ? 1 : 0 }
         }
         if animated {
             NSAnimationContext.runAnimationGroup({ ctx in
@@ -205,19 +232,18 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
                 MainActor.assumeIsolated {
                     // Re-check: a fresh hover may have re-shown the controls during the fade.
                     if !visible, !self.controlsVisible {
-                        self.toolbar.isHidden = true
-                        self.closeButton.isHidden = true
                         self.scrim.isHidden = true
+                        self.hoverControls.forEach { $0.isHidden = true }
                     }
                 }
             })
         } else {
-            toolbar.alphaValue = visible ? 1 : 0
-            closeButton.alphaValue = visible ? 1 : 0
             scrim.opacity = visible ? 1 : 0
-            toolbar.isHidden = !visible
-            closeButton.isHidden = !visible
             scrim.isHidden = !visible
+            hoverControls.forEach {
+                $0.alphaValue = visible ? 1 : 0
+                $0.isHidden = !visible
+            }
         }
     }
 
@@ -388,22 +414,19 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     private func beginDragOut(with event: NSEvent) {
-        let item: NSDraggingItem
-        // Prefer the real saved file — a plain file URL drops into Finder, text inputs, image wells,
-        // and chat apps alike. A file promise (the fallback for unsaved cards) is accepted by far
-        // fewer targets.
+        guard let png = ImageEncoder.encode(image.cgImage, as: .png) else { return }
+        // A file URL alone makes some targets paste the *path* text instead of the picture. Carry a
+        // real file (the saved one, else a temp PNG for save-to-disk-off cards) AND the raw bytes,
+        // so file-oriented targets take the file while image wells embed the actual image.
+        let fileURL: URL
         if let savedURL, FileManager.default.fileExists(atPath: savedURL.path) {
-            item = NSDraggingItem(pasteboardWriter: savedURL as NSURL)
+            fileURL = savedURL
+        } else if let tempURL = writeTempFileForDrag(png: png) {
+            fileURL = tempURL
         } else {
-            guard let png = ImageEncoder.encode(image.cgImage, as: .png) else { return }
-            let filename = FilenameTemplate.render(
-                Preferences.filenameTemplate, mode: mode, format: .png, counter: 0
-            )
-            let delegate = ImageFilePromiseDelegate(pngData: png, filename: filename)
-            activePromiseDelegate = delegate
-            let provider = NSFilePromiseProvider(fileType: UTType.png.identifier, delegate: delegate)
-            item = NSDraggingItem(pasteboardWriter: provider)
+            return
         }
+        let item = NSDraggingItem(pasteboardWriter: DragImageProvider(url: fileURL, pngData: png))
         let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds)
         item.setDraggingFrame(fit, contents: thumbnail)
         beginDraggingSession(with: [item], event: event, source: self)
@@ -411,5 +434,33 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         .copy
+    }
+
+    /// Writes the capture's PNG into a unique temp directory and returns its URL, so an unsaved
+    /// card can still be dragged out as a real file. Returns nil on write failure.
+    ///
+    /// The temp file is deliberately NOT deleted when the drag ends: some targets (browsers, chat
+    /// uploads) read the file asynchronously after the session, and deleting it mid-read makes them
+    /// fall back to pasting the path. Instead we sweep the previous drag's temp dir on the next drag,
+    /// which bounds the leak to one file; the OS clears the temp dir on top of that.
+    private func writeTempFileForDrag(png: Data) -> URL? {
+        if let prev = draggedTempURL {
+            try? FileManager.default.removeItem(at: prev.deletingLastPathComponent())
+            draggedTempURL = nil
+        }
+        let filename = FilenameTemplate.render(
+            Preferences.filenameTemplate, mode: mode, format: .png, counter: 0
+        )
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BetterShutterDrag-\(UUID().uuidString)", isDirectory: true)
+        let url = dir.appendingPathComponent(filename)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try png.write(to: url, options: .atomic)
+        } catch {
+            return nil
+        }
+        draggedTempURL = url
+        return url
     }
 }
