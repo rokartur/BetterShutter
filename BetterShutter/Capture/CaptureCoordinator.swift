@@ -373,7 +373,7 @@ final class CaptureCoordinator {
             Task {
                 let png = await Task.detached { ImageEncoder.encode(image.cgImage, as: .png) }.value
                 if let png { PasteboardWriter.copy(png: png) }
-                if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+                CaptureSound.play()
                 HUD.show(png != nil ? "Copied" : "Copy failed")
             }
         case .save:
@@ -412,7 +412,7 @@ final class CaptureCoordinator {
                 // Keychain round-trip off the main thread; the store itself honors the toggle.
                 Task.detached(priority: .utility) { OCRHistoryStore.add(text) }
             }
-            if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+            CaptureSound.play()
             OCRResultWindowController.shared.show(text: text, barcodes: barcodes)
         }
     }
@@ -487,7 +487,7 @@ final class CaptureCoordinator {
         let output = autoBeautified(outputImage(image))
         CaptureHistory.shared.add(output, mode: mode)
         let action = Preferences.afterCaptureAction
-        if Preferences.captureSoundEnabled { NSSound(named: "Grab")?.play() }
+        CaptureSound.play()
         let wantsUpload = Preferences.uploadAfterCapture && CloudUploadService.isEnabled
         let format = Preferences.format
         let savesToDisk = Preferences.saveScreenshotsToDisk
