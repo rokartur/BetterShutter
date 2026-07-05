@@ -71,6 +71,9 @@ enum GlassTokens {
         static let clickRingStroke = NSColor.systemYellow
         static let dimensionPill = NSColor.black.withAlphaComponent(0.65)
         static let swatchStroke = NSColor.black.withAlphaComponent(0.2)
+        /// Constant dark tint over the Quick Access card on hover — paired with a dark-locked blur so
+        /// the toolbar backdrop reads the same regardless of the screenshot or the system appearance.
+        static let cardHoverScrim = NSColor.black.withAlphaComponent(0.28)
     }
 
     // MARK: Helpers

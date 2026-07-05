@@ -43,6 +43,9 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     private let thumbnail: NSImage
 
     private let scrim = CALayer()
+    /// On hover, frosts the (often busy) screenshot behind the toolbar so the Copy/Save pills and
+    /// corner icons stay legible. Within-window blur; fades in/out with the scrim.
+    private let hoverBlur = NSVisualEffectView()
     private var hoverControls: [NSView] = []
     private var controlsVisible = false
     private var copyBadge: NSView?
@@ -60,6 +63,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         // Fixed 16:9 tile: a backing (the letterbox frame for non-16:9 captures) plus a hairline
         // border so the card separates from the desktop behind it. Both adapt to light/dark.
         layer?.borderWidth = 1
+        setupHoverBlur()
         setupScrim()
         setupControls()
         applyAppearanceColors()
@@ -105,7 +109,33 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     private func setupScrim() {
         scrim.cornerRadius = corner
         scrim.cornerCurve = .continuous
+        // Fixed dark tint (not the dynamic scrim token) so the hover backdrop is identical in Light and
+        // Dark — re-resolving per appearance would defeat the constant look.
+        scrim.backgroundColor = GlassTokens.Fixed.cardHoverScrim.cgColor
         layer?.addSublayer(scrim)
+    }
+
+    /// Full-card frosted-glass overlay, revealed on hover beneath the toolbar. `.withinWindow` so it
+    /// blurs the thumbnail this view draws (not the desktop), and it follows the system appearance.
+    private func setupHoverBlur() {
+        hoverBlur.material = .hudWindow
+        hoverBlur.blendingMode = .withinWindow
+        hoverBlur.state = .active
+        // Lock the frost to a dark appearance so the blur tint is constant — never lightens in Light
+        // mode or over a bright screenshot.
+        hoverBlur.appearance = NSAppearance(named: .darkAqua)
+        hoverBlur.wantsLayer = true
+        hoverBlur.layer?.cornerRadius = corner
+        hoverBlur.layer?.cornerCurve = .continuous
+        hoverBlur.layer?.masksToBounds = true
+        hoverBlur.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hoverBlur)   // bottom-most subview → behind the scrim layer and every control
+        NSLayoutConstraint.activate([
+            hoverBlur.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hoverBlur.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hoverBlur.topAnchor.constraint(equalTo: topAnchor),
+            hoverBlur.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
 
     /// (Re)applies the appearance-dependent layer colors. Must run on every effective-appearance
@@ -113,7 +143,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     private func applyAppearanceColors() {
         layer?.backgroundColor = GlassTokens.cg(GlassTokens.cardBacking, for: self)
         layer?.borderColor = GlassTokens.cg(GlassTokens.hairline, for: self)
-        scrim.backgroundColor = GlassTokens.cg(GlassTokens.scrimBottom, for: self)
+        // scrim is a fixed color (set in setupScrim) — intentionally not re-resolved per appearance.
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -218,10 +248,12 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         controlsVisible = visible
         if visible {
             scrim.isHidden = false
+            hoverBlur.isHidden = false
             hoverControls.forEach { $0.isHidden = false }
         }
         let apply = {
             self.scrim.opacity = visible ? 1 : 0
+            self.hoverBlur.animator().alphaValue = visible ? 1 : 0
             self.hoverControls.forEach { $0.animator().alphaValue = visible ? 1 : 0 }
         }
         if animated {
@@ -233,6 +265,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
                     // Re-check: a fresh hover may have re-shown the controls during the fade.
                     if !visible, !self.controlsVisible {
                         self.scrim.isHidden = true
+                        self.hoverBlur.isHidden = true
                         self.hoverControls.forEach { $0.isHidden = true }
                     }
                 }
@@ -240,6 +273,8 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         } else {
             scrim.opacity = visible ? 1 : 0
             scrim.isHidden = !visible
+            hoverBlur.alphaValue = visible ? 1 : 0
+            hoverBlur.isHidden = !visible
             hoverControls.forEach {
                 $0.alphaValue = visible ? 1 : 0
                 $0.isHidden = !visible
