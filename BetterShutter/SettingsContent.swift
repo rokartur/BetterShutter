@@ -272,6 +272,24 @@ final class CaptureSettingsTab: SettingsTabViewController {
         addRow(to: behavior, title: "When a capture is taken",
                subtitle: "Copy to the clipboard and/or show the floating preview.", accessory: popup)
 
+        let quickSize = NSPopUpButton()
+        for size in QuickAccessSize.allCases { quickSize.addItem(withTitle: size.presentableName) }
+        quickSize.selectItem(withTitle: Preferences.quickAccessSize.presentableName)
+        quickSize.target = self
+        quickSize.action = #selector(changeQuickAccessSize(_:))
+        addRow(to: behavior, title: "Quick Access size",
+               subtitle: "Size of the floating preview cards. Applies live to any open cards.",
+               accessory: quickSize, searchItemID: "capture.quickaccesssize")
+
+        let quickSide = NSPopUpButton()
+        for side in QuickAccessSide.allCases { quickSide.addItem(withTitle: side.presentableName) }
+        quickSide.selectItem(withTitle: Preferences.quickAccessSide.presentableName)
+        quickSide.target = self
+        quickSide.action = #selector(changeQuickAccessSide(_:))
+        addRow(to: behavior, title: "Quick Access side",
+               subtitle: "Which side of the screen the floating preview cards stack on.",
+               accessory: quickSide, searchItemID: "capture.quickaccessside")
+
         let downscale = makeToggle(Preferences.downscaleRetina, target: self, action: #selector(toggleDownscale(_:)))
         addRow(to: behavior, title: "Downscale Retina to 1×",
                subtitle: "Halve the pixel size of Retina captures for smaller files.", accessory: downscale)
@@ -326,6 +344,22 @@ final class CaptureSettingsTab: SettingsTabViewController {
         let index = sender.indexOfSelectedItem
         if AfterCaptureAction.allCases.indices.contains(index) {
             Preferences.afterCaptureAction = AfterCaptureAction.allCases[index]
+        }
+    }
+
+    @objc private func changeQuickAccessSize(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if QuickAccessSize.allCases.indices.contains(index) {
+            Preferences.quickAccessSize = QuickAccessSize.allCases[index]
+            NotificationCenter.default.post(name: .quickAccessSizeChanged, object: nil)
+        }
+    }
+
+    @objc private func changeQuickAccessSide(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        if QuickAccessSide.allCases.indices.contains(index) {
+            Preferences.quickAccessSide = QuickAccessSide.allCases[index]
+            NotificationCenter.default.post(name: .quickAccessSizeChanged, object: nil)
         }
     }
 

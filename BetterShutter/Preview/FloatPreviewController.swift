@@ -1,6 +1,12 @@
 import AppKit
 import Quartz
 
+extension Notification.Name {
+    /// Posted when a Quick Access layout preference (card size or screen side) changes, so any
+    /// on-screen cards restack live.
+    static let quickAccessSizeChanged = Notification.Name("quickAccessSizeChanged")
+}
+
 /// The post-capture quick-access overlay: captures park in the bottom-right corner of the capture's
 /// screen and stack as a column of cards (newest nearest the corner). Each card auto-dismisses after
 /// a delay unless the pointer is over the stack. While the pointer is over the stack the app takes
@@ -28,6 +34,43 @@ final class FloatPreviewController {
     private let hardCardCap = 5
     private let spacing: CGFloat = 12
     private let margin: CGFloat = 20
+
+    init() {
+        // The controller lives for the whole app session, so the observer never needs removing.
+        NotificationCenter.default.addObserver(
+            forName: .quickAccessSizeChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyCardSize() }
+        }
+    }
+
+    /// Apply the current Quick Access layout prefs (card size + screen side) to on-screen cards, then
+    /// re-stack. Every card is set to its FINAL size+origin in one snapped `setFrame` — resizing via
+    /// `setContentSize` first would anchor the bottom-left corner and drift the card out of position,
+    /// and animating the origin afterward risks being stranded (a key card cancels the animation).
+    private func applyCardSize() {
+        guard !panels.isEmpty else { return }
+        let size = FloatPreviewView.cardSize
+
+        // Overflow-evict against the NEW height (larger cards may no longer all fit).
+        let available = anchorVisibleFrame().height - 2 * margin
+        func stacked(_ count: Int) -> CGFloat { CGFloat(count) * size.height + CGFloat(count - 1) * spacing }
+        while panels.count > 1, panels.count > hardCardCap || stacked(panels.count) > available,
+              let oldest = panels.first {
+            evict(oldest)
+        }
+
+        let visible = anchorVisibleFrame()
+        let side = Preferences.quickAccessSide
+        var y = visible.minY + margin
+        for panel in panels {
+            let x = side == .left ? visible.minX + margin : visible.maxX - margin - size.width
+            panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+            panel.invalidateShadow()                 // shadow keeps the old bounds otherwise
+            panel.contentView?.needsDisplay = true   // redraw the screenshot crisp at the new size
+            y += size.height + spacing
+        }
+    }
 
     func show(_ image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
         if panels.isEmpty { anchorScreen = Self.screen(for: image) }
@@ -84,7 +127,7 @@ final class FloatPreviewController {
         if let target = origins[id] { panel.setFrameOrigin(target) }
         panel.alphaValue = 0
         panel.orderFront(nil)
-        repositionAll(animated: true)
+        repositionAll()
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.18
             panel.animator().alphaValue = 1
@@ -125,24 +168,30 @@ final class FloatPreviewController {
         let visible = anchorVisibleFrame()
         var y = visible.minY + margin
         var result: [ObjectIdentifier: CGPoint] = [:]
+        let side = Preferences.quickAccessSide
         for panel in panels {                          // oldest (first) at the corner, newest on top
-            // Right-anchor per card: portrait cards are narrower, so anchor by each card's own width.
-            let x = visible.maxX - margin - panel.frame.width
+            // Anchor per card to the chosen edge (portrait cards are narrower, so use each card's width).
+            let x = side == .left
+                ? visible.minX + margin
+                : visible.maxX - margin - panel.frame.width
             result[ObjectIdentifier(panel)] = CGPoint(x: x, y: y)
             y += panel.frame.height + spacing
         }
         return result
     }
 
-    private func repositionAll(animated: Bool) {
+    /// Move every card to its slot. Positions are committed synchronously (a snap), never through
+    /// `animator().setFrameOrigin`. An in-flight window-frame animation is silently cancelled the
+    /// moment the window is made key — which happens constantly here, because a card sliding under the
+    /// stationary pointer fires `mouseEntered` → `beginHover` → `makeKeyAndOrderFront`. That stranded
+    /// the card mid-slide (the gap never closed, and later cards stacked onto the misplaced pile). A
+    /// snapped frame has no animation to strand, so the column is always exactly laid out. The per-card
+    /// alpha fades (in `show`/`remove`) are separate windows' opacity and are unaffected.
+    private func repositionAll() {
         let origins = layout()
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = animated ? 0.22 : 0
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            for panel in panels {
-                guard let target = origins[ObjectIdentifier(panel)] else { continue }
-                if animated { panel.animator().setFrameOrigin(target) } else { panel.setFrameOrigin(target) }
-            }
+        for panel in panels {
+            guard let target = origins[ObjectIdentifier(panel)] else { continue }
+            panel.setFrameOrigin(target)
         }
     }
 
@@ -190,10 +239,8 @@ final class FloatPreviewController {
         }
 
         if panels.isEmpty { removeKeyMonitor() }
-        // Reconcile hover first (it may makeKeyAndOrderFront a survivor, which can cancel an in-flight
-        // frame animation), THEN run the slide so the remaining cards reliably animate down.
         reconcileHoverUnderPointer()
-        repositionAll(animated: true)
+        repositionAll()   // survivors snap into place; positions are never left mid-animation
     }
 
     // MARK: Hover / focus

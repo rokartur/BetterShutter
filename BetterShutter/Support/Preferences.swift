@@ -107,6 +107,46 @@ nonisolated enum ImageFileFormat: String, CaseIterable, Sendable {
     var isLossy: Bool { self != .png }
 }
 
+/// Size of the Quick Access (float preview) cards. Only the width is stored here; the card keeps a
+/// fixed 16:9 shape, so height derives from width at the call site.
+nonisolated enum QuickAccessSize: String, CaseIterable, Sendable {
+    case small
+    case medium
+    case large
+    case extraLarge
+
+    var cardWidth: CGFloat {
+        switch self {
+        case .small: return 176
+        case .medium: return 224
+        case .large: return 288
+        case .extraLarge: return 360
+        }
+    }
+
+    var presentableName: String {
+        switch self {
+        case .small: return "Small"
+        case .medium: return "Medium"
+        case .large: return "Large"
+        case .extraLarge: return "Extra Large"
+        }
+    }
+}
+
+/// Which screen edge the Quick Access card column anchors to.
+nonisolated enum QuickAccessSide: String, CaseIterable, Sendable {
+    case left
+    case right
+
+    var presentableName: String {
+        switch self {
+        case .left: return "Left"
+        case .right: return "Right"
+        }
+    }
+}
+
 /// Thread-safe app preferences backed by `UserDefaults`. Accessor-only (no isolation) so the
 /// capture actor and main-actor UI can both read it. Hotkeys persist themselves via BetterShortcuts.
 nonisolated enum Preferences {
@@ -120,6 +160,8 @@ nonisolated enum Preferences {
         static let jpegQuality = "jpegQuality"
         static let filenameTemplate = "filenameTemplate"
         static let afterCapture = "afterCaptureAction"
+        static let quickAccessSize = "quickAccessSize"
+        static let quickAccessSide = "quickAccessSide"
         static let magnifier = "magnifierEnabled"
         static let captureSound = "captureSoundEnabled"
         static let captureCounter = "captureCounter"
@@ -355,6 +397,16 @@ nonisolated enum Preferences {
     static var afterCaptureAction: AfterCaptureAction {
         get { AfterCaptureAction(rawValue: defaults.string(forKey: Key.afterCapture) ?? "") ?? .both }
         set { defaults.set(newValue.rawValue, forKey: Key.afterCapture) }
+    }
+
+    static var quickAccessSize: QuickAccessSize {
+        get { QuickAccessSize(rawValue: defaults.string(forKey: Key.quickAccessSize) ?? "") ?? .medium }
+        set { defaults.set(newValue.rawValue, forKey: Key.quickAccessSize) }
+    }
+
+    static var quickAccessSide: QuickAccessSide {
+        get { QuickAccessSide(rawValue: defaults.string(forKey: Key.quickAccessSide) ?? "") ?? .right }
+        set { defaults.set(newValue.rawValue, forKey: Key.quickAccessSide) }
     }
 
     static var magnifierEnabled: Bool {
