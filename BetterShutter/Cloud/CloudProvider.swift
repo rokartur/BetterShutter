@@ -2,17 +2,41 @@ import Foundation
 import Security
 
 /// Where uploaded captures go. CleanShot Cloud is a proprietary SaaS we can't replicate, so the
-/// shipped options mirror macshot/Snapzy: bring-your-own S3-compatible storage, or imgbb hosting.
+/// shipped options mirror macshot/Snapzy: bring-your-own S3-compatible storage, or a free host
+/// (imgbb, 0x0.st, catbox.moe, litterbox).
 nonisolated enum CloudProvider: String, CaseIterable, Sendable {
     case none
     case s3
     case imgbb
+    case zeroXZero = "0x0"
+    case catbox
+    case litterbox
 
     var presentableName: String {
         switch self {
         case .none: return "Off"
         case .s3: return "S3 / R2 (S3-compatible)"
         case .imgbb: return "imgbb"
+        case .zeroXZero: return "0x0.st"
+        case .catbox: return "Catbox (permanent)"
+        case .litterbox: return "Litterbox (temporary)"
+        }
+    }
+}
+
+/// How long litterbox.catbox.moe keeps a file. Raw values are the API's `time` parameter.
+nonisolated enum LitterboxExpiry: String, CaseIterable, Sendable {
+    case oneHour = "1h"
+    case twelveHours = "12h"
+    case oneDay = "24h"
+    case threeDays = "72h"
+
+    var presentableName: String {
+        switch self {
+        case .oneHour: return "1 hour"
+        case .twelveHours: return "12 hours"
+        case .oneDay: return "24 hours"
+        case .threeDays: return "72 hours"
         }
     }
 }
@@ -82,7 +106,7 @@ nonisolated enum CloudKeychain {
 // MARK: - Persistence (non-secrets in UserDefaults, secrets in Keychain)
 
 extension Preferences {
-    private static var cloudDefaults: UserDefaults { .standard }
+    nonisolated private static var cloudDefaults: UserDefaults { .standard }
 
     static var cloudProvider: CloudProvider {
         get { CloudProvider(rawValue: cloudDefaults.string(forKey: "cloudProvider") ?? "") ?? .none }
@@ -108,8 +132,21 @@ extension Preferences {
         set { CloudKeychain.set(newValue, account: "imgbb.apiKey") }
     }
 
-    /// Automatically upload after every capture and copy the link.
-    static var uploadAfterCapture: Bool {
+    /// Optional catbox.moe account hash — anonymous uploads work without it. Trimmed on write:
+    /// a value pasted from the catbox site often carries a trailing newline.
+    static var catboxUserHash: String {
+        get { CloudKeychain.get(account: "catbox.userHash") }
+        set { CloudKeychain.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), account: "catbox.userHash") }
+    }
+
+    static var litterboxExpiry: LitterboxExpiry {
+        get { LitterboxExpiry(rawValue: cloudDefaults.string(forKey: "cloudLitterboxExpiry") ?? "") ?? .oneDay }
+        set { cloudDefaults.set(newValue.rawValue, forKey: "cloudLitterboxExpiry") }
+    }
+
+    /// Automatically upload after every capture and copy the link. Nonisolated (like the rest of
+    /// `Preferences`) so the After-Capture matrix accessors can proxy it; UserDefaults is thread-safe.
+    nonisolated static var uploadAfterCapture: Bool {
         get { cloudDefaults.bool(forKey: "cloudUploadAfterCapture") }
         set { cloudDefaults.set(newValue, forKey: "cloudUploadAfterCapture") }
     }

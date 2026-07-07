@@ -11,6 +11,9 @@ enum CloudUploadService {
         case .none: return nil
         case .s3: return S3Uploader(config: Preferences.s3Config, secretKey: Preferences.s3SecretKey)
         case .imgbb: return ImgbbUploader(apiKey: Preferences.imgbbAPIKey)
+        case .zeroXZero: return ZeroXZeroUploader()
+        case .catbox: return CatboxUploader(userHash: Preferences.catboxUserHash)
+        case .litterbox: return LitterboxUploader(expiry: Preferences.litterboxExpiry)
         }
     }
 
@@ -49,6 +52,12 @@ enum CloudUploadService {
         let ext = fileURL.pathExtension.isEmpty ? "png" : fileURL.pathExtension.lowercased()
         let key = currentKey(ext: ext)
         let type = contentType(forExtension: ext)
+        // imgbb hosts images only; bail before its non-streaming fallback reads a whole
+        // recording into memory just to have the server reject it.
+        if uploader is ImgbbUploader, !type.hasPrefix("image/") {
+            HUD.show("imgbb hosts images only")
+            return
+        }
         send { try await uploader.uploadFile(fileURL, key: key, contentType: type) }
     }
 
