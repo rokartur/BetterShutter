@@ -22,7 +22,8 @@ nonisolated struct StoredRegion: Codable, Sendable {
     var displayID: CGDirectDisplayID { display }
 }
 
-/// What happens immediately after a capture succeeds.
+/// Legacy single-popup after-capture choice. Kept only to migrate old installs to the
+/// per-action matrix (`AfterCaptureItem`); no UI offers it anymore.
 nonisolated enum AfterCaptureAction: String, CaseIterable, Sendable {
     case both       // copy to pasteboard AND show the float preview
     case preview    // show the float preview only
@@ -30,14 +31,64 @@ nonisolated enum AfterCaptureAction: String, CaseIterable, Sendable {
 
     var copies: Bool { self == .both || self == .copy }
     var previews: Bool { self == .both || self == .preview }
+}
+
+/// The two columns of the After-Capture actions matrix.
+nonisolated enum CaptureMediaType: String, CaseIterable, Sendable {
+    case screenshot
+    case recording
 
     var presentableName: String {
         switch self {
-        case .both: return "Copy & Show Preview"
-        case .preview: return "Show Preview"
-        case .copy: return "Copy to Clipboard"
+        case .screenshot: return "Screenshot"
+        case .recording: return "Recording"
         }
     }
+}
+
+/// One row of the After-Capture actions matrix (CleanShot-style): each action can be toggled
+/// independently per media type, and some actions only exist for one media type.
+nonisolated enum AfterCaptureItem: String, CaseIterable, Sendable {
+    case quickAccess
+    case copy
+    case save
+    case upload
+    case annotate
+    case pin
+    case videoEditor
+
+    var presentableName: String {
+        switch self {
+        case .quickAccess: return "Show Quick Access Overlay"
+        case .copy: return "Copy file to clipboard"
+        case .save: return "Save"
+        case .upload: return "Upload to Cloud & copy link"
+        case .annotate: return "Open Annotate tool"
+        case .pin: return "Pin to the screen"
+        case .videoEditor: return "Open Video Editor"
+        }
+    }
+
+    /// Whether this action exists for the media type; the settings matrix shows a dash otherwise.
+    func applies(to media: CaptureMediaType) -> Bool {
+        switch self {
+        case .annotate, .pin: return media == .screenshot
+        case .videoEditor: return media == .recording
+        case .quickAccess, .copy, .save, .upload: return true
+        }
+    }
+
+    /// The screenshot column an old install starts with, derived from the legacy popup value.
+    static func migratedScreenshotActions(from legacy: AfterCaptureAction) -> Set<AfterCaptureItem> {
+        var set: Set<AfterCaptureItem> = []
+        if legacy.previews { set.insert(.quickAccess) }
+        if legacy.copies { set.insert(.copy) }
+        return set
+    }
+
+    /// Recording-column default: keep the file (recordings always saved before the matrix existed)
+    /// and surface it as a quick-access card.
+    static let defaultRecordingActions: Set<AfterCaptureItem> = [.quickAccess, .save]
 }
 
 /// How far back the Capture History bar shows past captures. Filters the saved-files view by
@@ -160,6 +211,8 @@ nonisolated enum Preferences {
         static let jpegQuality = "jpegQuality"
         static let filenameTemplate = "filenameTemplate"
         static let afterCapture = "afterCaptureAction"
+        static let afterScreenshot = "afterScreenshotActions"
+        static let afterRecording = "afterRecordingActions"
         static let quickAccessSize = "quickAccessSize"
         static let quickAccessSide = "quickAccessSide"
         static let magnifier = "magnifierEnabled"
@@ -394,9 +447,46 @@ nonisolated enum Preferences {
         set { defaults.set(newValue, forKey: Key.filenameTemplate) }
     }
 
-    static var afterCaptureAction: AfterCaptureAction {
-        get { AfterCaptureAction(rawValue: defaults.string(forKey: Key.afterCapture) ?? "") ?? .both }
-        set { defaults.set(newValue.rawValue, forKey: Key.afterCapture) }
+    /// Legacy popup value, read only to seed the screenshot column of the actions matrix.
+    private static var legacyAfterCaptureAction: AfterCaptureAction {
+        AfterCaptureAction(rawValue: defaults.string(forKey: Key.afterCapture) ?? "") ?? .both
+    }
+
+    /// The enabled After-Capture matrix cells for a media type. The screenshot Save and Upload
+    /// cells proxy the long-standing `saveScreenshotsToDisk` / `uploadAfterCapture` keys, so the
+    /// matrix, the Output tab, and the Cloud tab always agree.
+    static func afterCaptureActions(for media: CaptureMediaType) -> Set<AfterCaptureItem> {
+        let key = media == .screenshot ? Key.afterScreenshot : Key.afterRecording
+        var set: Set<AfterCaptureItem>
+        if let raw = defaults.stringArray(forKey: key) {
+            set = Set(raw.compactMap(AfterCaptureItem.init(rawValue:)))
+        } else if media == .screenshot {
+            set = AfterCaptureItem.migratedScreenshotActions(from: legacyAfterCaptureAction)
+        } else {
+            set = AfterCaptureItem.defaultRecordingActions
+        }
+        if media == .screenshot {
+            set.remove(.save)
+            set.remove(.upload)
+            if saveScreenshotsToDisk { set.insert(.save) }
+            if uploadAfterCapture { set.insert(.upload) }
+        }
+        return Set(set.filter { $0.applies(to: media) })
+    }
+
+    static func setAfterCaptureAction(_ item: AfterCaptureItem, for media: CaptureMediaType, enabled: Bool) {
+        guard item.applies(to: media) else { return }
+        if media == .screenshot {
+            switch item {
+            case .save: saveScreenshotsToDisk = enabled; return
+            case .upload: uploadAfterCapture = enabled; return
+            default: break
+            }
+        }
+        var set = afterCaptureActions(for: media)
+        if enabled { set.insert(item) } else { set.remove(item) }
+        let key = media == .screenshot ? Key.afterScreenshot : Key.afterRecording
+        defaults.set(set.map(\.rawValue).sorted(), forKey: key)
     }
 
     static var quickAccessSize: QuickAccessSize {

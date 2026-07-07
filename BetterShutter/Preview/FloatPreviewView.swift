@@ -24,7 +24,16 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
 
     private let image: CapturedImage
     private let mode: CaptureMode
-    private let savedURL: URL?
+    /// Mutable: an unsaved recording card flips to "saved" when its Save action copies the file
+    /// into the save directory (see `markSaved`).
+    private var savedURL: URL?
+    /// Set for a recording card: `image` is just the first frame and this is the movie/GIF file the
+    /// card's actions operate on. Nil for screenshot cards.
+    private let videoURL: URL?
+
+    private var isVideo: Bool { videoURL != nil }
+    /// GIF recordings never offer Edit — the trim window is AVFoundation-based and can't decode GIF.
+    private var isGIFVideo: Bool { videoURL?.pathExtension.lowercased() == "gif" }
 
     var onCopy: (() -> Void)?
     var onSave: (() -> Void)?
@@ -49,11 +58,16 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     private var hoverControls: [NSView] = []
     private var controlsVisible = false
     private var copyBadge: NSView?
+    /// The center pill stack and its secondary (Save/Reveal) pill, kept so `markSaved` can swap
+    /// Save → Reveal in place.
+    private weak var centerStack: NSStackView?
+    private weak var secondaryAction: NSView?
 
-    init(image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
+    init(image: CapturedImage, mode: CaptureMode, savedURL: URL?, videoURL: URL? = nil) {
         self.image = image
         self.mode = mode
         self.savedURL = savedURL
+        self.videoURL = videoURL
         self.thumbnail = NSImage(cgImage: image.cgImage, size: image.pixelSize)
         super.init(frame: NSRect(origin: .zero, size: Self.cardSize(for: image.pixelSize)))
         wantsLayer = true
@@ -77,8 +91,9 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
 
     // MARK: Quick Look
 
-    /// The on-disk file Quick Look can preview (nil for an unsaved card).
-    var quickLookURL: URL? { savedURL }
+    /// The on-disk file Quick Look can preview (nil for an unsaved screenshot card). A recording
+    /// card always has a file — even unsaved ones live in a temp folder.
+    var quickLookURL: URL? { savedURL ?? videoURL }
 
     // Snapshotted when the panel opens so the nonisolated data-source reads need no actor hop.
     nonisolated(unsafe) private var previewURLs: [URL] = []
@@ -87,7 +102,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
 
     nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
         MainActor.assumeIsolated {
-            previewURLs = savedURL.map { [$0] } ?? []
+            previewURLs = quickLookURL.map { [$0] } ?? []
             panel.dataSource = self
             panel.delegate = self
             panel.currentPreviewItemIndex = 0
@@ -159,7 +174,9 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         let secondary = (savedURL != nil)
             ? makeTextButton("Reveal", action: #selector(revealTapped))
             : makeTextButton("Save", action: #selector(saveTapped))
+        secondaryAction = secondary
         let center = NSStackView(views: [copy, secondary])
+        centerStack = center
         center.orientation = .vertical
         center.spacing = 8
         center.alignment = .centerX
@@ -170,26 +187,53 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
             center.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        let pin = cornerButton("pin", "Pin to Screen", #selector(pinTapped))
+        // Pinning is a screenshot-only affordance; a video card skips that corner.
+        let pin = isVideo ? nil : cornerButton("pin", "Pin to Screen", #selector(pinTapped))
         let close = cornerButton("xmark", "Dismiss (⌘W)", #selector(closeTapped))
-        let edit = cornerButton("pencil.tip.crop.circle", "Edit (⌘E)", #selector(editTapped))
+        let edit = isGIFVideo ? nil
+            : cornerButton("pencil.tip.crop.circle", isVideo ? "Edit Video (⌘E)" : "Edit (⌘E)", #selector(editTapped))
         let trailingBottom = CloudUploadService.isEnabled
             ? cornerButton("icloud.and.arrow.up", "Upload & Copy Link", #selector(uploadTapped))
             : cornerButton("square.and.arrow.up", "Share", #selector(shareTapped))
 
-        for b in [pin, close, edit, trailingBottom] { addSubview(b) }
+        for b in [pin, close, edit, trailingBottom].compactMap({ $0 }) { addSubview(b) }
+        if let pin {
+            NSLayoutConstraint.activate([
+                pin.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+                pin.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            ])
+        }
+        if let edit {
+            NSLayoutConstraint.activate([
+                edit.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+                edit.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            ])
+        }
         NSLayoutConstraint.activate([
-            pin.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            pin.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             close.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            edit.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            edit.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             trailingBottom.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             trailingBottom.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
 
-        hoverControls = [center, pin, close, edit, trailingBottom]
+        hoverControls = ([center, pin, close, edit, trailingBottom] as [NSView?]).compactMap { $0 }
+    }
+
+    /// Flip an unsaved card to its saved state after the Save action copies the file into the
+    /// save directory: the center pill becomes "Reveal" and the context menu offers Show in
+    /// Finder — so a second click can't create duplicate copies.
+    func markSaved(_ url: URL) {
+        savedURL = url
+        guard let centerStack, let secondaryAction else { return }
+        hoverControls.removeAll { $0 === secondaryAction }
+        centerStack.removeArrangedSubview(secondaryAction)
+        secondaryAction.removeFromSuperview()
+        let reveal = makeTextButton("Reveal", action: #selector(revealTapped))
+        reveal.isHidden = secondaryAction.isHidden
+        reveal.alphaValue = secondaryAction.alphaValue
+        centerStack.addArrangedSubview(reveal)
+        self.secondaryAction = reveal
+        hoverControls.append(reveal)
     }
 
     /// A 24pt circular icon button (corner chrome), CleanShot-style: flat over the dark hover blur,
@@ -349,11 +393,16 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        addMenuItem(menu, "Annotate", #selector(editTapped))
-        addMenuItem(menu, "Beautify", #selector(beautifyTapped))
-        addMenuItem(menu, "Pin to Screen", #selector(pinTapped))
-        addMenuItem(menu, "Share…", #selector(shareTapped))
-        addMenuItem(menu, "Print…", #selector(printTapped))
+        if isVideo {
+            if !isGIFVideo { addMenuItem(menu, "Edit Video", #selector(editTapped)) }
+            addMenuItem(menu, "Share…", #selector(shareTapped))
+        } else {
+            addMenuItem(menu, "Annotate", #selector(editTapped))
+            addMenuItem(menu, "Beautify", #selector(beautifyTapped))
+            addMenuItem(menu, "Pin to Screen", #selector(pinTapped))
+            addMenuItem(menu, "Share…", #selector(shareTapped))
+            addMenuItem(menu, "Print…", #selector(printTapped))
+        }
         menu.addItem(.separator())
         addMenuItem(menu, "Copy", #selector(copyTapped))
         if savedURL != nil {
@@ -451,6 +500,14 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     private func beginDragOut(with event: NSEvent) {
+        // A video card drags its file straight out — no PNG involved.
+        if let videoURL {
+            let item = NSDraggingItem(pasteboardWriter: videoURL as NSURL)
+            let fit = Self.aspectFit(imageSize: image.pixelSize, in: bounds)
+            item.setDraggingFrame(fit, contents: thumbnail)
+            beginDraggingSession(with: [item], event: event, source: self)
+            return
+        }
         guard let png = ImageEncoder.encode(image.cgImage, as: .png) else { return }
         // A file URL alone makes some targets paste the *path* text instead of the picture. Carry a
         // real file (the saved one, else a temp PNG for save-to-disk-off cards) AND the raw bytes,

@@ -1227,6 +1227,58 @@ struct ImgbbMultipartTests {
     }
 }
 
+struct MultipartUploadTests {
+    @Test
+    func bodyIncludesFieldsAndRawPayload() {
+        let payload = Data((0...255).map { UInt8($0) })   // exercises every byte value
+        let boundary = "test-boundary-123"
+        let body = MultipartUpload.body(fields: [("reqtype", "fileupload"), ("time", "24h")],
+                                        fileField: "fileupload", filename: "shot.png",
+                                        contentType: "image/png", fileData: payload, boundary: boundary)
+
+        let prefix = Data((
+            "--\(boundary)\r\n" +
+            "Content-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n" +
+            "--\(boundary)\r\n" +
+            "Content-Disposition: form-data; name=\"time\"\r\n\r\n24h\r\n" +
+            "--\(boundary)\r\n" +
+            "Content-Disposition: form-data; name=\"fileupload\"; filename=\"shot.png\"\r\n" +
+            "Content-Type: image/png\r\n\r\n"
+        ).utf8)
+        let suffix = Data("\r\n--\(boundary)--\r\n".utf8)
+
+        #expect(body.prefix(prefix.count) == prefix)
+        #expect(body.suffix(suffix.count) == suffix)
+        #expect(body.count == prefix.count + payload.count + suffix.count)
+        #expect(body.dropFirst(prefix.count).prefix(payload.count) == payload)
+    }
+
+    @Test
+    func bodyFileMatchesInMemoryBody() throws {
+        let payload = Data((0..<4096).map { UInt8($0 % 256) })
+        let boundary = "test-boundary-456"
+        let payloadFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("multipart-test-\(UUID().uuidString).bin")
+        try payload.write(to: payloadFile)
+        defer { try? FileManager.default.removeItem(at: payloadFile) }
+
+        let bodyFile = try MultipartUpload.writeBodyFile(
+            fields: [("reqtype", "fileupload")], fileField: "fileupload", filename: "clip.mp4",
+            contentType: "video/mp4", payloadFile: payloadFile, boundary: boundary)
+        defer { try? FileManager.default.removeItem(at: bodyFile) }
+
+        let expected = MultipartUpload.body(fields: [("reqtype", "fileupload")],
+                                            fileField: "fileupload", filename: "clip.mp4",
+                                            contentType: "video/mp4", fileData: payload, boundary: boundary)
+        #expect(try Data(contentsOf: bodyFile) == expected)
+    }
+
+    @Test
+    func litterboxExpiryRawValuesMatchAPI() {
+        #expect(LitterboxExpiry.allCases.map(\.rawValue) == ["1h", "12h", "24h", "72h"])
+    }
+}
+
 struct SigV4Tests {
     @Test
     func derivesKnownSigningKey() {
@@ -1405,5 +1457,39 @@ struct FloatPreviewCardSizeTests {
             #expect(size.height == FloatPreviewView.cardHeight)
             #expect(abs(size.width / size.height - 16.0 / 9.0) < 0.001)
         }
+    }
+}
+
+struct AfterCaptureMatrixTests {
+    @Test
+    func applicabilityMatchesMatrixShape() {
+        // Screenshot column: everything except the video editor.
+        #expect(AfterCaptureItem.videoEditor.applies(to: .screenshot) == false)
+        #expect(AfterCaptureItem.annotate.applies(to: .screenshot))
+        #expect(AfterCaptureItem.pin.applies(to: .screenshot))
+        // Recording column: everything except annotate and pin.
+        #expect(AfterCaptureItem.annotate.applies(to: .recording) == false)
+        #expect(AfterCaptureItem.pin.applies(to: .recording) == false)
+        #expect(AfterCaptureItem.videoEditor.applies(to: .recording))
+        // Shared cells exist in both columns.
+        for item in [AfterCaptureItem.quickAccess, .copy, .save, .upload] {
+            #expect(item.applies(to: .screenshot))
+            #expect(item.applies(to: .recording))
+        }
+    }
+
+    @Test
+    func legacyPopupValueMigratesToScreenshotColumn() {
+        #expect(AfterCaptureItem.migratedScreenshotActions(from: .both) == [.quickAccess, .copy])
+        #expect(AfterCaptureItem.migratedScreenshotActions(from: .preview) == [.quickAccess])
+        #expect(AfterCaptureItem.migratedScreenshotActions(from: .copy) == [.copy])
+    }
+
+    @Test
+    func recordingDefaultsKeepSaveAndShowCard() {
+        // Recordings always saved before the matrix existed; the default must not silently
+        // start dropping files into temp.
+        #expect(AfterCaptureItem.defaultRecordingActions.contains(.save))
+        #expect(AfterCaptureItem.defaultRecordingActions.contains(.quickAccess))
     }
 }

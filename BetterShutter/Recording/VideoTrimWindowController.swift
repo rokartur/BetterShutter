@@ -10,6 +10,10 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     private let url: URL
     private let player: AVPlayer
     private var duration: Double = 0
+    /// Set by `close()`. The window is built asynchronously (after the asset's duration loads), so
+    /// a close that races the build must cancel it — otherwise the "closed" trimmer's window still
+    /// appears and lingers as a zombie.
+    private var isClosed = false
 
     private let startSlider = NSSlider()
     private let endSlider = NSSlider()
@@ -37,6 +41,12 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         Task {
             let asset = AVURLAsset(url: url)
             duration = (try? await asset.load(.duration).seconds) ?? 0
+            guard !isClosed else {
+                // Closed while loading: never build the window, and release the player pipeline
+                // now (windowWillClose won't run for a window that never existed).
+                player.replaceCurrentItem(with: nil)
+                return
+            }
             build()
             window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -153,11 +163,20 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
         player.seek(to: CMTime(seconds: startSlider.doubleValue, preferredTimescale: 600))
     }
 
+    /// Exports always land in the user's save directory — the source may live in the unsaved-
+    /// recordings scratch folder (After-Capture Save off), and an explicit "Save …" must never
+    /// write somewhere the user will lose.
+    private func exportURL(suffix: String) -> URL {
+        let dir = Preferences.saveDirectory
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let base = url.deletingPathExtension().lastPathComponent
+        return FileSaver.uniqueURL(in: dir, filename: "\(base).\(suffix).mp4")
+    }
+
     @objc private func exportTapped() {
         let asset = AVURLAsset(url: url)
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else { return }
-        let out = url.deletingPathExtension().appendingPathExtension("trimmed.mp4")
-        try? FileManager.default.removeItem(at: out)
+        let out = exportURL(suffix: "trimmed")
         export.outputURL = out
         export.outputFileType = .mp4
         export.timeRange = CMTimeRange(
@@ -193,7 +212,7 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
             start: CMTime(seconds: startSlider.doubleValue, preferredTimescale: 600),
             end: CMTime(seconds: endSlider.doubleValue, preferredTimescale: 600)
         )
-        let out = url.deletingPathExtension().appendingPathExtension("framed.mp4")
+        let out = exportURL(suffix: "framed")
         HUD.show("Rendering…", duration: 1.0)
         Task {
             let result = await VideoBeautify.export(url: url, options: options, timeRange: range, to: out)
@@ -203,6 +222,14 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
                 HUD.show("Export failed")
             }
         }
+    }
+
+    /// Programmatic close (e.g. the owner replacing this trimmer with a new one); routes through
+    /// `windowWillClose` so the player pipeline is torn down and `onClose` still fires. If the
+    /// window hasn't been built yet, the flag makes the pending build bail instead.
+    func close() {
+        isClosed = true
+        window?.close()
     }
 
     func windowWillClose(_ notification: Notification) {

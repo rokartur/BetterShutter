@@ -11,6 +11,7 @@ final class CaptureCoordinator {
     private let preview = FloatPreviewController()
     private var editor: EditorWindowController?
     private var beautifier: BeautifyWindowController?
+    private var trimmer: VideoTrimWindowController?
     private var isCapturing = false
 
     /// The last region selection (global rect + display), for "Capture Previous Area". Persisted to
@@ -23,6 +24,7 @@ final class CaptureCoordinator {
     private init() {
         preview.onAnnotate = { [weak self] image, mode in self?.edit(image, mode: mode) }
         preview.onBeautify = { [weak self] image, mode in self?.beautify(image, mode: mode) }
+        preview.onEditVideo = { [weak self] url in self?.editVideo(url: url) }
     }
 
     /// Freeze all displays, momentarily hiding desktop icons first when the user enabled it, so the
@@ -486,21 +488,21 @@ final class CaptureCoordinator {
         isCapturing = false
         let output = autoBeautified(outputImage(image))
         CaptureHistory.shared.add(output, mode: mode)
-        let action = Preferences.afterCaptureAction
+        let actions = Preferences.afterCaptureActions(for: .screenshot)
         CaptureSound.play()
-        let wantsUpload = Preferences.uploadAfterCapture && CloudUploadService.isEnabled
+        let wantsUpload = actions.contains(.upload) && CloudUploadService.isEnabled
         let format = Preferences.format
-        let savesToDisk = Preferences.saveScreenshotsToDisk
+        let savesToDisk = actions.contains(.save)
 
         Task {
             // Encode PNG once, off the main thread; the bytes are shared by the clipboard, the
             // upload, and (when the save format is PNG) the file on disk. A Retina 5K frame is a
             // ~60 MB bitmap — encoding it repeatedly, on the main thread, stalls the UI.
-            let needsPNG = action.copies || wantsUpload || (format == .png && savesToDisk)
+            let needsPNG = actions.contains(.copy) || wantsUpload || (format == .png && savesToDisk)
             let png: Data? = needsPNG
                 ? await Task.detached { ImageEncoder.encode(output.cgImage, as: .png) }.value
                 : nil
-            if action.copies, let png { PasteboardWriter.copy(png: png) }
+            if actions.contains(.copy), let png { PasteboardWriter.copy(png: png) }
             // Auto-upload + copy the share link (overwrites the image on the pasteboard, CleanShot-style).
             if wantsUpload {
                 if let png { CloudUploadService.upload(png: png) } else { HUD.show("Encode failed") }
@@ -515,8 +517,17 @@ final class CaptureCoordinator {
             } else {
                 url = await Task.detached { try? FileSaver.save(output.cgImage, mode: mode) }.value
             }
-            if action.previews {
+            if actions.contains(.quickAccess) {
                 preview.show(output, mode: mode, savedURL: url)
+            }
+            if actions.contains(.pin) {
+                PinController.shared.pin(output)
+            }
+            // Auto-open the editor only when none is open: install(editor:) closes the previous
+            // editor unconditionally, and an automatic capture must never destroy unsaved
+            // annotation work in progress.
+            if actions.contains(.annotate), editor == nil {
+                edit(output, mode: mode)
             }
         }
     }
@@ -541,6 +552,36 @@ final class CaptureCoordinator {
     /// Restore the most recently dismissed quick-access card.
     func restoreClosedPreview() {
         preview.reopenLastClosed()
+    }
+
+    /// Show a finished recording as a quick-access card (thumbnail = first frame). `saved` says
+    /// whether `url` already lives in the user's save directory; an unsaved (temp) recording gets a
+    /// Save button on the card instead of Reveal.
+    func showRecordingPreview(url: URL, saved: Bool) {
+        Task {
+            guard let frame = await VideoThumbnailer.firstFrame(of: url) else {
+                // No thumbnail (corrupt/odd file) — reveal the recording instead of silently
+                // showing nothing; this is the only surfacing path when quick access is chosen.
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+                return
+            }
+            let image = CapturedImage(cgImage: frame, scale: 1, displayID: nil)
+            preview.show(image, mode: .fullDisplay, savedURL: saved ? url : nil, videoURL: url)
+        }
+    }
+
+    /// Open the video trim/edit window on a recording.
+    func editVideo(url: URL) {
+        trimmer?.close()
+        let controller = VideoTrimWindowController(url: url)
+        // Identity check (like install(editor:)): a stale trimmer's close must not release the
+        // live one that replaced it.
+        controller.onClose = { [weak self, weak controller] in
+            guard let self, let controller, self.trimmer === controller else { return }
+            self.trimmer = nil
+        }
+        trimmer = controller
+        controller.show()
     }
 
     func edit(_ image: CapturedImage, mode: CaptureMode) {

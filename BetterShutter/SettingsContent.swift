@@ -65,6 +65,10 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
             SettingsSearchItem(id: "shortcuts.screenshot", tabID: "shortcuts", sectionAnchor: "shortcuts.capture",
                                title: "Capture Screenshot shortcut", tabTitle: "Shortcuts", sectionTitle: "Capture",
                                keywords: ["hotkey", "shortcut", "region", "window", "selection", "space"]),
+            SettingsSearchItem(id: "capture.after", tabID: "capture", sectionAnchor: "capture.after",
+                               title: "After capture actions", tabTitle: "Capture", sectionTitle: "After Capture",
+                               keywords: ["clipboard", "copy", "save", "upload", "pin", "annotate",
+                                          "quick access", "overlay", "video editor", "after capture"]),
             SettingsSearchItem(id: "overlay.magnifier", tabID: "overlay", sectionAnchor: "overlay.main",
                                title: "Show magnifier loupe", tabTitle: "Overlay", sectionTitle: "Selection",
                                keywords: ["zoom", "loupe", "pixel", "color"]),
@@ -102,6 +106,15 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
 // MARK: - Cloud
 
 final class CloudSettingsTab: SettingsTabViewController {
+    /// Mirrors the After-Capture matrix's screenshot Upload cell; tab controllers are cached while
+    /// the settings window is open, so re-read the pref whenever this tab comes back on screen.
+    private weak var uploadToggle: NSSwitch?
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        uploadToggle?.state = Preferences.uploadAfterCapture ? .on : .off
+    }
+
     override func setupContent() {
         let providerSection = addSection(title: "Provider", anchor: "cloud.provider")
         let provider = NSPopUpButton()
@@ -110,10 +123,11 @@ final class CloudSettingsTab: SettingsTabViewController {
         provider.target = self
         provider.action = #selector(changeProvider(_:))
         addRow(to: providerSection, title: "Upload to",
-               subtitle: "CleanShot Cloud is proprietary; bring your own S3-compatible storage or use imgbb.",
+               subtitle: "Bring your own S3-compatible storage or use a free host (imgbb, 0x0.st, Catbox, Litterbox).",
                accessory: provider)
 
         let auto = makeToggle(Preferences.uploadAfterCapture, target: self, action: #selector(toggleAuto(_:)))
+        uploadToggle = auto
         addRow(to: providerSection, title: "Upload after capture",
                subtitle: "Automatically upload every capture and copy the link.", accessory: auto)
 
@@ -138,6 +152,19 @@ final class CloudSettingsTab: SettingsTabViewController {
         let imgbb = addSection(title: "imgbb", anchor: "cloud.imgbb")
         addRow(to: imgbb, title: "API Key", subtitle: "From your imgbb.com account.",
                accessory: field(Preferences.imgbbAPIKey, #selector(imgbbKey(_:)), secure: true))
+
+        let catbox = addSection(title: "Catbox", anchor: "cloud.catbox")
+        addRow(to: catbox, title: "User hash", subtitle: "Optional — ties uploads to your catbox.moe account; leave empty for anonymous.",
+               accessory: field(Preferences.catboxUserHash, #selector(catboxHash(_:)), secure: true))
+
+        let litterbox = addSection(title: "Litterbox", anchor: "cloud.litterbox")
+        let expiry = NSPopUpButton()
+        for e in LitterboxExpiry.allCases { expiry.addItem(withTitle: e.presentableName) }
+        expiry.selectItem(at: LitterboxExpiry.allCases.firstIndex(of: Preferences.litterboxExpiry) ?? 0)
+        expiry.target = self
+        expiry.action = #selector(changeLitterboxExpiry(_:))
+        addRow(to: litterbox, title: "Expire after",
+               subtitle: "Files are deleted automatically after this long.", accessory: expiry)
     }
 
     private func field(_ value: String, _ action: Selector, secure: Bool) -> NSTextField {
@@ -163,6 +190,11 @@ final class CloudSettingsTab: SettingsTabViewController {
     @objc private func s3PathStyle(_ s: NSSwitch) { var c = Preferences.s3Config; c.usePathStyle = (s.state == .on); Preferences.s3Config = c }
     @objc private func s3ACL(_ s: NSSwitch) { var c = Preferences.s3Config; c.setPublicACL = (s.state == .on); Preferences.s3Config = c }
     @objc private func imgbbKey(_ s: NSTextField) { Preferences.imgbbAPIKey = s.stringValue }
+    @objc private func catboxHash(_ s: NSTextField) { Preferences.catboxUserHash = s.stringValue }
+    @objc private func changeLitterboxExpiry(_ sender: NSPopUpButton) {
+        let i = sender.indexOfSelectedItem
+        if LitterboxExpiry.allCases.indices.contains(i) { Preferences.litterboxExpiry = LitterboxExpiry.allCases[i] }
+    }
 }
 
 // MARK: - General
@@ -262,15 +294,28 @@ final class ShortcutsSettingsTab: SettingsTabViewController {
 // MARK: - Capture
 
 final class CaptureSettingsTab: SettingsTabViewController {
+    /// The After-Capture matrix checkboxes. The Save/Upload screenshot cells proxy prefs the
+    /// Output and Cloud tabs also show, and tab controllers are cached while the settings window
+    /// is open — so re-read the prefs whenever this tab comes back on screen.
+    private var matrixBoxes: [NSButton] = []
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        for box in matrixBoxes {
+            let itemIndex = box.tag / 2
+            let mediaIndex = box.tag % 2
+            guard AfterCaptureItem.allCases.indices.contains(itemIndex),
+                  CaptureMediaType.allCases.indices.contains(mediaIndex) else { continue }
+            let media = CaptureMediaType.allCases[mediaIndex]
+            let enabled = Preferences.afterCaptureActions(for: media).contains(AfterCaptureItem.allCases[itemIndex])
+            box.state = enabled ? .on : .off
+        }
+    }
+
     override func setupContent() {
         let behavior = addSection(title: "After Capture", anchor: "capture.after")
-        let popup = NSPopUpButton()
-        for action in AfterCaptureAction.allCases { popup.addItem(withTitle: action.presentableName) }
-        popup.selectItem(withTitle: Preferences.afterCaptureAction.presentableName)
-        popup.target = self
-        popup.action = #selector(changeAfterAction(_:))
-        addRow(to: behavior, title: "When a capture is taken",
-               subtitle: "Copy to the clipboard and/or show the floating preview.", accessory: popup)
+        behavior.addContent(makeAfterCaptureMatrix())
+        addDivider(to: behavior)
 
         let quickSize = NSPopUpButton()
         for size in QuickAccessSize.allCases { quickSize.addItem(withTitle: size.presentableName) }
@@ -340,11 +385,73 @@ final class CaptureSettingsTab: SettingsTabViewController {
         HUD.show("OCR history cleared")
     }
 
-    @objc private func changeAfterAction(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem
-        if AfterCaptureAction.allCases.indices.contains(index) {
-            Preferences.afterCaptureAction = AfterCaptureAction.allCases[index]
+    /// The CleanShot-style After-Capture matrix: one checkbox per action × media type, a dash where
+    /// the action doesn't apply. Checkbox identity is encoded in the tag (item index × 2 + column).
+    private func makeAfterCaptureMatrix() -> NSView {
+        let grid = NSGridView()
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.rowSpacing = 8
+        grid.columnSpacing = 18
+
+        func header(_ text: String) -> NSTextField {
+            let label = NSTextField(labelWithString: text)
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
+            label.textColor = .secondaryLabelColor
+            return label
         }
+        grid.addRow(with: [header("Screenshot"), header("Recording"), header("Action")])
+
+        for (itemIndex, item) in AfterCaptureItem.allCases.enumerated() {
+            var cells: [NSView] = []
+            for (mediaIndex, media) in CaptureMediaType.allCases.enumerated() {
+                if item.applies(to: media) {
+                    let box = NSButton(checkboxWithTitle: "", target: self, action: #selector(afterCaptureCellToggled(_:)))
+                    box.tag = itemIndex * 2 + mediaIndex
+                    box.state = Preferences.afterCaptureActions(for: media).contains(item) ? .on : .off
+                    box.setAccessibilityLabel("\(item.presentableName) — \(media.presentableName)")
+                    matrixBoxes.append(box)
+                    cells.append(box)
+                } else {
+                    let dash = NSTextField(labelWithString: "—")
+                    dash.textColor = .tertiaryLabelColor
+                    dash.setAccessibilityLabel("\(item.presentableName) — not available for \(media.presentableName.lowercased())s")
+                    cells.append(dash)
+                }
+            }
+            let label = NSTextField(labelWithString: item.presentableName)
+            label.font = .systemFont(ofSize: 13)
+            cells.append(label)
+            grid.addRow(with: cells)
+        }
+
+        grid.column(at: 0).xPlacement = .center
+        grid.column(at: 1).xPlacement = .center
+        grid.column(at: 2).xPlacement = .leading
+        grid.rowAlignment = .firstBaseline
+
+        // Left-align the whole grid inside the section card.
+        let wrapper = NSView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: 2),
+            grid.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -2),
+            grid.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: 4),
+            grid.trailingAnchor.constraint(lessThanOrEqualTo: wrapper.trailingAnchor),
+        ])
+        return wrapper
+    }
+
+    @objc private func afterCaptureCellToggled(_ sender: NSButton) {
+        let itemIndex = sender.tag / 2
+        let mediaIndex = sender.tag % 2
+        guard AfterCaptureItem.allCases.indices.contains(itemIndex),
+              CaptureMediaType.allCases.indices.contains(mediaIndex) else { return }
+        Preferences.setAfterCaptureAction(
+            AfterCaptureItem.allCases[itemIndex],
+            for: CaptureMediaType.allCases[mediaIndex],
+            enabled: sender.state == .on
+        )
     }
 
     @objc private func changeQuickAccessSize(_ sender: NSPopUpButton) {
@@ -573,11 +680,21 @@ final class OutputSettingsTab: SettingsTabViewController {
     private let folderButton = NSButton(title: "", target: nil, action: nil)
     private let templateField = NSTextField()
     private let qualitySlider = NSSlider()
+    /// Mirrors the After-Capture matrix's screenshot Save cell; tab controllers are cached while
+    /// the settings window is open, so re-read the pref whenever this tab comes back on screen.
+    private weak var saveToggle: NSSwitch?
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        saveToggle?.state = Preferences.saveScreenshotsToDisk ? .on : .off
+        folderButton.isEnabled = Preferences.saveScreenshotsToDisk
+    }
 
     override func setupContent() {
         let files = addSection(title: "Files", anchor: "output.files")
 
         let saveToggle = makeToggle(Preferences.saveScreenshotsToDisk, target: self, action: #selector(toggleSaveToDisk(_:)))
+        self.saveToggle = saveToggle
         addRow(to: files, title: "Save to disk",
                subtitle: "Automatically write every screenshot to the save location. When off, captures only go to the clipboard, preview, and history.",
                accessory: saveToggle, searchItemID: "output.savetodisk")

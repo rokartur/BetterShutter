@@ -14,6 +14,9 @@ final class RecordingController {
     private(set) var isPaused = false
     private(set) var startDate: Date?
     private var iconsHidden = false
+    /// Whether the current recording writes into the user's save directory (After-Capture "Save"
+    /// cell, sampled at start — the file's destination is chosen before recording begins).
+    private var savesToDisk = true
 
     // Cursor-track capture for the editor's Follow-Mouse auto-zoom (full-display recordings only).
     private var cursorSamples: [CursorSample] = []
@@ -61,7 +64,8 @@ final class RecordingController {
     private func beginRecording(displayID: CGDirectDisplayID, sourceRect: CGRect?, gif: Bool,
                                 windowID: CGWindowID? = nil) {
         guard !isRecording else { return }
-        let url = Self.recordingURL(ext: gif ? "gif" : "mp4")
+        savesToDisk = Preferences.afterCaptureActions(for: .recording).contains(.save)
+        let url = Self.recordingURL(ext: gif ? "gif" : "mp4", toSaveDirectory: savesToDisk)
         if !gif { Preferences.recordingInProgressPath = url.path } // for crash recovery
         let engine = RecordingEngine()
         engine.captureSystemAudio = Preferences.recordSystemAudio
@@ -140,16 +144,38 @@ final class RecordingController {
         let startTask = self.startTask
         self.startTask = nil
         let track = cursorSamples.isEmpty ? nil : CursorTrack(samples: cursorSamples)
+        let saved = savesToDisk
         Task {
             // Ensure start() (and its startCapture) finished before stopping, so the SCStream
             // is actually torn down and never leaks.
             await startTask?.value
             let url = await engine.stop()
             Preferences.recordingInProgressPath = nil
-            if let url {
-                track?.write(for: url)
+            guard let url else { return }
+            track?.write(for: url)
+            Task.detached(priority: .utility) { CaptureHistoryStore.add(fileURL: url) }
+
+            let actions = Preferences.afterCaptureActions(for: .recording)
+            if actions.contains(.copy) {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.writeObjects([url as NSURL])
+            }
+            if actions.contains(.upload), CloudUploadService.isEnabled {
+                CloudUploadService.uploadFile(url)
+            }
+            // The trim window is AVFoundation-based and can't decode GIF — never route GIFs there.
+            let isGIF = url.pathExtension.lowercased() == "gif"
+            if actions.contains(.videoEditor), !isGIF {
+                CaptureCoordinator.shared.editVideo(url: url)
+            }
+            if actions.contains(.quickAccess) {
+                CaptureCoordinator.shared.showRecordingPreview(url: url, saved: saved)
+            } else if saved || !actions.contains(.videoEditor) || isGIF {
+                // No quick-access card to act from — fall back to revealing the file. An unsaved
+                // recording that isn't showing in the editor must still surface SOMEWHERE, or it
+                // sits invisibly in the unsaved-recordings folder.
                 NSWorkspace.shared.activateFileViewerSelecting([url])
-                Task.detached(priority: .utility) { CaptureHistoryStore.add(fileURL: url) }
             }
         }
     }
@@ -194,8 +220,19 @@ final class RecordingController {
     // MARK: Helpers
 
     /// Recordings share the screenshot filename template (mp4/gif extension, "Recording" mode tag).
-    private static func recordingURL(ext: String) -> URL {
-        let dir = Preferences.saveDirectory
+    /// With the After-Capture "Save" cell off, the file records into a durable scratch folder in
+    /// Application Support instead (NOT the temp directory — crash recovery and the card's
+    /// Save/Edit actions must outlive macOS's periodic temp purge). It still feeds the history
+    /// archive, clipboard, upload, and quick-access card, and the card's Save button can copy it
+    /// into the save directory later. Old scratch files are pruned after a week.
+    private static func recordingURL(ext: String, toSaveDirectory: Bool) -> URL {
+        let dir: URL
+        if toSaveDirectory {
+            dir = Preferences.saveDirectory
+        } else {
+            dir = unsavedRecordingsDirectory
+            pruneOldUnsavedRecordings(in: dir)
+        }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let filename = FilenameTemplate.render(
             Preferences.filenameTemplate,
@@ -204,6 +241,28 @@ final class RecordingController {
             counter: Preferences.nextCaptureCounter()
         )
         return FileSaver.uniqueURL(in: dir, filename: filename)
+    }
+
+    private static var unsavedRecordingsDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("BetterShutter/Unsaved Recordings", isDirectory: true)
+    }
+
+    /// Unsaved recordings live outside the temp directory so nothing purges them behind the
+    /// user's back mid-session — so we do our own housekeeping instead (a week is plenty for
+    /// "I closed the card but still want the file back").
+    private static func pruneOldUnsavedRecordings(in dir: URL) {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        for item in items {
+            if let modified = (try? item.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+               modified < cutoff {
+                try? fm.removeItem(at: item)
+            }
+        }
     }
 
     private func displayUnderMouse() -> CGDirectDisplayID {

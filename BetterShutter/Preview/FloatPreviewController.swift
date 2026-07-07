@@ -17,7 +17,7 @@ final class FloatPreviewController {
 
     private var panels: [FloatPreviewWindow] = []
     private var cardViews: [ObjectIdentifier: FloatPreviewView] = [:]
-    private var cardInfo: [ObjectIdentifier: (image: CapturedImage, mode: CaptureMode, url: URL?)] = [:]
+    private var cardInfo: [ObjectIdentifier: (image: CapturedImage, mode: CaptureMode, url: URL?, videoURL: URL?)] = [:]
     private var timers: [ObjectIdentifier: Timer] = [:]
     private var hoveredPanels: Set<ObjectIdentifier> = []
     private var previousApp: NSRunningApplication?
@@ -25,10 +25,12 @@ final class FloatPreviewController {
     private var anchorScreen: NSScreen?
     private var idleWork: DispatchWorkItem?
     /// The most recently dismissed capture, for "Restore Closed Quick Access".
-    private var lastClosed: (image: CapturedImage, mode: CaptureMode, url: URL?)?
+    private var lastClosed: (image: CapturedImage, mode: CaptureMode, url: URL?, videoURL: URL?)?
 
     var onAnnotate: ((CapturedImage, CaptureMode) -> Void)?
     var onBeautify: ((CapturedImage, CaptureMode) -> Void)?
+    /// Open the video editor on a recording card's file.
+    var onEditVideo: ((URL) -> Void)?
 
     private let autoDismissDelay: TimeInterval = 8
     private let hardCardCap = 5
@@ -72,11 +74,11 @@ final class FloatPreviewController {
         }
     }
 
-    func show(_ image: CapturedImage, mode: CaptureMode, savedURL: URL?) {
+    func show(_ image: CapturedImage, mode: CaptureMode, savedURL: URL?, videoURL: URL? = nil) {
         if panels.isEmpty { anchorScreen = Self.screen(for: image) }
 
         let cardSize = FloatPreviewView.cardSize(for: image.pixelSize)
-        let view = FloatPreviewView(image: image, mode: mode, savedURL: savedURL)
+        let view = FloatPreviewView(image: image, mode: mode, savedURL: savedURL, videoURL: videoURL)
         view.autoresizingMask = [.width, .height]
 
         // The card is the screenshot itself (full-bleed); no glass chrome behind it.
@@ -85,27 +87,73 @@ final class FloatPreviewController {
         panel.contentView = view
         let id = ObjectIdentifier(panel)
 
-        view.onCopy = { [weak view] in PasteboardWriter.copy(image.cgImage); view?.showCopyFeedback() }
-        view.onSave = { Task.detached { _ = try? FileSaver.save(image.cgImage, mode: mode) } }
+        if let videoURL {
+            // Recording card: every action targets the movie/GIF file, not the thumbnail frame.
+            view.onCopy = { [weak view] in
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.writeObjects([videoURL as NSURL])
+                view?.showCopyFeedback()
+            }
+            // Only offered when the recording landed in the unsaved-recordings scratch folder
+            // (After-Capture Save off). The copy runs off the main thread — recordings can be
+            // hundreds of MB — then the card flips to its saved state so a second click reveals
+            // instead of writing "(2)" duplicates.
+            view.onSave = { [weak self, weak view] in
+                let dir = Preferences.saveDirectory
+                Task {
+                    let dest: URL? = await Task.detached {
+                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                        let dest = FileSaver.uniqueURL(in: dir, filename: videoURL.lastPathComponent)
+                        do {
+                            try FileManager.default.copyItem(at: videoURL, to: dest)
+                            return dest
+                        } catch {
+                            return nil
+                        }
+                    }.value
+                    guard let dest else { HUD.show("Save failed"); return }
+                    self?.cardInfo[id]?.url = dest
+                    view?.markSaved(dest)
+                    NSWorkspace.shared.activateFileViewerSelecting([dest])
+                }
+            }
+            // The trim window can't decode GIF; a GIF card shows no Edit affordance and ⌘E no-ops.
+            if videoURL.pathExtension.lowercased() != "gif" {
+                view.onAnnotate = { [weak self, weak panel] in
+                    if let panel { self?.remove(panel, animated: false) }
+                    self?.onEditVideo?(videoURL)
+                }
+            }
+            view.onShare = { [weak view] in
+                guard let view else { return }
+                let picker = NSSharingServicePicker(items: [videoURL])
+                picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minX)
+            }
+            view.onUpload = { CloudUploadService.uploadFile(videoURL) }
+        } else {
+            view.onCopy = { [weak view] in PasteboardWriter.copy(image.cgImage); view?.showCopyFeedback() }
+            view.onSave = { Task.detached { _ = try? FileSaver.save(image.cgImage, mode: mode) } }
+            view.onAnnotate = { [weak self, weak panel] in
+                if let panel { self?.remove(panel, animated: false) }
+                self?.onAnnotate?(image, mode)
+            }
+            view.onBeautify = { [weak self, weak panel] in
+                if let panel { self?.remove(panel, animated: false) }
+                self?.onBeautify?(image, mode)
+            }
+            view.onPin = { [weak self, weak panel] in
+                if let panel { self?.remove(panel, animated: false) }
+                PinController.shared.pin(image)
+            }
+            view.onShare = { [weak view] in
+                guard let view else { return }
+                let picker = NSSharingServicePicker(items: [NSImage(cgImage: image.cgImage, size: image.pixelSize)])
+                picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minX)
+            }
+            view.onUpload = { CloudUploadService.upload(image.cgImage) }
+        }
         view.onClose = { [weak self, weak panel] in if let panel { self?.remove(panel, animated: true) } }
-        view.onAnnotate = { [weak self, weak panel] in
-            if let panel { self?.remove(panel, animated: false) }
-            self?.onAnnotate?(image, mode)
-        }
-        view.onBeautify = { [weak self, weak panel] in
-            if let panel { self?.remove(panel, animated: false) }
-            self?.onBeautify?(image, mode)
-        }
-        view.onPin = { [weak self, weak panel] in
-            if let panel { self?.remove(panel, animated: false) }
-            PinController.shared.pin(image)
-        }
-        view.onShare = { [weak view] in
-            guard let view else { return }
-            let picker = NSSharingServicePicker(items: [NSImage(cgImage: image.cgImage, size: image.pixelSize)])
-            picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minX)
-        }
-        view.onUpload = { CloudUploadService.upload(image.cgImage) }
         view.onHoverChange = { [weak self, weak panel] hovered in
             guard let self, let panel else { return }
             if hovered { self.beginHover(panel) } else { self.endHover(panel) }
@@ -114,7 +162,7 @@ final class FloatPreviewController {
         installKeyMonitorIfNeeded()
         panels.append(panel)
         cardViews[id] = view
-        cardInfo[id] = (image, mode, savedURL)
+        cardInfo[id] = (image, mode, savedURL, videoURL)
 
         // Evict the oldest cards that no longer fit (height-bounded), before positioning the new one.
         let available = anchorVisibleFrame().height - 2 * margin
@@ -214,7 +262,9 @@ final class FloatPreviewController {
         lastClosed = nil
         // The saved file may have been moved/deleted since; only pass a URL that still exists.
         let url = closed.url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
-        show(closed.image, mode: closed.mode, savedURL: url)
+        // A video card is pointless without its file — restore it as a plain thumbnail card then.
+        let videoURL = closed.videoURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        show(closed.image, mode: closed.mode, savedURL: url, videoURL: videoURL)
     }
 
     /// Dismiss a card and reconcile hover/focus against the pointer's real position afterward.
