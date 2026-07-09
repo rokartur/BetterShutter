@@ -61,6 +61,19 @@ private nonisolated struct HistoryEntry: Sendable {
     let kind: HistoryKind
 }
 
+private nonisolated struct HistoryReloadSnapshot: Sendable {
+    let entries: [HistoryEntry]
+    let ocr: [OCRHistoryEntry]
+    let index: [String: String]
+}
+
+private nonisolated struct ThumbnailRequest: Sendable {
+    let url: URL
+    let kind: HistoryKind
+    let pixelSize: CGSize
+    let generation: UInt
+}
+
 /// A top-of-screen glass bar listing recent captures (screenshots, recordings, GIFs) read from the
 /// save folder, filtered by type and by the configured retention window. Click a thumbnail to select
 /// it, then Restore to reopen it; right-click for more actions. Replaces the old Recent submenu and
@@ -82,12 +95,33 @@ final class CaptureHistoryPanel: NSObject {
     private var ocrEntries: [OCRHistoryEntry] = []
     private var selected: URL?
     private var clickMonitor: Any?
+    private var clickMonitorGeneration: UInt64 = 0
     private var thumbCache: [URL: NSImage] = [:]
+    /// Corrupt/unsupported files should not be decoded again on every search keystroke or filter
+    /// change. Bounded and pruned with the live history URLs just like `thumbCache`.
+    private var thumbnailFailures: Set<URL> = []
     /// OCR cards are built lazily, first time the OCR tab is shown (50 wrapping labels are not free).
     private var ocrCardsBuilt = false
     /// Filename → OCR'd text of archived screenshots, so search matches image *content* too.
     private var searchIndex: [String: String] = [:]
     private var indexingTask: Task<Void, Never>?
+    /// Only the newest directory/keychain snapshot may update the panel. Without a retained task
+    /// and generation, quickly reopening the bar (or reloading after Delete) could let an older,
+    /// slower scan overwrite a newer result and temporarily resurrect stale entries.
+    private var reloadTask: Task<Void, Never>?
+    private var reloadGeneration: UInt = 0
+    private var reloadRequestedWhileBusy = false
+    /// One worker owns all synchronous ImageIO/AVFoundation decodes. Pending requests are values,
+    /// not chains of Tasks, so repeated close/reopen while one movie decode is slow cannot append
+    /// thousands of cancelled task nodes or start overlapping decoders.
+    private var thumbnailWorker: Task<Void, Never>?
+    private var thumbnailPending: [ThumbnailRequest] = []
+    private var thumbnailQueuedURLs: Set<URL> = []
+    private var thumbnailInFlightURL: URL?
+    private var thumbnailGeneration: UInt = 0
+    /// Persist full index snapshots in invocation order. Detached writes racing each other could
+    /// otherwise let an older pruned snapshot land after a newer OCR-enriched snapshot.
+    private var indexPersistenceTask: Task<Void, Never>?
 
     private static let relative: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
@@ -110,6 +144,16 @@ final class CaptureHistoryPanel: NSObject {
 
     func close() {
         removeClickMonitor()
+        // A hidden panel has no use for an in-flight directory scan or thumbnail decode. Invalidate
+        // their generations as well as cancelling: synchronous FileManager/ImageIO work may finish
+        // before observing cancellation, and its late result must not update a reopened panel.
+        reloadGeneration &+= 1
+        reloadTask?.cancel()
+        reloadRequestedWhileBusy = false
+        cancelThumbnailTasks()
+        // OCR is the heaviest background work in this panel. The Vision layer forwards this
+        // cancellation to VNRequest; reopening will resume from the in-memory/persisted snapshot.
+        indexingTask?.cancel()
         panel?.orderOut(nil)
     }
 
@@ -238,28 +282,64 @@ final class CaptureHistoryPanel: NSObject {
     /// all happen in a detached task, then the UI applies the result — opening the bar never
     /// blocks on file I/O.
     private func reload() {
-        let retention = Preferences.captureHistoryRetention
-        Task.detached(priority: .userInitiated) { [weak self] in
-            CaptureHistoryStore.prune(retention: retention)
-            let keys: [URLResourceKey] = [.contentModificationDateKey]
-            let files = (try? FileManager.default.contentsOfDirectory(
-                at: CaptureHistoryStore.directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
-            )) ?? []
-            let cutoff = retention.maxAge.map { Date().addingTimeInterval(-$0) }
-            var list = files.compactMap { url -> HistoryEntry? in
-                guard let kind = HistoryKind(extension: url.pathExtension) else { return nil }
-                let values = try? url.resourceValues(forKeys: Set(keys))
-                let date = values?.contentModificationDate ?? .distantPast
-                if let cutoff, date < cutoff { return nil }
-                return HistoryEntry(url: url, date: date, kind: kind)
-            }
-            list.sort { $0.date > $1.date }
-            // Bound the work so a huge archive never stalls the bar.
-            if list.count > 80 { list = Array(list.prefix(80)) }
-            let ocr = OCRHistoryStore.all()
-            let index = HistorySearchIndex.load()
-            await MainActor.run { self?.apply(entries: list, ocr: ocr, index: index) }
+        reloadGeneration &+= 1
+        let generation = reloadGeneration
+        if let reloadTask {
+            reloadRequestedWhileBusy = true
+            reloadTask.cancel()
+            return
         }
+        startReload(generation: generation)
+    }
+
+    private func startReload(generation: UInt) {
+        let retention = Preferences.captureHistoryRetention
+        reloadTask = Task.detached(priority: .userInitiated) { [weak self] in
+            var snapshot: HistoryReloadSnapshot?
+            if !Task.isCancelled {
+                CaptureHistoryStore.prune(retention: retention)
+            }
+            if !Task.isCancelled {
+                let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+                let cutoff = retention.maxAge.map { Date().addingTimeInterval(-$0) }
+                let enumerator = FileManager.default.enumerator(
+                    at: CaptureHistoryStore.directory,
+                    includingPropertiesForKeys: Array(keys),
+                    options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
+                var list: [HistoryEntry] = []
+                while !Task.isCancelled, let url = enumerator?.nextObject() as? URL {
+                    guard let kind = HistoryKind(extension: url.pathExtension) else { continue }
+                    let date = (try? url.resourceValues(forKeys: keys))?.contentModificationDate
+                        ?? .distantPast
+                    if let cutoff, date < cutoff { continue }
+                    list.append(HistoryEntry(url: url, date: date, kind: kind))
+                    // Bound materialized URLs even for an unlimited, multi-year archive.
+                    if list.count >= 160 {
+                        list.sort { $0.date > $1.date }
+                        list.removeLast(list.count - 80)
+                    }
+                }
+                if !Task.isCancelled {
+                    list.sort { $0.date > $1.date }
+                    if list.count > 80 { list.removeLast(list.count - 80) }
+                    snapshot = HistoryReloadSnapshot(
+                        entries: list,
+                        ocr: OCRHistoryStore.all(),
+                        index: HistorySearchIndex.load())
+                }
+            }
+            await self?.finishReload(generation: generation, snapshot: snapshot)
+        }
+    }
+
+    private func finishReload(generation: UInt, snapshot: HistoryReloadSnapshot?) {
+        reloadTask = nil
+        if generation == reloadGeneration, panel?.isVisible == true, let snapshot {
+            apply(entries: snapshot.entries, ocr: snapshot.ocr, index: snapshot.index)
+        }
+        let shouldRestart = reloadRequestedWhileBusy && panel?.isVisible == true
+        reloadRequestedWhileBusy = false
+        if shouldRestart { startReload(generation: reloadGeneration) }
     }
 
     /// Apply a freshly loaded snapshot. Cards are only torn down and rebuilt when the content
@@ -274,14 +354,24 @@ final class CaptureHistoryPanel: NSObject {
         // panel is a singleton, so without this the cache grows for the app's whole lifetime.
         let live = Set(entries.map(\.url))
         thumbCache = thumbCache.filter { live.contains($0.key) }
+        thumbnailFailures.formIntersection(live)
+        if thumbnailQueuedURLs.contains(where: { !live.contains($0) })
+            || thumbnailInFlightURL.map({ !live.contains($0) }) == true {
+            // Cancel as one generation so a late obsolete completion cannot remove/overwrite a
+            // newer task for the same URL after a rapid delete + re-add/reload sequence.
+            cancelThumbnailTasks()
+        }
 
         // Adopt the persisted OCR index, dropping entries whose files are gone, then scan whatever
         // is new in the background so content search keeps getting better as the user works.
         let liveNames = Set(entries.map { $0.url.lastPathComponent })
         let pruned = index.filter { liveNames.contains($0.key) }
-        searchIndex = pruned
-        if pruned.count != index.count {
-            Task.detached(priority: .utility) { HistorySearchIndex.save(pruned) }
+        let liveInMemory = searchIndex.filter { liveNames.contains($0.key) }
+        // A reload can finish while the one-at-a-time OCR task is between files. Preserve results
+        // already produced in this process instead of replacing them with the older disk snapshot.
+        searchIndex = pruned.merging(liveInMemory) { _, inMemory in inMemory }
+        if searchIndex != index {
+            persistSearchIndex(searchIndex)
         }
         indexMissingEntries()
 
@@ -325,18 +415,38 @@ final class CaptureHistoryPanel: NSObject {
             .map(\.url)
         guard !missing.isEmpty else { return }
         indexingTask = Task { [weak self] in
+            var changed = false
             for url in missing {
+                guard !Task.isCancelled else { break }
                 let text = await HistorySearchIndex.recognizeText(at: url)
                 guard let self else { return }
+                guard !Task.isCancelled else { break }
                 self.searchIndex[url.lastPathComponent] = text
+                changed = true
                 // Refresh live results while the user is mid-search.
                 if !self.searchQuery.isEmpty, !text.isEmpty { self.applyFilterToCards() }
             }
             guard let self else { return }
-            let snapshot = self.searchIndex
-            Task.detached(priority: .utility) { HistorySearchIndex.save(snapshot) }
+            if changed { self.persistSearchIndex(self.searchIndex) }
             self.indexingTask = nil
-            self.indexMissingEntries()   // catch files that arrived while this batch ran
+            // If the bar was reopened while cancellation was unwinding, resume now; otherwise do
+            // not keep burning OCR CPU after the UI that requested indexing has gone away.
+            if self.panel?.isVisible == true {
+                self.indexMissingEntries()   // catch files that arrived while this batch ran
+            }
+        }
+    }
+
+    /// Chain writes instead of launching independent detached tasks. JSON is tiny (at most the
+    /// bounded history list), while the actual file I/O still stays off the main actor.
+    private func persistSearchIndex(_ snapshot: [String: String]) {
+        let predecessor = indexPersistenceTask
+        indexPersistenceTask = Task {
+            if let predecessor { await predecessor.value }
+            guard !Task.isCancelled else { return }
+            await Task.detached(priority: .utility) {
+                HistorySearchIndex.save(snapshot)
+            }.value
         }
     }
 
@@ -397,7 +507,12 @@ final class CaptureHistoryPanel: NSObject {
             card.isSelected = (entry.url == selected)
             card.onSelect = { [weak self] in self?.select(entry.url) }
             card.onRestore = { [weak self] in self?.restore(entry.url) }
-            card.onMenu = { [weak self] event in self?.showContextMenu(for: entry.url, event: event, in: card) }
+            // `onMenu` is retained by `card`; a strong capture here would form
+            // card -> closure -> card and leak every card whenever the stack is rebuilt.
+            card.onMenu = { [weak self, weak card] event in
+                guard let card else { return }
+                self?.showContextMenu(for: entry.url, event: event, in: card)
+            }
             cardStack.addArrangedSubview(card)
         }
 
@@ -413,7 +528,10 @@ final class CaptureHistoryPanel: NSObject {
                 )
                 card.isHidden = !shownOCR.contains(index)
                 card.onRestore = { [weak self] in self?.restoreOCR(index) }
-                card.onMenu = { [weak self] event in self?.showOCRContextMenu(index: index, event: event, in: card) }
+                card.onMenu = { [weak self, weak card] event in
+                    guard let card else { return }
+                    self?.showOCRContextMenu(index: index, event: event, in: card)
+                }
                 cardStack.addArrangedSubview(card)
             }
         }
@@ -445,15 +563,71 @@ final class CaptureHistoryPanel: NSObject {
         // Exactly the tile size in device pixels: the bitmap fills the card edge-to-edge (clean
         // rounded corners) and every cached thumbnail has the same small, fixed footprint.
         let pixelSize = CGSize(width: HistoryCard.thumbWidth * scale, height: HistoryCard.thumbHeight * scale)
-        for entry in shown where thumbCache[entry.url] == nil {
-            let url = entry.url
-            let kind = entry.kind
-            Task.detached(priority: .userInitiated) {
-                guard let cg = Self.makeThumbnail(url: url, kind: kind, pixelSize: pixelSize) else { return }
-                let box = ThumbBox(cg: cg)
-                await MainActor.run { [weak self] in self?.applyThumbnail(box.cg, for: url) }
-            }
+        for entry in shown where thumbCache[entry.url] == nil
+            && thumbnailInFlightURL != entry.url
+            && !thumbnailQueuedURLs.contains(entry.url)
+            && !thumbnailFailures.contains(entry.url) {
+            thumbnailPending.append(ThumbnailRequest(
+                url: entry.url,
+                kind: entry.kind,
+                pixelSize: pixelSize,
+                generation: thumbnailGeneration))
+            thumbnailQueuedURLs.insert(entry.url)
         }
+        startThumbnailWorkerIfNeeded()
+    }
+
+    private func startThumbnailWorkerIfNeeded() {
+        guard thumbnailWorker == nil, !thumbnailPending.isEmpty else { return }
+        thumbnailWorker = Task.detached(priority: .userInitiated) { [weak self] in
+            while !Task.isCancelled {
+                guard let request = await self?.takeThumbnailRequest() else { break }
+                guard !Task.isCancelled else { break }
+                let cg = Self.makeThumbnail(
+                    url: request.url, kind: request.kind, pixelSize: request.pixelSize)
+                guard !Task.isCancelled else { break }
+                await self?.finishThumbnailRequest(
+                    request, image: cg.map { ThumbBox(cg: $0) })
+            }
+            await self?.thumbnailWorkerDidFinish()
+        }
+    }
+
+    private func takeThumbnailRequest() -> ThumbnailRequest? {
+        guard !thumbnailPending.isEmpty else { return nil }
+        let request = thumbnailPending.removeFirst()
+        thumbnailQueuedURLs.remove(request.url)
+        thumbnailInFlightURL = request.url
+        return request
+    }
+
+    private func finishThumbnailRequest(_ request: ThumbnailRequest, image: ThumbBox?) {
+        if thumbnailInFlightURL == request.url { thumbnailInFlightURL = nil }
+        guard thumbnailGeneration == request.generation,
+              entries.contains(where: { $0.url == request.url }) else { return }
+        guard let image else {
+            thumbnailFailures.insert(request.url)
+            return
+        }
+        thumbnailFailures.remove(request.url)
+        applyThumbnail(image.cg, for: request.url)
+    }
+
+    private func thumbnailWorkerDidFinish() {
+        thumbnailWorker = nil
+        thumbnailInFlightURL = nil
+        if panel?.isVisible == true {
+            // Requeue the URL whose synchronous decode was abandoned by a close/reopen cycle, then
+            // resume the bounded worker with the current visible set.
+            loadThumbnails(for: shownEntries())
+        }
+    }
+
+    private func cancelThumbnailTasks() {
+        thumbnailGeneration &+= 1
+        thumbnailPending.removeAll(keepingCapacity: false)
+        thumbnailQueuedURLs.removeAll(keepingCapacity: false)
+        thumbnailWorker?.cancel()
     }
 
     private func applyThumbnail(_ cg: CGImage, for url: URL) {
@@ -699,7 +873,8 @@ final class CaptureHistoryPanel: NSObject {
     }
 
     @objc private func ocrMenuDelete(_ sender: NSMenuItem) {
-        OCRHistoryStore.remove(at: sender.tag)
+        guard ocrEntries.indices.contains(sender.tag) else { return }
+        OCRHistoryStore.remove(ocrEntries[sender.tag])
         reload()
     }
 
@@ -720,13 +895,18 @@ final class CaptureHistoryPanel: NSObject {
 
     private func installClickMonitor() {
         removeClickMonitor()
+        let generation = clickMonitorGeneration
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             // A click in any other app/window dismisses the bar.
-            MainActor.assumeIsolated { self?.close() }
+            MainActor.assumeIsolated {
+                guard let self, self.clickMonitorGeneration == generation else { return }
+                self.close()
+            }
         }
     }
 
     private func removeClickMonitor() {
+        clickMonitorGeneration &+= 1
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
     }
@@ -1170,8 +1350,9 @@ private final class HistoryPanel: NSPanel, QLPreviewPanelDataSource, QLPreviewPa
     var onKeyDown: ((NSEvent) -> Bool)?
     var previewItems: () -> [URL] = { [] }
     var previewStartIndex: () -> Int = { 0 }
-    // Snapshotted when Quick Look opens so the nonisolated data-source reads need no actor hop.
-    nonisolated(unsafe) private var urls: [URL] = []
+    // Quick Look's Objective-C data-source calls are nonisolated. Keep the snapshot locked instead
+    // of exposing a mutable array through `nonisolated(unsafe)`.
+    private let urls = QuickLookURLSnapshot()
 
     override var canBecomeKey: Bool { true }
 
@@ -1184,18 +1365,24 @@ private final class HistoryPanel: NSPanel, QLPreviewPanelDataSource, QLPreviewPa
 
     nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
         MainActor.assumeIsolated {
-            urls = previewItems()
+            urls.replace(with: previewItems())
             panel.dataSource = self
             panel.delegate = self
             panel.currentPreviewItemIndex = previewStartIndex()
         }
     }
 
-    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            if panel.dataSource === self { panel.dataSource = nil }
+            if panel.delegate === self { panel.delegate = nil }
+            urls.replace(with: [])
+        }
+    }
 
     nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { urls.count }
 
     nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        urls.indices.contains(index) ? (urls[index] as NSURL) : nil
+        urls.url(at: index).map { $0 as NSURL }
     }
 }

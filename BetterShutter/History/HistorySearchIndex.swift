@@ -26,13 +26,25 @@ nonisolated enum HistorySearchIndex {
     /// OCR an archived image. Decoded via ImageIO's thumbnail path at a bounded size — plenty for
     /// Vision's text recognizer, and it avoids holding a full Retina 5K bitmap per indexed file.
     static func recognizeText(at url: URL) async -> String {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return "" }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 2200,
-        ]
-        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return "" }
-        return await TextRecognizer.recognize(CapturedImage(cgImage: cg, scale: 1, displayID: nil))
+        let decode = Task.detached(priority: .utility) { () -> CapturedImage? in
+            guard !Task.isCancelled,
+                  let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 2200,
+            ]
+            guard !Task.isCancelled,
+                  let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  !Task.isCancelled else { return nil }
+            return CapturedImage(cgImage: cg, scale: 1, displayID: nil)
+        }
+        let image = await withTaskCancellationHandler {
+            await decode.value
+        } onCancel: {
+            decode.cancel()
+        }
+        guard !Task.isCancelled, let image else { return "" }
+        return await TextRecognizer.recognize(image)
     }
 }
