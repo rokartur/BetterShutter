@@ -201,6 +201,11 @@ final class CloudSettingsTab: SettingsTabViewController {
 
 final class GeneralSettingsTab: SettingsTabViewController {
     private let updater = BetterUpdater.shared
+    private var updateCheckTask: Task<Void, Never>?
+
+    deinit {
+        updateCheckTask?.cancel()
+    }
 
     override func setupContent() {
         let behavior = addSection(title: "Behavior", anchor: "general.behavior")
@@ -235,7 +240,14 @@ final class GeneralSettingsTab: SettingsTabViewController {
     }
 
     @objc private func checkForUpdates() {
-        Task { await updater.checkForUpdates(force: true) }
+        // BetterUpdater permits overlapping forced checks. Debounce the button here so rapid clicks
+        // cannot multiply network requests and race the shared updater state/UI.
+        guard updateCheckTask == nil else { return }
+        let updater = updater
+        updateCheckTask = Task { [weak self] in
+            await updater.checkForUpdates(force: true)
+            self?.updateCheckTask = nil
+        }
     }
 }
 

@@ -101,7 +101,9 @@ final class PinWindow: NSPanel {
 
     func closePin() {
         onClosed(self)
-        orderOut(nil)
+        // `orderOut` only hides an NSWindow; it does not tear down its WindowServer/layer/player
+        // resources. Pins are not reusable, so close them after the owner drops its strong ref.
+        close()
     }
 }
 

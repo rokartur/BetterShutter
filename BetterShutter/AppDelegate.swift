@@ -22,7 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var statusItem: NSStatusItem?
-    private var settingsController: SettingsWindowController?
+    /// BetterSettings' presenter owns the will-close observer and calls
+    /// `tearDownAndReleaseWindow()`, releasing every tab/controller/layer on close and rebuilding a
+    /// fresh tree on the next show. Retaining SettingsWindowController directly violates its
+    /// release-on-close contract and strands the whole settings hierarchy for the app session.
+    private let settingsPresenter = SettingsPresenter(configuration: { makeSettingsConfiguration() })
     private var captureMenuItems: [(item: NSMenuItem, name: BetterShortcuts.Name)] = []
     private var timerMenuItems: [NSMenuItem] = []
     private var recordingItem: NSMenuItem?
@@ -403,8 +407,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.allowsMultipleSelection = false
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        trimController?.close()
         let controller = VideoTrimWindowController(url: url)
-        controller.onClose = { [weak self] in self?.trimController = nil }
+        controller.onClose = { [weak self, weak controller] in
+            guard let self, let controller, self.trimController === controller else { return }
+            self.trimController = nil
+        }
         trimController = controller
         controller.show()
     }
@@ -437,11 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func recordGIF() { RecordingController.shared.toggleGIF() }
 
     @objc private func openSettings() {
-        let controller = settingsController ?? SettingsWindowController(
-            configuration: makeSettingsConfiguration()
-        )
-        settingsController = controller
         NSApp.activate(ignoringOtherApps: true)
-        controller.show()
+        settingsPresenter.show()
     }
 }

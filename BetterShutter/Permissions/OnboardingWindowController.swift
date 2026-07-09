@@ -90,5 +90,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         window?.close()
     }
 
-    func windowWillClose(_ notification: Notification) { Preferences.hasOnboarded = true }
+    func windowWillClose(_ notification: Notification) {
+        Preferences.hasOnboarded = true
+        // Onboarding is one-shot. The singleton controller otherwise retained the closed window and
+        // its entire view/layer hierarchy for the rest of the menu-bar app's lifetime.
+        window = nil
+    }
 }
