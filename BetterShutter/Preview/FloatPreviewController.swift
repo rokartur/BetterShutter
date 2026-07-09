@@ -19,6 +19,9 @@ final class FloatPreviewController {
     private var cardViews: [ObjectIdentifier: FloatPreviewView] = [:]
     private var cardInfo: [ObjectIdentifier: (image: CapturedImage, mode: CaptureMode, url: URL?, videoURL: URL?)] = [:]
     private var timers: [ObjectIdentifier: Timer] = [:]
+    /// A recording can be hundreds of MB. Keep one cancellable save per card so repeated clicks do
+    /// not start concurrent full-file copies and removing the card does not leave owned work behind.
+    private var saveTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
     private var hoveredPanels: Set<ObjectIdentifier> = []
     private var previousApp: NSRunningApplication?
     private var keyMonitor: Any?
@@ -100,23 +103,19 @@ final class FloatPreviewController {
             // hundreds of MB — then the card flips to its saved state so a second click reveals
             // instead of writing "(2)" duplicates.
             view.onSave = { [weak self, weak view] in
+                guard let self, self.saveTasks[id] == nil else { return }
                 let dir = Preferences.saveDirectory
-                Task {
-                    let dest: URL? = await Task.detached {
-                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                        let dest = FileSaver.uniqueURL(in: dir, filename: videoURL.lastPathComponent)
-                        do {
-                            try FileManager.default.copyItem(at: videoURL, to: dest)
-                            return dest
-                        } catch {
-                            return nil
-                        }
-                    }.value
+                let task = Task { [weak self, weak view] in
+                    let dest = try? await PreviewRecordingSaver.copy(videoURL, to: dir)
+                    guard !Task.isCancelled, let self else { return }
+                    self.saveTasks[id] = nil
                     guard let dest else { HUD.show("Save failed"); return }
-                    self?.cardInfo[id]?.url = dest
+                    guard self.cardInfo[id] != nil else { return }
+                    self.cardInfo[id]?.url = dest
                     view?.markSaved(dest)
                     NSWorkspace.shared.activateFileViewerSelecting([dest])
                 }
+                self.saveTasks[id] = task
             }
             // The trim window can't decode GIF; a GIF card shows no Edit affordance and ⌘E no-ops.
             if videoURL.pathExtension.lowercased() != "gif" {
@@ -133,7 +132,15 @@ final class FloatPreviewController {
             view.onUpload = { CloudUploadService.uploadFile(videoURL) }
         } else {
             view.onCopy = { [weak view] in PasteboardWriter.copy(image.cgImage); view?.showCopyFeedback() }
-            view.onSave = { Task.detached { _ = try? FileSaver.save(image.cgImage, mode: mode) } }
+            view.onSave = { [weak self] in
+                guard let self, self.saveTasks[id] == nil else { return }
+                let task = Task { [weak self] in
+                    _ = try? await FileSaver.saveAsync(image.cgImage, mode: mode)
+                    guard !Task.isCancelled else { return }
+                    self?.saveTasks[id] = nil
+                }
+                self.saveTasks[id] = task
+            }
             view.onAnnotate = { [weak self, weak panel] in
                 if let panel { self?.remove(panel, animated: false) }
                 self?.onAnnotate?(image, mode)
@@ -186,7 +193,9 @@ final class FloatPreviewController {
     /// Dismiss every card (e.g. on quit).
     func dismissAll() {
         cancelIdleWork()
-        for panel in panels { cancelTimer(for: panel); panel.orderOut(nil) }
+        cancelAllSaveTasks()
+        for view in cardViews.values { view.relinquishQuickLookIfOwned() }
+        for panel in panels { cancelTimer(for: panel); panel.close() }
         panels.removeAll()
         cardViews.removeAll()
         cardInfo.removeAll()
@@ -248,12 +257,14 @@ final class FloatPreviewController {
         guard let index = panels.firstIndex(of: panel) else { return }
         let id = ObjectIdentifier(panel)
         cancelTimer(for: panel)
+        cancelSaveTask(for: id)
         hoveredPanels.remove(id)
         // Overflow eviction is not a user close — don't overwrite the restore target.
         cardInfo[id] = nil
+        cardViews[id]?.relinquishQuickLookIfOwned()
         cardViews[id] = nil
         panels.remove(at: index)
-        panel.orderOut(nil)
+        panel.close()
     }
 
     /// Re-show the most recently dismissed capture.
@@ -272,9 +283,11 @@ final class FloatPreviewController {
         guard let index = panels.firstIndex(of: panel) else { return }
         let id = ObjectIdentifier(panel)
         cancelTimer(for: panel)
+        cancelSaveTask(for: id)
         hoveredPanels.remove(id)
         if let info = cardInfo[id] { lastClosed = info }
         cardInfo[id] = nil
+        cardViews[id]?.relinquishQuickLookIfOwned()
         cardViews[id] = nil
         panels.remove(at: index)
 
@@ -283,9 +296,9 @@ final class FloatPreviewController {
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.16
                 panel.animator().alphaValue = 0
-            }, completionHandler: { MainActor.assumeIsolated { panel.orderOut(nil) } })
+            }, completionHandler: { MainActor.assumeIsolated { panel.close() } })
         } else {
-            panel.orderOut(nil)
+            panel.close()
         }
 
         if panels.isEmpty { removeKeyMonitor() }
@@ -428,6 +441,15 @@ final class FloatPreviewController {
     private func cancelAllTimers() {
         for timer in timers.values { timer.invalidate() }
         timers.removeAll()
+    }
+
+    private func cancelSaveTask(for id: ObjectIdentifier) {
+        saveTasks.removeValue(forKey: id)?.cancel()
+    }
+
+    private func cancelAllSaveTasks() {
+        for task in saveTasks.values { task.cancel() }
+        saveTasks.removeAll()
     }
 
     private func ensureTimersIfIdle() {

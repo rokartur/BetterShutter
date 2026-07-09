@@ -95,26 +95,42 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     /// card always has a file — even unsaved ones live in a temp folder.
     var quickLookURL: URL? { savedURL ?? videoURL }
 
-    // Snapshotted when the panel opens so the nonisolated data-source reads need no actor hop.
-    nonisolated(unsafe) private var previewURLs: [URL] = []
+    // Quick Look's Objective-C data-source calls are nonisolated. A locked snapshot avoids both an
+    // actor hop and the unchecked mutable-array race that `nonisolated(unsafe)` would permit.
+    private let previewURLs = QuickLookURLSnapshot()
 
     nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 
     nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
         MainActor.assumeIsolated {
-            previewURLs = quickLookURL.map { [$0] } ?? []
+            previewURLs.replace(with: quickLookURL.map { [$0] } ?? [])
             panel.dataSource = self
             panel.delegate = self
             panel.currentPreviewItemIndex = 0
         }
     }
 
-    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {}
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { relinquishQuickLook(panel) }
+    }
+
+    /// QLPreviewPanel's Objective-C dataSource/delegate slots are unsafe-unretained. A card can be
+    /// evicted while Quick Look is open, so detach synchronously before the view is released.
+    func relinquishQuickLookIfOwned() {
+        guard QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared() else { return }
+        relinquishQuickLook(panel)
+    }
+
+    private func relinquishQuickLook(_ panel: QLPreviewPanel) {
+        if panel.dataSource === self { panel.dataSource = nil }
+        if panel.delegate === self { panel.delegate = nil }
+        previewURLs.replace(with: [])
+    }
 
     nonisolated func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURLs.count }
 
     nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        previewURLs.indices.contains(index) ? (previewURLs[index] as NSURL) : nil
+        previewURLs.url(at: index).map { $0 as NSURL }
     }
 
     // MARK: Controls
@@ -374,7 +390,12 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.25
                 pill.animator().alphaValue = 0
-            }, completionHandler: { MainActor.assumeIsolated { pill.removeFromSuperview() } })
+            }, completionHandler: {
+                MainActor.assumeIsolated {
+                    pill.removeFromSuperview()
+                    if self?.copyBadge === pill { self?.copyBadge = nil }
+                }
+            })
         }
     }
 
