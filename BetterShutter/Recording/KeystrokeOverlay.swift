@@ -13,6 +13,7 @@ final class KeystrokeOverlay {
     private var localMonitor: Any?
     private var stack: NSStackView?
     private var displayFrame: CGRect = .zero
+    private var removalTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
     func start(displayID: CGDirectDisplayID) {
         stop()
@@ -57,6 +58,9 @@ final class KeystrokeOverlay {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         globalMonitor = nil
         localMonitor = nil
+        let tasks = Array(removalTasks.values)
+        removalTasks.removeAll()
+        for task in tasks { task.cancel() }
         window?.orderOut(nil)
         window = nil
         stack = nil
@@ -71,8 +75,10 @@ final class KeystrokeOverlay {
         stack.addArrangedSubview(badge)
         // Cap the row so it never runs off-screen.
         while stack.arrangedSubviews.count > 6, let first = stack.arrangedSubviews.first {
+            let staleTask = removalTasks.removeValue(forKey: ObjectIdentifier(first))
             stack.removeArrangedSubview(first)
             first.removeFromSuperview()
+            staleTask?.cancel()
         }
 
         badge.alphaValue = 0
@@ -80,18 +86,28 @@ final class KeystrokeOverlay {
             ctx.duration = 0.1
             badge.animator().alphaValue = 1
         }
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.4))
+        let taskID = ObjectIdentifier(badge)
+        let task = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(1.4))
+            } catch {
+                // A stopped/replaced overlay must release its captured stack and badge now.
+                return
+            }
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.3
                 badge.animator().alphaValue = 0
-            }, completionHandler: {
-                MainActor.assumeIsolated {
-                    stack.removeArrangedSubview(badge)
-                    badge.removeFromSuperview()
-                }
-            })
+            }, completionHandler: {})
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return
+            }
+            stack.removeArrangedSubview(badge)
+            badge.removeFromSuperview()
+            self?.removalTasks[taskID] = nil
         }
+        removalTasks[taskID] = task
     }
 
     private func makeBadge(_ text: String) -> NSView {

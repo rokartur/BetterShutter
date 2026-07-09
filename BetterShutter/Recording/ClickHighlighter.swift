@@ -11,6 +11,7 @@ final class ClickHighlighter {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var displayFrame: CGRect = .zero
+    private var removalTasks: [UUID: Task<Void, Never>] = [:]
 
     func start(displayID: CGDirectDisplayID) {
         stop()
@@ -46,6 +47,9 @@ final class ClickHighlighter {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         globalMonitor = nil
         localMonitor = nil
+        let tasks = Array(removalTasks.values)
+        removalTasks.removeAll()
+        for task in tasks { task.cancel() }
         window?.orderOut(nil)
         window = nil
     }
@@ -78,9 +82,18 @@ final class ClickHighlighter {
         group.timingFunction = CAMediaTimingFunction(name: .easeOut)
         ring.add(group, forKey: nil)
 
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+            } catch {
+                // stop() cancelled this stale overlay task; return immediately without touching
+                // layers belonging to a later recording.
+                return
+            }
             ring.removeFromSuperlayer()
+            self?.removalTasks[taskID] = nil
         }
+        removalTasks[taskID] = task
     }
 }

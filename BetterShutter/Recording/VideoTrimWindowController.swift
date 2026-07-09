@@ -6,6 +6,11 @@ import AVFoundation
 /// the selected range. Non-destructive (writes a new "… trimmed.mp4").
 @MainActor
 final class VideoTrimWindowController: NSObject, NSWindowDelegate {
+    private nonisolated final class ExportSessionBox: @unchecked Sendable {
+        let session: AVAssetExportSession
+        init(_ session: AVAssetExportSession) { self.session = session }
+    }
+
     private var window: NSWindow?
     private let url: URL
     private let player: AVPlayer
@@ -14,6 +19,11 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     /// a close that races the build must cancel it — otherwise the "closed" trimmer's window still
     /// appears and lingers as a zombie.
     private var isClosed = false
+    private var didTearDown = false
+    private var loadTask: Task<Void, Never>?
+    private var beautifyTask: Task<Void, Never>?
+    private var activeExportSession: AVAssetExportSession?
+    private var activeExportID: UUID?
 
     private let startSlider = NSSlider()
     private let endSlider = NSSlider()
@@ -38,17 +48,21 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
 
     func show() {
         cursorTrack = CursorTrack.load(for: url)
-        Task {
-            let asset = AVURLAsset(url: url)
-            duration = (try? await asset.load(.duration).seconds) ?? 0
-            guard !isClosed else {
+        let inputURL = url
+        loadTask = Task { [weak self] in
+            let asset = AVURLAsset(url: inputURL)
+            let loadedDuration = (try? await asset.load(.duration).seconds) ?? 0
+            guard let self else { return }
+            self.duration = loadedDuration
+            guard !Task.isCancelled, !self.isClosed else {
                 // Closed while loading: never build the window, and release the player pipeline
                 // now (windowWillClose won't run for a window that never existed).
-                player.replaceCurrentItem(with: nil)
+                self.player.replaceCurrentItem(with: nil)
                 return
             }
-            build()
-            window?.makeKeyAndOrderFront(nil)
+            self.loadTask = nil
+            self.build()
+            self.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
     }
@@ -166,29 +180,60 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     /// Exports always land in the user's save directory — the source may live in the unsaved-
     /// recordings scratch folder (After-Capture Save off), and an explicit "Save …" must never
     /// write somewhere the user will lose.
-    private func exportURL(suffix: String) -> URL {
+    private struct ExportDestination {
+        let staging: URL
+        let directory: URL
+        let filename: String
+    }
+
+    private func exportDestination(suffix: String) -> ExportDestination {
         let dir = Preferences.saveDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let base = url.deletingPathExtension().lastPathComponent
-        return FileSaver.uniqueURL(in: dir, filename: "\(base).\(suffix).mp4")
+        return ExportDestination(
+            staging: dir.appendingPathComponent(
+                ".BetterShutter-export-\(UUID().uuidString).mp4", isDirectory: false),
+            directory: dir,
+            filename: "\(base).\(suffix).mp4")
     }
 
     @objc private func exportTapped() {
+        guard activeExportID == nil else { HUD.show("An export is already running"); return }
         let asset = AVURLAsset(url: url)
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else { return }
-        let out = exportURL(suffix: "trimmed")
-        export.outputURL = out
+        let destination = exportDestination(suffix: "trimmed")
+        let exportID = UUID()
+        activeExportID = exportID
+        activeExportSession = export
+        // Completion owns the session explicitly even after window teardown clears the controller's
+        // reference, guaranteeing status read + UUID staging cleanup after cancellation.
+        let exportBox = ExportSessionBox(export)
+        export.outputURL = destination.staging
         export.outputFileType = .mp4
         export.timeRange = CMTimeRange(
             start: CMTime(seconds: startSlider.doubleValue, preferredTimescale: 600),
             end: CMTime(seconds: endSlider.doubleValue, preferredTimescale: 600)
         )
-        export.exportAsynchronously {
+        export.exportAsynchronously { [weak self] in
             // Read status on the export's own queue, then hand only Sendable values to the main actor.
-            let succeeded = export.status == .completed
+            let succeeded = exportBox.session.status == .completed
+            let published: URL?
+            if succeeded {
+                published = try? AtomicFilePublisher.publish(
+                    staging: destination.staging,
+                    in: destination.directory,
+                    filename: destination.filename)
+            } else {
+                published = nil
+            }
+            if published == nil { try? FileManager.default.removeItem(at: destination.staging) }
             Task { @MainActor in
-                if succeeded {
-                    NSWorkspace.shared.activateFileViewerSelecting([out])
+                guard let self, self.activeExportID == exportID else { return }
+                self.activeExportSession = nil
+                self.activeExportID = nil
+                guard !self.isClosed else { return }
+                if let published {
+                    NSWorkspace.shared.activateFileViewerSelecting([published])
                 } else {
                     HUD.show("Trim failed")
                 }
@@ -197,6 +242,7 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
     }
 
     @objc private func exportBeautifiedTapped() {
+        guard activeExportID == nil else { HUD.show("An export is already running"); return }
         let bgIndex = bgPopup.indexOfSelectedItem - 1   // 0 = "No Background"
         guard bgPresets.indices.contains(bgIndex) else { HUD.show("Pick a background"); return }
         let background = bgPresets[bgIndex].fill
@@ -212,29 +258,77 @@ final class VideoTrimWindowController: NSObject, NSWindowDelegate {
             start: CMTime(seconds: startSlider.doubleValue, preferredTimescale: 600),
             end: CMTime(seconds: endSlider.doubleValue, preferredTimescale: 600)
         )
-        let out = exportURL(suffix: "framed")
+        let destination = exportDestination(suffix: "framed")
+        let exportID = UUID()
+        activeExportID = exportID
         HUD.show("Rendering…", duration: 1.0)
-        Task {
-            let result = await VideoBeautify.export(url: url, options: options, timeRange: range, to: out)
+        let inputURL = url
+        let task = Task { [weak self] in
+            let rendered = await VideoBeautify.export(
+                url: inputURL, options: options, timeRange: range, to: destination.staging)
+            let result: URL?
+            if rendered != nil, !Task.isCancelled {
+                let publish = Task.detached(priority: .utility) {
+                    try? AtomicFilePublisher.publish(
+                        staging: destination.staging,
+                        in: destination.directory,
+                        filename: destination.filename)
+                }
+                result = await withTaskCancellationHandler {
+                    await publish.value
+                } onCancel: {
+                    publish.cancel()
+                }
+            } else {
+                result = nil
+            }
+            if result == nil { try? FileManager.default.removeItem(at: destination.staging) }
+            guard let self, self.activeExportID == exportID else { return }
+            self.beautifyTask = nil
+            self.activeExportID = nil
+            guard !self.isClosed else { return }
             if let result {
                 NSWorkspace.shared.activateFileViewerSelecting([result])
             } else {
                 HUD.show("Export failed")
             }
         }
+        beautifyTask = task
     }
 
     /// Programmatic close (e.g. the owner replacing this trimmer with a new one); routes through
     /// `windowWillClose` so the player pipeline is torn down and `onClose` still fires. If the
     /// window hasn't been built yet, the flag makes the pending build bail instead.
     func close() {
+        guard !isClosed else { return }
         isClosed = true
-        window?.close()
+        if let window {
+            window.close()
+        } else {
+            tearDown()
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
+        isClosed = true
+        tearDown()
+    }
+
+    private func tearDown() {
+        guard !didTearDown else { return }
+        didTearDown = true
+        loadTask?.cancel()
+        loadTask = nil
+        beautifyTask?.cancel()
+        beautifyTask = nil
+        activeExportSession?.cancelExport()
+        activeExportSession = nil
+        activeExportID = nil
         player.pause()
         player.replaceCurrentItem(with: nil)   // release the asset + decode pipeline now, not at dealloc
-        onClose?()
+        window = nil
+        let callback = onClose
+        onClose = nil
+        callback?()
     }
 }

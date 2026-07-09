@@ -7,6 +7,29 @@ import AppKit
 /// down with padding and lays it over a static background image.
 enum VideoBeautify {
 
+    private nonisolated final class ExportSessionBox: @unchecked Sendable {
+        let session: AVAssetExportSession
+        private let lock = NSLock()
+        private var cancelled = false
+
+        init(_ session: AVAssetExportSession) { self.session = session }
+
+        func start(_ completion: @escaping @Sendable () -> Void) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !cancelled else { return false }
+            session.exportAsynchronously(completionHandler: completion)
+            return true
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            session.cancelExport()
+            lock.unlock()
+        }
+    }
+
     /// Pure layout math (testable): from the source pixel size, padding fraction, and an optional
     /// target output height, compute the render size, the scale applied to the video, and the inset.
     nonisolated static func layout(srcW: CGFloat, srcH: CGFloat, paddingFraction: CGFloat,
@@ -52,16 +75,19 @@ enum VideoBeautify {
 
     /// Composite + export. Returns the output URL on success, nil on failure.
     @MainActor
-    static func export(url: URL, options: Options, timeRange: CMTimeRange?, to out: URL) async -> URL? {
+    static func export(url: URL, options: Options, timeRange: CMTimeRange?, to stagingURL: URL) async -> URL? {
+        guard !Task.isCancelled else { return nil }
         let asset = AVURLAsset(url: url)
         guard let track = try? await asset.loadTracks(withMediaType: .video).first,
               let naturalSize = try? await track.load(.naturalSize) else { return nil }
+        guard !Task.isCancelled else { return nil }
 
         let srcW = naturalSize.width, srcH = naturalSize.height
         let (renderSize, innerScale, inset) = layout(srcW: srcW, srcH: srcH,
                                                      paddingFraction: options.paddingFraction,
                                                      targetHeight: options.targetHeight)
         guard let bgCG = BeautifyRenderer.backgroundImage(options.background, size: renderSize) else { return nil }
+        guard !Task.isCancelled else { return nil }
         let background = CIImage(cgImage: bgCG)
         let renderRect = CGRect(origin: .zero, size: renderSize)
 
@@ -84,17 +110,36 @@ enum VideoBeautify {
         composition.renderSize = renderSize
 
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else { return nil }
-        try? FileManager.default.removeItem(at: out)
-        export.outputURL = out
+        guard !Task.isCancelled else { return nil }
+        // The caller supplies a fresh hidden staging URL and publishes it atomically only after a
+        // successful export. Never delete a check-only user-visible destination here.
+        export.outputURL = stagingURL
         export.outputFileType = .mp4
         export.videoComposition = composition
         if let timeRange { export.timeRange = timeRange }
 
-        return await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
-            export.exportAsynchronously {
-                let ok = export.status == .completed
-                continuation.resume(returning: ok ? out : nil)
+        let exportBox = ExportSessionBox(export)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<URL?, Never>) in
+                guard !Task.isCancelled else {
+                    try? FileManager.default.removeItem(at: stagingURL)
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let started = exportBox.start {
+                    let ok = exportBox.session.status == .completed
+                    if !ok { try? FileManager.default.removeItem(at: stagingURL) }
+                    continuation.resume(returning: ok ? stagingURL : nil)
+                }
+                if !started {
+                    try? FileManager.default.removeItem(at: stagingURL)
+                    continuation.resume(returning: nil)
+                }
             }
+        } onCancel: {
+            // AVFoundation completes its handler after cancellation, which resumes the continuation.
+            // The Sendable box permits this thread-safe API call from the cancellation executor.
+            exportBox.cancel()
         }
     }
 }

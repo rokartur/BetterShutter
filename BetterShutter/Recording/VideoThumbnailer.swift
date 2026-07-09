@@ -5,6 +5,7 @@ import ImageIO
 /// First-frame extraction for the recording quick-access card: AVFoundation for movie files,
 /// ImageIO for GIFs (AVAssetImageGenerator can't read GIF).
 nonisolated enum VideoThumbnailer {
+    @concurrent
     static func firstFrame(of url: URL) async -> CGImage? {
         if url.pathExtension.lowercased() == "gif" {
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }

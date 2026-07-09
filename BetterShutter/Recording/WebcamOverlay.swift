@@ -10,22 +10,37 @@ final class WebcamOverlay {
 
     /// AVCaptureSession isn't Sendable; box it so it can cross to the session queue safely. It is
     /// internally thread-safe, so `@unchecked Sendable` holds.
-    private final class SessionBox: @unchecked Sendable { let session = AVCaptureSession() }
+    private nonisolated final class SessionBox: @unchecked Sendable {
+        let session = AVCaptureSession()
+    }
 
     private var window: NSWindow?
     private let box = SessionBox()
     private let sessionQueue = DispatchQueue(label: "app.bettershutter.webcam.session")
     private var configured = false
+    private var permissionRequestInFlight = false
+    /// Latest recording that still wants a camera bubble while the single non-cancellable TCC
+    /// request is outstanding. Stop clears it; a replacement recording merely updates the display.
+    private var pendingDisplayID: CGDirectDisplayID?
     private let size: CGFloat = 180
 
     func start(displayID: CGDirectDisplayID) {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
+            pendingDisplayID = nil
             present(displayID: displayID)
         case .notDetermined:
+            pendingDisplayID = displayID
+            guard !permissionRequestInFlight else { return }
+            permissionRequestInFlight = true
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 Task { @MainActor in
-                    if granted { self?.present(displayID: displayID) }
+                    guard let self else { return }
+                    self.permissionRequestInFlight = false
+                    let desiredDisplay = self.pendingDisplayID
+                    self.pendingDisplayID = nil
+                    guard let desiredDisplay else { return }
+                    if granted { self.present(displayID: desiredDisplay) }
                     else { HUD.show("Camera access denied") }
                 }
             }
@@ -35,6 +50,7 @@ final class WebcamOverlay {
     }
 
     func stop() {
+        pendingDisplayID = nil
         window?.orderOut(nil)
         window = nil
         let box = self.box
@@ -86,7 +102,11 @@ final class WebcamOverlay {
         let session = box.session
         session.beginConfiguration()
         session.sessionPreset = .medium
-        if session.canAddInput(input) { session.addInput(input) }
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
+            return false
+        }
+        session.addInput(input)
         session.commitConfiguration()
         configured = true
         return true

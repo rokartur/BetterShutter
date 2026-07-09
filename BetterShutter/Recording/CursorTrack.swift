@@ -20,16 +20,24 @@ nonisolated struct CursorTrack: Codable, Sendable {
         guard let first = samples.first, let last = samples.last else { return nil }
         if t <= first.t { return CGPoint(x: first.x, y: first.y) }
         if t >= last.t { return CGPoint(x: last.x, y: last.y) }
-        // Linear scan is fine (tracks are short and sampled ~20-30 Hz); find the bracketing pair.
-        for i in 1..<samples.count {
-            let a = samples[i - 1], b = samples[i]
-            if t >= a.t && t <= b.t {
-                let span = b.t - a.t
-                let f = span > 0 ? (t - a.t) / span : 0
-                return CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
+        // A one-hour track can contain 90k samples, and video export asks for a point once per
+        // output frame. A linear scan here turns a long export into billions of comparisons. Find
+        // the first sample at-or-after `t` in O(log n), then interpolate with its predecessor.
+        var low = 1
+        var high = samples.count - 1
+        while low < high {
+            let mid = low + (high - low) / 2
+            if samples[mid].t < t {
+                low = mid + 1
+            } else {
+                high = mid
             }
         }
-        return CGPoint(x: last.x, y: last.y)
+        let a = samples[low - 1]
+        let b = samples[low]
+        let span = b.t - a.t
+        let f = span > 0 ? (t - a.t) / span : 0
+        return CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
     }
 
     /// Sidecar file holding the track for a given recording.
