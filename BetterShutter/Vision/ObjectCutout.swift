@@ -6,23 +6,29 @@ import CoreImage
 /// subject's extent, or `nil` if no salient subject is found.
 nonisolated enum ObjectCutout {
     static func cutout(_ image: CapturedImage) async -> CapturedImage? {
-        await Task.detached(priority: .userInitiated) { generate(from: image) }.value
+        await VisionTaskRunner.run(default: nil) { cancellation in
+            generate(from: image, cancellation: cancellation)
+        }
     }
 
-    private static func generate(from image: CapturedImage) -> CapturedImage? {
+    private static func generate(
+        from image: CapturedImage,
+        cancellation: VisionRequestCancellation
+    ) -> CapturedImage? {
         let request = VNGenerateForegroundInstanceMaskRequest()
         let handler = VNImageRequestHandler(cgImage: image.cgImage, options: [:])
         do {
-            try handler.perform([request])
+            guard try cancellation.perform(request, with: handler) else { return nil }
             guard let result = request.results?.first, !result.allInstances.isEmpty else { return nil }
+            guard !Task.isCancelled else { return nil }
             let buffer = try result.generateMaskedImage(
                 ofInstances: result.allInstances,
                 from: handler,
                 croppedToInstancesExtent: true
             )
+            guard !Task.isCancelled else { return nil }
             let ci = CIImage(cvPixelBuffer: buffer)
-            let context = CIContext()
-            guard let cg = context.createCGImage(ci, from: ci.extent) else { return nil }
+            guard let cg = VisionCIContext.createCGImage(ci, from: ci.extent) else { return nil }
             return CapturedImage(cgImage: cg, scale: image.scale, displayID: image.displayID)
         } catch {
             return nil
