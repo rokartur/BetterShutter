@@ -21,6 +21,25 @@ struct CaptureIntegrationTests {
         #expect(text.uppercased().contains("WORLD"))
     }
 
+    @Test
+    func cancelledVisionRequestsReturnFallbacks() async {
+        let image = CapturedImage(cgImage: textImage("CANCEL ME"), scale: 1, displayID: nil)
+
+        let ocr = Task { await TextRecognizer.recognize(image) }
+        let faces = Task { await FaceDetector.detect(image) }
+        let barcodes = Task { await BarcodeDetector.detect(image) }
+        ocr.cancel()
+        faces.cancel()
+        barcodes.cancel()
+
+        let ocrResult = await ocr.value
+        let faceResult = await faces.value
+        let barcodeResult = await barcodes.value
+        #expect(ocrResult.isEmpty)
+        #expect(faceResult.isEmpty)
+        #expect(barcodeResult.isEmpty)
+    }
+
     // MARK: Live display capture
 
     @Test

@@ -271,6 +271,22 @@ struct CaptureHistoryTests {
         history.clear()
         #expect(history.items.isEmpty)
     }
+
+    @Test
+    func archivedFileKeepsCaptureDateAsModificationDate() throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("history-date-\(UUID()).m4v")
+        try Data([0, 1, 2, 3]).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let captureDate = Date().addingTimeInterval(-123)
+        let archived = try #require(CaptureHistoryStore.add(fileURL: source, date: captureDate))
+        defer { try? FileManager.default.removeItem(at: archived) }
+
+        let modified = try archived.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let modifiedDate = try #require(modified)
+        #expect(abs(modifiedDate.timeIntervalSince(captureDate)) < 1)
+    }
 }
 
 @MainActor
@@ -316,6 +332,23 @@ struct PixelSamplerTests {
 
 @MainActor
 struct ScrollStitcherTests {
+    @Test func bitmapBudgetAcceptsBoundaryAndRejectsOverflow() {
+        #expect(ScrollStitcher.canRetain(
+            currentBytes: 400, currentHeight: 10,
+            candidateBytesPerRow: 20, candidateHeight: 30,
+            byteBudget: 1_000, heightLimit: 40))
+        #expect(!ScrollStitcher.canRetain(
+            currentBytes: 401, currentHeight: 10,
+            candidateBytesPerRow: 20, candidateHeight: 30,
+            byteBudget: 1_000, heightLimit: 40))
+        #expect(!ScrollStitcher.canRetain(
+            currentBytes: 0, currentHeight: 0,
+            candidateBytesPerRow: .max, candidateHeight: 2))
+        #expect(!ScrollStitcher.canRetain(
+            currentBytes: 0, currentHeight: 99_999,
+            candidateBytesPerRow: 4, candidateHeight: 2))
+    }
+
     /// Build a W×H image whose rows are a deterministic gradient keyed by a vertical offset, so two
     /// images that differ only by a known scroll have predictable, matchable row signatures.
     /// High-entropy per-row hash so each visual row has a distinctive, non-periodic color — the way
@@ -348,6 +381,17 @@ struct ScrollStitcherTests {
         let sb = ScrollStitcher.grayRows(b, columns: ScrollStitcher.columns)!
         let dy = ScrollStitcher.bestShift(prev: sa, next: sb)
         #expect(abs(dy - 30) <= 2)
+    }
+
+    @Test
+    func coarseToFineDetectsOffsetsBetweenCoarseCandidates() {
+        for expected in [3, 31, 117] {
+            let a = gradient(width: 160, height: 500, offset: 0)
+            let b = gradient(width: 160, height: 500, offset: expected)
+            let sa = ScrollStitcher.grayRows(a, columns: ScrollStitcher.columns)!
+            let sb = ScrollStitcher.grayRows(b, columns: ScrollStitcher.columns)!
+            #expect(abs(ScrollStitcher.bestShift(prev: sa, next: sb) - expected) <= 2)
+        }
     }
 
     @Test
@@ -461,6 +505,48 @@ struct UndoBaseImageTests {
         #expect(rgbaBytes(of: decoded) == rgbaBytes(of: source))
         // Promotion drops the encoded copy and keeps the bitmap live again.
         #expect(!box.isDowngraded)
+    }
+
+    @Test
+    func promotionWhileEncodingKeepsBitmapLive() async throws {
+        let source = makeNoisyTestImage(width: 256, height: 192)
+        let box = UndoBaseImage(source)
+        box.downgrade()
+
+        // Undo can revisit a still-live box while its detached PNG encode is running. That access is
+        // a promotion and must invalidate the pending eviction.
+        _ = try #require(box.image)
+        for _ in 0..<300 where box.isDowngradeInFlight {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(!box.isDowngradeInFlight)
+        #expect(!box.isDowngraded)
+        #expect(box.image === source)
+    }
+}
+
+@MainActor
+struct OverlayLifecycleTests {
+    private final class LifetimeToken {}
+
+    @Test
+    func presentationWithoutMatchingPanesReleasesCallbacks() {
+        let controller = OverlayController()
+        weak var weakToken: LifetimeToken?
+
+        autoreleasepool {
+            let token = LifetimeToken()
+            weakToken = token
+            controller.present(
+                frozen: [], windows: [], magnifierEnabled: false,
+                onRegion: { [token] _, _, _, _ in _ = token },
+                onWindow: { [token] _ in _ = token },
+                onCancel: { [token] in _ = token }
+            )
+        }
+
+        #expect(weakToken == nil)
     }
 }
 
@@ -1274,6 +1360,29 @@ struct MultipartUploadTests {
     }
 
     @Test
+    func failedBodyStagingRemovesPartialTempFile() throws {
+        let stagingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("multipart-staging-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stagingDirectory) }
+
+        let missingPayload = stagingDirectory.appendingPathComponent("missing.mp4")
+        var didThrow = false
+        do {
+            _ = try MultipartUpload.writeBodyFile(
+                fields: [], fileField: "file", filename: "clip.mp4", contentType: "video/mp4",
+                payloadFile: missingPayload, boundary: "failure-boundary",
+                temporaryDirectory: stagingDirectory)
+        } catch {
+            didThrow = true
+        }
+
+        #expect(didThrow)
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: stagingDirectory.path)
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test
     func litterboxExpiryRawValuesMatchAPI() {
         #expect(LitterboxExpiry.allCases.map(\.rawValue) == ["1h", "12h", "24h", "72h"])
     }
@@ -1334,6 +1443,44 @@ struct CursorTrackTests {
     @Test
     func emptyTrackReturnsNil() {
         #expect(CursorTrack(samples: []).point(at: 1) == nil)
+    }
+
+    @Test
+    func interpolatesDeepInsideMaximumLengthTrack() {
+        let samples = (0...90_000).map {
+            CursorSample(t: Double($0), x: Double($0) / 90_000, y: Double($0) / 180_000)
+        }
+        let track = CursorTrack(samples: samples)
+        let point = track.point(at: 54_321.5)
+        #expect(abs((point?.x ?? -1) - 54_321.5 / 90_000) < 1e-9)
+        #expect(abs((point?.y ?? -1) - 54_321.5 / 180_000) < 1e-9)
+    }
+
+    @Test
+    func pausedDurationIsRemovedFromCursorTimeline() {
+        #expect(RecordingController.cursorTimelineTime(
+            now: 125, start: 100, pausedDuration: 7.5) == 17.5)
+        #expect(RecordingController.cursorTimelineTime(
+            now: 100, start: 101, pausedDuration: 0) == 0)
+    }
+}
+
+struct RecordingSessionIdentityTests {
+    @Test
+    func staleSessionCannotOwnReplacementStateOrRecoveryPath() {
+        let oldSession = UUID()
+        let replacementSession = UUID()
+        let oldURL = URL(fileURLWithPath: "/tmp/recording-a.mp4")
+        let replacementURL = URL(fileURLWithPath: "/tmp/recording-b.mp4")
+
+        #expect(!RecordingController.sessionStillOwnsState(
+            oldSession, activeSessionID: replacementSession, engineMatches: false))
+        #expect(!RecordingController.recoveryPathBelongs(
+            to: oldURL, currentPath: replacementURL.path))
+        #expect(RecordingController.sessionStillOwnsState(
+            replacementSession, activeSessionID: replacementSession, engineMatches: true))
+        #expect(RecordingController.recoveryPathBelongs(
+            to: replacementURL, currentPath: replacementURL.path))
     }
 }
 
@@ -1491,5 +1638,147 @@ struct AfterCaptureMatrixTests {
         // start dropping files into temp.
         #expect(AfterCaptureItem.defaultRecordingActions.contains(.save))
         #expect(AfterCaptureItem.defaultRecordingActions.contains(.quickAccess))
+    }
+}
+
+struct PreferencesConcurrencyTests {
+    @Test
+    func captureCounterAllocatesUniqueValuesConcurrently() async {
+        let requestCount = 256
+        let values = await withTaskGroup(of: Int.self, returning: [Int].self) { group in
+            for _ in 0..<requestCount {
+                group.addTask { Preferences.nextCaptureCounter() }
+            }
+            var result: [Int] = []
+            result.reserveCapacity(requestCount)
+            for await value in group { result.append(value) }
+            return result
+        }
+
+        #expect(values.count == requestCount)
+        #expect(Set(values).count == requestCount)
+    }
+
+    @Test
+    func quickLookURLSnapshotSerializesConcurrentAccess() async {
+        let snapshot = QuickLookURLSnapshot()
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<256 {
+                if index.isMultiple(of: 2) {
+                    group.addTask {
+                        snapshot.replace(with: [URL(fileURLWithPath: "/tmp/\(index)")])
+                    }
+                } else {
+                    group.addTask {
+                        _ = snapshot.count
+                        _ = snapshot.url(at: 0)
+                    }
+                }
+            }
+        }
+
+        let final = URL(fileURLWithPath: "/tmp/final")
+        snapshot.replace(with: [final])
+        #expect(snapshot.count == 1)
+        #expect(snapshot.url(at: 0) == final)
+        #expect(snapshot.url(at: 1) == nil)
+    }
+}
+
+struct PreviewRecordingSaverTests {
+    @Test
+    func concurrentCopiesUseDistinctCompleteFiles() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PreviewRecordingSaverTests-\(UUID())", isDirectory: true)
+        let sourceDirectory = root.appendingPathComponent("source", isDirectory: true)
+        let destination = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = sourceDirectory.appendingPathComponent("recording.mp4")
+        let payload = Data(repeating: 0xA5, count: 256 * 1_024)
+        try payload.write(to: source)
+
+        let urls = try await withThrowingTaskGroup(of: URL.self, returning: [URL].self) { group in
+            for _ in 0..<2 {
+                group.addTask { try await PreviewRecordingSaver.copy(source, to: destination) }
+            }
+            var result: [URL] = []
+            for try await url in group { result.append(url) }
+            return result
+        }
+
+        #expect(Set(urls).count == 2)
+        for url in urls { #expect(try Data(contentsOf: url) == payload) }
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: destination.path)
+            .filter { $0.hasSuffix(".partial") }
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func cancelledCopyLeavesNoPartialFile() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PreviewRecordingSaverCancel-\(UUID())", isDirectory: true)
+        let sourceDirectory = root.appendingPathComponent("source", isDirectory: true)
+        let destination = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = sourceDirectory.appendingPathComponent("recording.mp4")
+        try Data(repeating: 0x5A, count: 256 * 1_024).write(to: source)
+        let task = Task { try await PreviewRecordingSaver.copy(source, to: destination) }
+        task.cancel() // MainActor inheritance guarantees cancellation before the task starts.
+
+        do {
+            _ = try await task.value
+            Issue.record("cancelled copy unexpectedly succeeded")
+        } catch is CancellationError {
+            // Expected.
+        }
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: destination.path)) ?? []
+        #expect(files.isEmpty)
+    }
+}
+
+@MainActor
+struct ImageEncoderCancellationTests {
+    @Test
+    func cancelledEncodeDoesNotProduceData() async {
+        let image = makeSolidTestImage(width: 64, height: 64)
+        let task = Task { ImageEncoder.encode(image, as: .png) }
+        task.cancel() // Actor inheritance ensures cancellation before the body can run.
+        #expect(await task.value == nil)
+    }
+}
+
+struct AtomicFilePublisherTests {
+    @Test
+    func concurrentPublishersNeverReplaceEachOther() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AtomicFilePublisherTests-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let first = directory.appendingPathComponent(".first-staging.mp4")
+        let second = directory.appendingPathComponent(".second-staging.mp4")
+        try Data([1, 2, 3]).write(to: first)
+        try Data([4, 5, 6]).write(to: second)
+
+        let published = try await withThrowingTaskGroup(of: URL.self, returning: [URL].self) { group in
+            group.addTask {
+                try AtomicFilePublisher.publish(staging: first, in: directory, filename: "clip.mp4")
+            }
+            group.addTask {
+                try AtomicFilePublisher.publish(staging: second, in: directory, filename: "clip.mp4")
+            }
+            var urls: [URL] = []
+            for try await url in group { urls.append(url) }
+            return urls
+        }
+
+        #expect(Set(published).count == 2)
+        let payloads = try Set(published.map { try Data(contentsOf: $0) })
+        #expect(payloads == Set([Data([1, 2, 3]), Data([4, 5, 6])]))
     }
 }
