@@ -13,6 +13,33 @@ final class CaptureCoordinator {
     private var beautifier: BeautifyWindowController?
     private var trimmer: VideoTrimWindowController?
     private var isCapturing = false
+    private var outputTail: Task<Void, Never>?
+    private var outputGeneration: UInt64 = 0
+    private var pendingOutputCount = 0
+    private static let maximumPendingOutputs = 2
+
+    /// Recording hotkeys enter through `RecordingController`, outside this coordinator. Expose the
+    /// complete capture admission state so those paths cannot start a stream while a countdown,
+    /// frozen-display capture, selection overlay, or bounded output backlog is in progress.
+    var isCaptureInProgress: Bool {
+        isCapturing || overlay.isPresenting || CaptureCountdown.shared.isActive || isOutputBackpressured
+    }
+
+    private var isOutputBackpressured: Bool {
+        pendingOutputCount >= Self.maximumPendingOutputs || CaptureHistory.shared.isArchiveBackpressured
+    }
+
+    /// Reject a new capture before it allocates another full-resolution bitmap when disk/encoding
+    /// throughput is already behind. The user can retry as soon as one of the two accepted jobs
+    /// drains; completed captures are never silently dropped.
+    private func admitCapture() -> Bool {
+        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return false }
+        guard !isOutputBackpressured else {
+            HUD.show("Finishing previous captures…")
+            return false
+        }
+        return true
+    }
 
     /// The last region selection (global rect + display), for "Capture Previous Area". Persisted to
     /// `Preferences` so it survives relaunches.
@@ -56,7 +83,7 @@ final class CaptureCoordinator {
         case .region, .window:
             captureScreenshot(afterDelay: afterDelay)
         case .fullDisplay:
-            guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
+            guard admitCapture() else { return }
             guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
             if afterDelay, startCountdownIfNeeded({ [weak self] in self?.capture(mode, afterDelay: false) }) { return }
             sampleBypass()
@@ -68,7 +95,7 @@ final class CaptureCoordinator {
     /// selection and it's delivered straight to the normal output (quick-access card + clipboard per
     /// settings) with no action-bar step; tap Space to switch to window pick and click a window instead.
     func captureScreenshot(afterDelay: Bool = true) {
-        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
+        guard admitCapture() else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureScreenshot(afterDelay: false) }) { return }
         sampleBypass()
@@ -88,7 +115,7 @@ final class CaptureCoordinator {
     /// Screenshot & markup (macshot-style): select a region (or tap Space and click a window), then
     /// open the full editor with every annotation / drawing tool ready, instead of a quick-access card.
     func captureAndEdit(afterDelay: Bool = true) {
-        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
+        guard admitCapture() else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureAndEdit(afterDelay: false) }) { return }
         sampleBypass()
@@ -153,7 +180,7 @@ final class CaptureCoordinator {
 
     /// Select a region and run on-device OCR, copying the recognized text to the clipboard.
     func captureText() {
-        guard !isCapturing, !overlay.isPresenting else { return }
+        guard admitCapture() else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         isCapturing = true
         Task {
@@ -178,7 +205,7 @@ final class CaptureCoordinator {
 
     /// Select a region, lift the foreground subject out of it as a transparent PNG (auto-cropped).
     func captureCutout() {
-        guard !isCapturing, !overlay.isPresenting else { return }
+        guard admitCapture() else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         isCapturing = true
         Task {
@@ -201,10 +228,10 @@ final class CaptureCoordinator {
     }
 
     private func performCutout(_ image: CapturedImage) {
-        isCapturing = false
         HUD.show("Extracting subject…", duration: 0.8)
         Task {
             guard let cut = await ObjectCutout.cutout(image) else {
+                isCapturing = false
                 HUD.show("No subject found")
                 return
             }
@@ -215,12 +242,16 @@ final class CaptureCoordinator {
     /// Scrolling capture: select a window/region, scroll, and stitch the frames into one tall image.
     /// (Implemented in ScrollingCaptureController; this is the entry point.)
     func captureScrolling() {
-        ScrollingCaptureController.shared.begin()
+        guard admitCapture() else { return }
+        let started = ScrollingCaptureController.shared.begin { [weak self] in
+            self?.isCapturing = false
+        }
+        if started { isCapturing = true }
     }
 
     /// Re-capture the exact region from the previous selection, with no overlay.
     func captureLastRegion() {
-        guard !isCapturing, !overlay.isPresenting else { return }
+        guard admitCapture() else { return }
         guard let last = lastRegion else { HUD.show("No previous area"); return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         sampleBypass()
@@ -247,7 +278,8 @@ final class CaptureCoordinator {
 
     /// Select a region, then start recording just that region to an MP4.
     func recordRegion() {
-        guard !isCapturing, !overlay.isPresenting, !RecordingController.shared.isRecording else { return }
+        guard admitCapture(),
+              !RecordingController.shared.isRecording else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         isCapturing = true
         Task {
@@ -274,7 +306,8 @@ final class CaptureCoordinator {
     /// Click a window to record just that window (it's followed across the screen). A drag instead
     /// records that region, so the one flow covers both.
     func recordWindow() {
-        guard !isCapturing, !overlay.isPresenting, !RecordingController.shared.isRecording else { return }
+        guard admitCapture(),
+              !RecordingController.shared.isRecording else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         isCapturing = true
         Task {
@@ -328,7 +361,7 @@ final class CaptureCoordinator {
     /// bar (capture / annotate / copy / save / record) and restores your last selection so you can
     /// re-shoot the same area with a single Return. Shift still locks the drag to a square.
     func captureAllInOne(afterDelay: Bool = true) {
-        guard !isCapturing, !overlay.isPresenting, !CaptureCountdown.shared.isActive else { return }
+        guard admitCapture() else { return }
         guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
         if afterDelay, startCountdownIfNeeded({ [weak self] in self?.captureAllInOne(afterDelay: false) }) { return }
         isCapturing = true
@@ -371,18 +404,37 @@ final class CaptureCoordinator {
             CaptureHistory.shared.add(image, mode: .region)
             edit(image, mode: .region)
         case .copy:
-            CaptureHistory.shared.add(image, mode: .region)
-            Task {
-                let png = await Task.detached { ImageEncoder.encode(image.cgImage, as: .png) }.value
+            let date = Date()
+            CaptureHistory.shared.remember(image, mode: .region, date: date)
+            enqueueOutput {
+                let png = await ImageEncoder.encodeAsync(image.cgImage, as: .png)
                 if let png { PasteboardWriter.copy(png: png) }
                 CaptureSound.play()
                 HUD.show(png != nil ? "Copied" : "Copy failed")
+                if let png {
+                    await Task.detached(priority: .utility) {
+                        CaptureHistoryStore.add(png: png, mode: .region, date: date)
+                    }.value
+                }
             }
         case .save:
-            CaptureHistory.shared.add(image, mode: .region)
-            Task {
-                let url = await Task.detached { try? FileSaver.save(image.cgImage, mode: .region) }.value
+            let date = Date()
+            CaptureHistory.shared.remember(image, mode: .region, date: date)
+            enqueueOutput {
+                let format = Preferences.format
+                let png = await ImageEncoder.encodeAsync(image.cgImage, as: .png)
+                let url: URL?
+                if format == .png, let png {
+                    url = try? await FileSaver.writeAsync(png, format: .png, mode: .region)
+                } else {
+                    url = try? await FileSaver.saveAsync(image.cgImage, mode: .region)
+                }
                 HUD.show(url != nil ? "Saved" : "Save failed")
+                if let png {
+                    await Task.detached(priority: .utility) {
+                        CaptureHistoryStore.add(png: png, mode: .region, date: date)
+                    }.value
+                }
             }
         case .record:
             startRegionRecording(globalRect: globalRect, displayID: displayID)
@@ -402,17 +454,17 @@ final class CaptureCoordinator {
     }
 
     private func recognizeText(_ image: CapturedImage) {
-        isCapturing = false
         Task {
             let text = await TextRecognizer.recognize(image)
             let barcodes = await BarcodeDetector.detect(image)
+            isCapturing = false
             guard !text.isEmpty || !barcodes.isEmpty else { HUD.show("No text found"); return }
             if !text.isEmpty {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
                 pasteboard.setString(text, forType: .string)
-                // Keychain round-trip off the main thread; the store itself honors the toggle.
-                Task.detached(priority: .utility) { OCRHistoryStore.add(text) }
+                // FIFO Keychain queue keeps this add ordered before any later Clear/Remove action.
+                OCRHistoryStore.enqueueAdd(text)
             }
             CaptureSound.play()
             OCRResultWindowController.shared.show(text: text, barcodes: barcodes)
@@ -453,9 +505,25 @@ final class CaptureCoordinator {
     /// but no clipboard/preview/upload — those belong to the display under the mouse.
     private func saveSecondaryDisplay(_ image: CapturedImage) {
         let output = autoBeautified(outputImage(image))
-        CaptureHistory.shared.add(output, mode: .fullDisplay)
-        guard Preferences.saveScreenshotsToDisk else { return }
-        Task.detached { _ = try? FileSaver.save(output.cgImage, mode: .fullDisplay) }
+        let date = Date()
+        CaptureHistory.shared.remember(output, mode: .fullDisplay, date: date)
+        let shouldSave = Preferences.saveScreenshotsToDisk
+        let format = Preferences.format
+        enqueueOutput {
+            let png = await ImageEncoder.encodeAsync(output.cgImage, as: .png)
+            if shouldSave {
+                if format == .png, let png {
+                    _ = try? await FileSaver.writeAsync(png, format: .png, mode: .fullDisplay)
+                } else {
+                    _ = try? await FileSaver.saveAsync(output.cgImage, mode: .fullDisplay)
+                }
+            }
+            if let png {
+                await Task.detached(priority: .utility) {
+                    CaptureHistoryStore.add(png: png, mode: .fullDisplay, date: date)
+                }.value
+            }
+        }
     }
 
     // MARK: Output
@@ -487,21 +555,21 @@ final class CaptureCoordinator {
     private func finish(_ image: CapturedImage, mode: CaptureMode) {
         isCapturing = false
         let output = autoBeautified(outputImage(image))
-        CaptureHistory.shared.add(output, mode: mode)
+        let captureDate = Date()
+        CaptureHistory.shared.remember(output, mode: mode, date: captureDate)
         let actions = Preferences.afterCaptureActions(for: .screenshot)
         CaptureSound.play()
         let wantsUpload = actions.contains(.upload) && CloudUploadService.isEnabled
         let format = Preferences.format
         let savesToDisk = actions.contains(.save)
 
-        Task {
+        enqueueOutput {
             // Encode PNG once, off the main thread; the bytes are shared by the clipboard, the
             // upload, and (when the save format is PNG) the file on disk. A Retina 5K frame is a
             // ~60 MB bitmap — encoding it repeatedly, on the main thread, stalls the UI.
-            let needsPNG = actions.contains(.copy) || wantsUpload || (format == .png && savesToDisk)
-            let png: Data? = needsPNG
-                ? await Task.detached { ImageEncoder.encode(output.cgImage, as: .png) }.value
-                : nil
+            // History always needs PNG, so encode exactly once and share the bytes with clipboard,
+            // upload, and PNG save rather than running a second full ImageIO finalizer in parallel.
+            let png = await ImageEncoder.encodeAsync(output.cgImage, as: .png)
             if actions.contains(.copy), let png { PasteboardWriter.copy(png: png) }
             // Auto-upload + copy the share link (overwrites the image on the pasteboard, CleanShot-style).
             if wantsUpload {
@@ -513,12 +581,12 @@ final class CaptureCoordinator {
             if !savesToDisk {
                 url = nil
             } else if format == .png, let png {
-                url = await Task.detached { try? FileSaver.write(png, format: .png, mode: mode) }.value
+                url = try? await FileSaver.writeAsync(png, format: .png, mode: mode)
             } else {
-                url = await Task.detached { try? FileSaver.save(output.cgImage, mode: mode) }.value
+                url = try? await FileSaver.saveAsync(output.cgImage, mode: mode)
             }
             if actions.contains(.quickAccess) {
-                preview.show(output, mode: mode, savedURL: url)
+                self.preview.show(output, mode: mode, savedURL: url)
             }
             if actions.contains(.pin) {
                 PinController.shared.pin(output)
@@ -526,9 +594,31 @@ final class CaptureCoordinator {
             // Auto-open the editor only when none is open: install(editor:) closes the previous
             // editor unconditionally, and an automatic capture must never destroy unsaved
             // annotation work in progress.
-            if actions.contains(.annotate), editor == nil {
-                edit(output, mode: mode)
+            if actions.contains(.annotate), self.editor == nil {
+                self.edit(output, mode: mode)
             }
+            if let png {
+                await Task.detached(priority: .utility) {
+                    CaptureHistoryStore.add(png: png, mode: mode, date: captureDate)
+                }.value
+            }
+        }
+    }
+
+    /// Run bitmap encodes and their visible side effects in capture order. Without this chain,
+    /// repeated 5K captures can encode simultaneously (large transient RAM/CPU spikes) and an
+    /// older job can overwrite the pasteboard or preview after a newer capture already finished.
+    private func enqueueOutput(_ operation: @escaping @MainActor () async -> Void) {
+        let previous = outputTail
+        outputGeneration &+= 1
+        let generation = outputGeneration
+        pendingOutputCount += 1
+        outputTail = Task { [weak self] in
+            if let previous { await previous.value }
+            await operation()
+            guard let self else { return }
+            self.pendingOutputCount = max(0, self.pendingOutputCount - 1)
+            if self.outputGeneration == generation { self.outputTail = nil }
         }
     }
 
@@ -609,8 +699,14 @@ final class CaptureCoordinator {
     }
 
     func beautify(_ image: CapturedImage, mode: CaptureMode) {
+        beautifier?.close()
         let controller = BeautifyWindowController(image: image, mode: mode)
-        controller.onClose = { [weak self] in self?.beautifier = nil }
+        // A delayed close from the controller being replaced must not clear ownership of the new
+        // beautifier (and orphan its full-resolution base image/window).
+        controller.onClose = { [weak self, weak controller] in
+            guard let self, let controller, self.beautifier === controller else { return }
+            self.beautifier = nil
+        }
         beautifier = controller
         controller.present()
     }

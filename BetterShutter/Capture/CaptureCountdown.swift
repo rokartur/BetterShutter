@@ -12,6 +12,7 @@ final class CaptureCountdown {
     private var task: Task<Void, Never>?
     private var escMonitors: [Any] = []
     private var onCancel: (() -> Void)?
+    private var generation: UInt64 = 0
 
     /// True while a countdown is running, so capture entry points can refuse to stack.
     private(set) var isActive = false
@@ -22,17 +23,20 @@ final class CaptureCountdown {
     /// completion runs immediately. `onCancel` fires if the user presses Esc before it elapses.
     func run(seconds: Int, onComplete: @escaping () -> Void, onCancel: (() -> Void)? = nil) {
         guard seconds > 0, !isActive else { onComplete(); return }
+        generation &+= 1
+        let runGeneration = generation
         isActive = true
         self.onCancel = onCancel
         present(initial: seconds)
-        installEscMonitor()
+        installEscMonitor(generation: runGeneration)
 
         task = Task { @MainActor in
             for remaining in stride(from: seconds, through: 1, by: -1) {
                 update(remaining)
                 try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled { return }
+                if Task.isCancelled || generation != runGeneration { return }
             }
+            guard generation == runGeneration else { return }
             teardown()
             onComplete()
         }
@@ -81,20 +85,28 @@ final class CaptureCountdown {
         label?.stringValue = "\(remaining)"
     }
 
-    private func installEscMonitor() {
+    private func installEscMonitor(generation: UInt64) {
         let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }   // Esc
-            MainActor.assumeIsolated { self?.cancel() }
-            return nil
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.generation == generation else { return false }
+                self.cancel()
+                return true
+            }
+            return handled ? nil : event
         }
         let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return }
-            MainActor.assumeIsolated { self?.cancel() }
+            MainActor.assumeIsolated {
+                guard let self, self.generation == generation else { return }
+                self.cancel()
+            }
         }
         escMonitors = [local, global].compactMap { $0 }
     }
 
     private func teardown() {
+        generation &+= 1
         task?.cancel()
         task = nil
         escMonitors.forEach { NSEvent.removeMonitor($0) }

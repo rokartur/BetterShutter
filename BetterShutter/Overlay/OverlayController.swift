@@ -15,6 +15,10 @@ final class OverlayController {
     private var panes: [Pane] = []
     private var screenObserver: NSObjectProtocol?
     private var escMonitor: Any?
+    /// Dismissal invalidates every callback installed by that presentation. Event monitors and
+    /// NotificationCenter may already have queued a callback when removed; without a token, a late
+    /// callback from overlay A can dismiss the newly-presented overlay B.
+    private var presentationGeneration: UInt64 = 0
 
     private var onRegion: ((CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void)?
     private var onWindow: ((CGWindowID) -> Void)?
@@ -39,6 +43,7 @@ final class OverlayController {
         onCancel: @escaping () -> Void
     ) {
         dismiss() // never stack overlays
+        let generation = presentationGeneration
 
         self.onRegion = onRegion
         self.onWindow = onWindow
@@ -96,9 +101,18 @@ final class OverlayController {
             container.addSubview(view)
 
             let pane = Pane(window: window, view: view, screenFrame: frame, image: image)
-            view.onRegionSelected = { [weak self] rect, action in self?.handleRegion(rect, in: pane, action: action) }
-            view.onWindowSelected = { [weak self] id in self?.handleWindow(id) }
-            view.onCancel = { [weak self] in self?.handleCancel() }
+            view.onRegionSelected = { [weak self] rect, action in
+                guard let self, self.presentationGeneration == generation else { return }
+                self.handleRegion(rect, in: pane, action: action)
+            }
+            view.onWindowSelected = { [weak self] id in
+                guard let self, self.presentationGeneration == generation else { return }
+                self.handleWindow(id)
+            }
+            view.onCancel = { [weak self] in
+                guard let self, self.presentationGeneration == generation else { return }
+                self.handleCancel()
+            }
 
             window.makeKeyAndOrderFront(nil)
             panes.append(pane)
@@ -110,7 +124,15 @@ final class OverlayController {
             }
         }
 
-        guard !panes.isEmpty else { onCancel(); return }
+        guard !panes.isEmpty else {
+            // No frozen image matched a connected screen. Clear the callbacks installed above just
+            // like every other terminal path; otherwise this idle controller retains the abandoned
+            // capture's closure graph until some later presentation happens to call dismiss().
+            let cancel = self.onCancel
+            dismiss()
+            cancel?()
+            return
+        }
 
         // Fallback: ensure some pane is key/first-responder.
         if let key = panes.first(where: { $0.window.isKeyWindow }) ?? panes.first {
@@ -123,14 +145,17 @@ final class OverlayController {
         // Esc must always cancel, even if the key window / first responder isn't the pane the user
         // expects (wrong display, lost focus). A local monitor catches Esc anywhere in the app for the
         // whole presentation; a global one catches it if focus slipped to another app.
-        installEscMonitor()
+        installEscMonitor(generation: generation)
 
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             // A display was added/removed mid-capture — cancel rather than strand an overlay.
-            MainActor.assumeIsolated { self?.handleCancel() }
+            MainActor.assumeIsolated {
+                guard let self, self.presentationGeneration == generation else { return }
+                self.handleCancel()
+            }
         }
     }
 
@@ -192,16 +217,23 @@ final class OverlayController {
 
     // MARK: Esc-always-cancels
 
-    private func installEscMonitor() {
+    private func installEscMonitor(generation: UInt64) {
         removeEscMonitor()
         let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }   // Esc
-            MainActor.assumeIsolated { self?.handleCancel() }
-            return nil   // swallow
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let self, self.presentationGeneration == generation else { return false }
+                self.handleCancel()
+                return true
+            }
+            return handled ? nil : event   // swallow only for the owning presentation
         }
         let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return }
-            MainActor.assumeIsolated { self?.handleCancel() }
+            MainActor.assumeIsolated {
+                guard let self, self.presentationGeneration == generation else { return }
+                self.handleCancel()
+            }
         }
         escMonitor = [local, global].compactMap { $0 }
     }
@@ -214,6 +246,7 @@ final class OverlayController {
     // MARK: Teardown
 
     func dismiss() {
+        presentationGeneration &+= 1
         removeEscMonitor()
         if let screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)

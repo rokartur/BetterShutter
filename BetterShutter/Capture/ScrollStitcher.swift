@@ -7,6 +7,14 @@ import CoreGraphics
 /// Row indexing is top-first (`rows[0]` = visual top row) to match `CGImage.cropping(to:)`, which
 /// also uses a top-left origin — keeping the shift math and the append direction consistent.
 nonisolated enum ScrollStitcher {
+    /// Retained input strips are capped because final compositing temporarily needs a second bitmap
+    /// of roughly the same size. This keeps the predictable stitch peak near 512 MiB instead of
+    /// allowing a long-running session to grow until the process is jetsammed.
+    static let captureBitmapBudgetBytes = 256 * 1_024 * 1_024
+    /// A separate dimension backstop protects very narrow selections whose byte count alone would
+    /// permit an impractically tall Core Graphics context.
+    static let captureHeightLimit = 100_000
+
     /// Horizontal downsample width used for cheap row signatures.
     static let columns = 48
     /// Reject matches whose average per-sample difference exceeds this (0–255 scale).
@@ -20,6 +28,26 @@ nonisolated enum ScrollStitcher {
         let signature: [[UInt8]]
     }
 
+    /// Whether another independently-backed bitmap can be retained for the eventual composite.
+    /// The overflow checks are intentional: dimensions originate in external display content.
+    static func canRetain(
+        currentBytes: Int,
+        currentHeight: Int,
+        candidateBytesPerRow: Int,
+        candidateHeight: Int,
+        byteBudget: Int = captureBitmapBudgetBytes,
+        heightLimit: Int = captureHeightLimit
+    ) -> Bool {
+        guard currentBytes >= 0, currentHeight >= 0,
+              candidateBytesPerRow > 0, candidateHeight > 0,
+              byteBudget > 0, heightLimit > 0 else { return false }
+        let (candidateBytes, byteOverflow) = candidateBytesPerRow.multipliedReportingOverflow(by: candidateHeight)
+        let (totalBytes, totalByteOverflow) = currentBytes.addingReportingOverflow(candidateBytes)
+        let (totalHeight, heightOverflow) = currentHeight.addingReportingOverflow(candidateHeight)
+        return !byteOverflow && !totalByteOverflow && !heightOverflow
+            && totalBytes <= byteBudget && totalHeight <= heightLimit
+    }
+
     /// Build a frame signature for matching.
     static func makeFrame(_ image: CGImage) -> Frame? {
         guard let sig = grayRows(image, columns: columns) else { return nil }
@@ -31,25 +59,43 @@ nonisolated enum ScrollStitcher {
                           maxShift: Int = 1200, minShift: Int = 2, rowStep: Int = 2) -> Int {
         let h = min(prev.count, next.count)
         guard h > 40, let cols = next.first?.count, cols > 0 else { return 0 }
+        let fineRowStep = max(1, rowStep)
 
         // If the frames are essentially identical aligned, nothing scrolled.
-        if score(prev: prev, next: next, shift: 0, height: h, rowStep: rowStep) < staticThreshold { return 0 }
+        if score(prev: prev, next: next, shift: 0, height: h, rowStep: fineRowStep) < staticThreshold { return 0 }
 
         let overlapMinRows = max(24, h / 5)
         let limit = min(maxShift, h - overlapMinRows)
         guard limit >= minShift else { return 0 }
 
+        // Coarse-to-fine avoids ~100M scalar differences per 4K tick. High-entropy rows do not vary
+        // smoothly with shift, so inspect every integer shift but use sparse rows *and* columns;
+        // then score only a tiny neighborhood at full density.
+        let refinementRadius = 2
+        let coarseRowStep = max(8, fineRowStep * 4)
+        var coarseBest = minShift
+        var coarseScore = Double.greatestFiniteMagnitude
+        for dy in minShift...limit {
+            let value = score(
+                prev: prev, next: next, shift: dy, height: h,
+                rowStep: coarseRowStep, columnStep: 4)
+            if value < coarseScore { coarseScore = value; coarseBest = dy }
+        }
+
         var bestDy = 0
         var bestScore = Double.greatestFiniteMagnitude
-        for dy in stride(from: minShift, through: limit, by: 1) {
-            let s = score(prev: prev, next: next, shift: dy, height: h, rowStep: rowStep)
-            if s < bestScore { bestScore = s; bestDy = dy }
+        let lower = max(minShift, coarseBest - refinementRadius)
+        let upper = min(limit, coarseBest + refinementRadius)
+        for dy in lower...upper {
+            let value = score(prev: prev, next: next, shift: dy, height: h, rowStep: fineRowStep)
+            if value < bestScore { bestScore = value; bestDy = dy }
         }
         return bestScore < matchThreshold ? bestDy : 0
     }
 
     /// Mean absolute difference between `next[y]` and `prev[y+shift]` over the overlap.
-    private static func score(prev: [[UInt8]], next: [[UInt8]], shift: Int, height h: Int, rowStep: Int) -> Double {
+    private static func score(prev: [[UInt8]], next: [[UInt8]], shift: Int, height h: Int,
+                              rowStep: Int, columnStep: Int = 1) -> Double {
         let overlap = h - shift
         guard overlap > 0 else { return .greatestFiniteMagnitude }
         var sum = 0, count = 0
@@ -58,8 +104,12 @@ nonisolated enum ScrollStitcher {
             let a = next[y], b = prev[y + shift]
             let n = min(a.count, b.count)
             var d = 0
-            for c in 0..<n { d += abs(Int(a[c]) - Int(b[c])) }
-            sum += d; count += n
+            var sampledColumns = 0
+            for c in stride(from: 0, to: n, by: max(1, columnStep)) {
+                d += abs(Int(a[c]) - Int(b[c]))
+                sampledColumns += 1
+            }
+            sum += d; count += sampledColumns
             y += rowStep
         }
         return count == 0 ? .greatestFiniteMagnitude : Double(sum) / Double(count)

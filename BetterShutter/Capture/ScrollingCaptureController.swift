@@ -1,5 +1,27 @@
 import AppKit
 
+/// Owns the large retained stitch inputs across the detached composite, then releases them before
+/// the final bitmap enters beautify/output. Access is strictly sequential (worker, then MainActor).
+private nonisolated final class ScrollCompositeSources: @unchecked Sendable {
+    private var head: CGImage?
+    private var strips: [CGImage]
+
+    init(head: CGImage, strips: [CGImage]) {
+        self.head = head
+        self.strips = strips
+    }
+
+    func composite() -> CGImage? {
+        guard let head else { return nil }
+        return strips.isEmpty ? head : ScrollStitcher.composite(head: head, strips: strips)
+    }
+
+    func releaseBitmaps() {
+        head = nil
+        strips.removeAll(keepingCapacity: false)
+    }
+}
+
 /// Drives scrolling capture: pick a region, then repeatedly grab it while the user scrolls,
 /// stitching each newly-revealed strip into one tall image (via `ScrollStitcher`). A small
 /// glass control bar shows the growing height; Done delivers the result, Cancel discards it.
@@ -14,9 +36,19 @@ final class ScrollingCaptureController {
     private let overlay = OverlayController()
 
     private var timer: Timer?
+    private var screenObserver: NSObjectProtocol?
     private var bar: ScrollCaptureBar?
     private var active = false
-    private var busy = false
+    /// Releases CaptureCoordinator's global capture gate on every terminal path. Retained only for
+    /// the lifetime of one session and cleared before invocation.
+    private var onEnd: (() -> Void)?
+    /// Identifies the session that currently has a capture in flight. Keeping the generation (rather
+    /// than a plain Bool) prevents a late task from an old session from clearing the busy state of a
+    /// newly-started one.
+    private var busyGeneration: UInt64?
+    /// Every start/stop changes this token. ScreenCaptureKit and stitching both suspend, so without a
+    /// token an old frame can resume after Done/Cancel and be appended to the next session.
+    private var sessionGeneration: UInt64 = 0
 
     private var displayID: CGDirectDisplayID = CGMainDisplayID()
     private var sourceRectPoints: CGRect = .zero
@@ -26,40 +58,54 @@ final class ScrollingCaptureController {
     private var head: CapturedImage?
     private var strips: [CapturedImage] = []
     private var stitchedHeight = 0
+    private var retainedBitmapBytes = 0
     private var lastFrame: ScrollStitcher.Frame?
+    private var consecutiveCaptureFailures = 0
 
     private let interval: TimeInterval = 0.2
 
-    func begin() {
-        guard !active, !overlay.isPresenting else { return }
-        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return }
+    @discardableResult
+    func begin(onEnd: @escaping () -> Void) -> Bool {
+        guard !active, self.onEnd == nil, !overlay.isPresenting else { return false }
+        guard PermissionsService.shared.ensureAuthorizedOrGuide() else { return false }
+        sessionGeneration &+= 1
+        let generation = sessionGeneration
+        self.onEnd = onEnd
         active = true
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 let frozen = try await engine.freezeAllDisplays()
+                guard active, sessionGeneration == generation else { return }
                 let content = try await engine.shareableContent()
+                guard active, sessionGeneration == generation else { return }
                 overlay.present(
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: false,
                     onRegion: { [weak self] _, globalRect, displayID, _ in
-                        self?.startSession(globalRect: globalRect, displayID: displayID)
+                        self?.startSession(globalRect: globalRect, displayID: displayID,
+                                           generation: generation)
                     },
-                    onWindow: { [weak self] _ in self?.active = false },
-                    onCancel: { [weak self] in self?.active = false }
+                    onWindow: { [weak self] _ in self?.cancel(generation: generation) },
+                    onCancel: { [weak self] in self?.cancel(generation: generation) }
                 )
             } catch {
-                active = false
+                guard active, sessionGeneration == generation else { return }
+                cancel(generation: generation)
                 PermissionsService.shared.handleCaptureError(error)
             }
         }
+        return true
     }
 
     // MARK: Session
 
-    private func startSession(globalRect: CGRect, displayID: CGDirectDisplayID) {
+    private func startSession(globalRect: CGRect, displayID: CGDirectDisplayID,
+                              generation: UInt64) {
+        guard active, sessionGeneration == generation else { return }
         guard let screen = NSScreen.screens.first(where: { $0.displayID == displayID }) else {
-            active = false
+            cancel(generation: generation)
             return
         }
         let frame = screen.frame
@@ -74,99 +120,185 @@ final class ScrollingCaptureController {
         self.head = nil
         self.strips = []
         self.stitchedHeight = 0
+        self.retainedBitmapBytes = 0
         self.lastFrame = nil
+        self.consecutiveCaptureFailures = 0
 
-        showBar(near: screen)
+        showBar(near: screen, generation: generation)
+        installSessionScreenObserver(generation: generation)
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+            MainActor.assumeIsolated { self?.tick(generation: generation) }
         }
-        tick() // grab the first frame immediately
+        tick(generation: generation) // grab the first frame immediately
     }
 
-    private func tick() {
-        guard active, !busy else { return }
-        busy = true
+    private func tick(generation: UInt64) {
+        guard active, sessionGeneration == generation, busyGeneration != generation else { return }
+        busyGeneration = generation
         let id = displayID, rect = sourceRectPoints
         Task {
-            defer { busy = false }
-            guard let frame = try? await engine.captureRegion(displayID: id, sourceRectPoints: rect) else { return }
-            await ingest(frame)
+            defer {
+                // A newer session may already own the busy marker.
+                if busyGeneration == generation { busyGeneration = nil }
+            }
+            do {
+                let frame = try await engine.captureRegion(displayID: id, sourceRectPoints: rect)
+                guard active, generation == sessionGeneration else { return }
+                consecutiveCaptureFailures = 0
+                await ingest(frame, generation: generation)
+            } catch {
+                guard active, generation == sessionGeneration else { return }
+                consecutiveCaptureFailures += 1
+                // A disconnected display or revoked capture source otherwise leaves the 5 Hz timer
+                // retrying forever. Allow brief SCK hiccups, then terminate the session cleanly.
+                if consecutiveCaptureFailures >= 3 {
+                    HUD.show("Scrolling capture stopped")
+                    cancel(generation: generation)
+                }
+            }
         }
     }
 
-    private func ingest(_ image: CapturedImage) async {
+    private func installSessionScreenObserver(generation: UInt64) {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            // The selected display geometry/source may no longer exist. Cancel rather than leaving
+            // the timer and its repeated ScreenCaptureKit requests alive off-screen. The observer's
+            // callback may already be queued when removal occurs, so preserve the owning token: a
+            // delayed callback from session A must never cancel a newly-started session B.
+            MainActor.assumeIsolated { self?.cancel(generation: generation) }
+        }
+    }
+
+    private func ingest(_ image: CapturedImage, generation: UInt64) async {
+        guard active, generation == sessionGeneration else { return }
         let prevFrame = lastFrame
         let isFirst = head == nil
-        let result: (piece: CapturedImage?, frame: ScrollStitcher.Frame)? = await Task.detached {
+        let currentBytes = retainedBitmapBytes
+        let currentHeight = stitchedHeight
+        let result: (piece: CapturedImage?, frame: ScrollStitcher.Frame, reachedLimit: Bool)? = await Task.detached {
             guard let nf = ScrollStitcher.makeFrame(image.cgImage) else { return nil }
             guard let pf = prevFrame, !isFirst else {
-                return (image, nf) // first frame seeds the head
+                let fits = ScrollStitcher.canRetain(
+                    currentBytes: currentBytes,
+                    currentHeight: currentHeight,
+                    candidateBytesPerRow: image.cgImage.bytesPerRow,
+                    candidateHeight: image.cgImage.height)
+                return fits ? (image, nf, false) : (nil, nf, true) // first frame seeds the head
             }
             let dy = ScrollStitcher.bestShift(prev: pf.signature, next: nf.signature)
             guard dy > 0, let strip = ScrollStitcher.strip(from: image.cgImage, rows: dy) else {
-                return (nil, nf) // no new content; just advance the reference frame
+                return (nil, nf, false) // no new content; just advance the reference frame
             }
-            return (CapturedImage(cgImage: strip, scale: image.scale, displayID: image.displayID), nf)
+            let fits = ScrollStitcher.canRetain(
+                currentBytes: currentBytes,
+                currentHeight: currentHeight,
+                candidateBytesPerRow: strip.bytesPerRow,
+                candidateHeight: strip.height)
+            guard fits else { return (nil, nf, true) }
+            return (CapturedImage(cgImage: strip, scale: image.scale, displayID: image.displayID), nf, false)
         }.value
 
-        guard active, let (piece, newFrame) = result else { return }
+        guard active, generation == sessionGeneration,
+              let (piece, newFrame, reachedLimit) = result else { return }
+        if reachedLimit {
+            HUD.show("Maximum scrolling capture size reached")
+            done(generation: generation)
+            return
+        }
         lastFrame = newFrame
         if isFirst, let piece {
             head = piece
             stitchedHeight = piece.cgImage.height
+            retainedBitmapBytes = piece.cgImage.bytesPerRow * piece.cgImage.height
         } else if let piece {
             strips.append(piece)
             stitchedHeight += piece.cgImage.height
+            retainedBitmapBytes += piece.cgImage.bytesPerRow * piece.cgImage.height
         }
         bar?.update(heightPx: stitchedHeight)
     }
 
     // MARK: Finish
 
-    private func done() {
-        stop()
-        guard let head else { reset(); return }
-        let strips = self.strips
-        if strips.count > 20 { HUD.show("Stitching…", duration: 1.0) }
+    private func done(generation: UInt64? = nil) {
+        guard active else { return }
+        if let generation, generation != sessionGeneration { return }
+        // Keep CaptureCoordinator's global gate until compositing and delivery finish. Releasing it
+        // here would let another capture overwrite shared output state while this task is suspended.
+        stop(notifyEnd: false)
+        guard let head else {
+            reset()
+            finishActivity()
+            return
+        }
+        let stripCount = strips.count
+        let sources = ScrollCompositeSources(head: head.cgImage, strips: strips.map(\.cgImage))
+        let scale = head.scale
+        let displayID = head.displayID
+        // The snapshots below own everything the potentially long composite needs. Clear the
+        // controller's mutable session slots before suspension so completion never resets later state.
+        reset()
+        if stripCount > 20 { HUD.show("Stitching…", duration: 1.0) }
         Task {
-            let stitched: CGImage? = strips.isEmpty ? head.cgImage : await Task.detached {
-                ScrollStitcher.composite(head: head.cgImage, strips: strips.map(\.cgImage))
-            }.value
+            let stitched = await Task.detached { sources.composite() }.value
+            // The composite owns its pixels. Drop up to 256 MiB of source strips before deliver()
+            // can allocate an auto-beautified output and encoder scratch buffers.
+            sources.releaseBitmaps()
             if let stitched {
                 CaptureCoordinator.shared.deliver(
-                    CapturedImage(cgImage: stitched, scale: head.scale, displayID: head.displayID),
+                    CapturedImage(cgImage: stitched, scale: scale, displayID: displayID),
                     mode: .region)
             }
-            reset()
+            finishActivity()
         }
     }
 
-    private func cancel() {
+    private func cancel(generation: UInt64? = nil) {
+        guard active else { return }
+        if let generation, generation != sessionGeneration { return }
         stop()
         reset()
     }
 
-    private func stop() {
+    private func stop(notifyEnd: Bool = true) {
         active = false          // gate any in-flight tick/ingest before tearing down
+        sessionGeneration &+= 1 // invalidate work suspended in ScreenCaptureKit / stitching
         timer?.invalidate()
         timer = nil
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+            self.screenObserver = nil
+        }
         bar?.dismiss()
         bar = nil
+        if notifyEnd { finishActivity() }
+    }
+
+    private func finishActivity() {
+        let completion = onEnd
+        onEnd = nil
+        completion?()
     }
 
     private func reset() {
         head = nil
         strips = []
         stitchedHeight = 0
+        retainedBitmapBytes = 0
         lastFrame = nil
+        consecutiveCaptureFailures = 0
     }
 
     // MARK: Bar
 
-    private func showBar(near screen: NSScreen) {
+    private func showBar(near screen: NSScreen, generation: UInt64) {
         let bar = ScrollCaptureBar()
-        bar.onDone = { [weak self] in self?.done() }
-        bar.onCancel = { [weak self] in self?.cancel() }
+        bar.onDone = { [weak self] in self?.done(generation: generation) }
+        bar.onCancel = { [weak self] in self?.cancel(generation: generation) }
         bar.present(near: screen)
         self.bar = bar
     }
