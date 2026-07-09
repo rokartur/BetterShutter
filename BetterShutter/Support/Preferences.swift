@@ -202,6 +202,9 @@ nonisolated enum QuickAccessSide: String, CaseIterable, Sendable {
 /// capture actor and main-actor UI can both read it. Hotkeys persist themselves via BetterShortcuts.
 nonisolated enum Preferences {
     private static var defaults: UserDefaults { .standard }
+    /// UserDefaults protects individual calls, not a read-modify-write sequence. Screenshot saves
+    /// and recording finalization can request `{n}` concurrently on different executors.
+    private static let captureCounterLock = NSLock()
 
     private enum Key {
         static let saveDirectory = "saveDirectoryPath"
@@ -512,8 +515,10 @@ nonisolated enum Preferences {
 
     /// Monotonic counter for the `{n}` filename token.
     static func nextCaptureCounter() -> Int {
-        let next = defaults.integer(forKey: Key.captureCounter) + 1
-        defaults.set(next, forKey: Key.captureCounter)
-        return next
+        captureCounterLock.withLock {
+            let next = defaults.integer(forKey: Key.captureCounter) + 1
+            defaults.set(next, forKey: Key.captureCounter)
+            return next
+        }
     }
 }

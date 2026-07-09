@@ -4,9 +4,12 @@ import AppKit
 @MainActor
 enum HUD {
     private static var current: NSPanel?
+    private static var dismissTask: Task<Void, Never>?
 
     static func show(_ text: String, duration: Double = 1.3) {
-        current?.orderOut(nil)
+        dismissTask?.cancel()
+        dismissTask = nil
+        current?.close()
         current = nil
 
         let label = NSTextField(labelWithString: text)
@@ -34,11 +37,16 @@ enum HUD {
         NSAnimationContext.runAnimationGroup { $0.duration = 0.12; panel.animator().alphaValue = 1 }
         current = panel
 
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(duration))
+        dismissTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(max(0, duration)))
+            } catch {
+                return
+            }
             guard current === panel else { return }
-            panel.orderOut(nil)
+            panel.close()
             current = nil
+            dismissTask = nil
         }
     }
 }
