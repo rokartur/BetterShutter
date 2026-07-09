@@ -4,6 +4,20 @@ import AppKit
 /// it in the link history, and surface progress/errors via the HUD.
 @MainActor
 enum CloudUploadService {
+    /// Upload is latest-wins. Retaining every superseded PNG/multipart/network task allows repeated
+    /// clicks to grow memory and saturate CPU/network without bound, so starting a new request
+    /// cancels the previous one and only the live request may enter history or touch clipboard/HUD.
+    private static var uploadGeneration: UInt = 0
+    private static var uploadTask: Task<Void, Never>?
+    private struct PendingUpload {
+        let generation: UInt
+        let pasteboardChangeCount: Int
+        let perform: @Sendable () async throws -> URL
+    }
+    /// At most one request runs and one latest replacement waits. Repeated clicks replace this
+    /// closure instead of spawning more non-cancellable ImageIO finalizations or network bodies.
+    private static var pendingUpload: PendingUpload?
+
     static var isEnabled: Bool { Preferences.cloudProvider != .none }
 
     static func uploader() -> Uploader? {
@@ -36,9 +50,9 @@ enum CloudUploadService {
         let key = currentKey(ext: "png")
         let captured = CapturedImage(cgImage: image, scale: 1, displayID: nil)
         send {
-            guard let data = await Task.detached(operation: {
-                ImageEncoder.encode(captured.cgImage, as: .png)
-            }).value else { throw CloudError.encodeFailed }
+            let data = await ImageEncoder.encodeAsync(captured.cgImage, as: .png)
+            try Task.checkCancellation()
+            guard let data else { throw CloudError.encodeFailed }
             return try await uploader.upload(data, key: key, contentType: "image/png")
         }
     }
@@ -62,15 +76,39 @@ enum CloudUploadService {
     }
 
     private static func send(_ perform: @escaping @Sendable () async throws -> URL) {
+        uploadGeneration &+= 1
+        let generation = uploadGeneration
+        // A share link may replace only the clipboard state that existed when this upload began.
+        // This also protects copies made by other apps while the network request is in flight.
+        let pasteboardChangeCount = NSPasteboard.general.changeCount
+        pendingUpload = PendingUpload(
+            generation: generation,
+            pasteboardChangeCount: pasteboardChangeCount,
+            perform: perform)
+        uploadTask?.cancel()
         HUD.show("Uploading…", duration: 1.0)
-        Task {
+        startNextUploadIfNeeded()
+    }
+
+    private static func startNextUploadIfNeeded() {
+        guard uploadTask == nil, let request = pendingUpload else { return }
+        pendingUpload = nil
+        uploadTask = Task {
+            defer {
+                uploadTask = nil
+                startNextUploadIfNeeded()
+            }
             do {
-                let url = try await perform()
+                let url = try await request.perform()
+                try Task.checkCancellation()
+                Preferences.cloudLinkHistory = [url.absoluteString] + Preferences.cloudLinkHistory
+                guard request.generation == uploadGeneration,
+                      NSPasteboard.general.changeCount == request.pasteboardChangeCount else { return }
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                Preferences.cloudLinkHistory = [url.absoluteString] + Preferences.cloudLinkHistory
                 HUD.show("Link copied")
             } catch {
+                guard !Task.isCancelled, request.generation == uploadGeneration else { return }
                 HUD.show(error.localizedDescription)
             }
         }

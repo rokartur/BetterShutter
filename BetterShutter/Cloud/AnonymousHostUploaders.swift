@@ -41,25 +41,39 @@ nonisolated enum MultipartUpload {
     /// The same body staged as a temp file, copying the payload in 1 MiB chunks so memory stays
     /// flat for multi-hundred-MB recordings. Caller deletes the returned file.
     static func writeBodyFile(fields: [(String, String)], fileField: String, filename: String,
-                              contentType: String, payloadFile: URL, boundary: String) throws -> URL {
-        let bodyURL = FileManager.default.temporaryDirectory
+                              contentType: String, payloadFile: URL, boundary: String,
+                              temporaryDirectory: URL = FileManager.default.temporaryDirectory) throws -> URL {
+        let bodyURL = temporaryDirectory
             .appendingPathComponent("bettershutter-upload-\(UUID().uuidString).tmp")
-        FileManager.default.createFile(atPath: bodyURL.path, contents: nil)
-        let out = try FileHandle(forWritingTo: bodyURL)
-        defer { try? out.close() }
-
-        var head = Data()
-        for (name, value) in fields { head.append(fieldPart(name: name, value: value, boundary: boundary)) }
-        head.append(fileHeader(fileField: fileField, filename: filename, contentType: contentType, boundary: boundary))
-        try out.write(contentsOf: head)
-
-        let input = try FileHandle(forReadingFrom: payloadFile)
-        defer { try? input.close() }
-        while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
-            try out.write(contentsOf: chunk)
+        guard FileManager.default.createFile(atPath: bodyURL.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
         }
-        try out.write(contentsOf: suffix(boundary: boundary))
-        return bodyURL
+        do {
+            let out = try FileHandle(forWritingTo: bodyURL)
+            defer { try? out.close() }
+
+            var head = Data()
+            for (name, value) in fields { head.append(fieldPart(name: name, value: value, boundary: boundary)) }
+            head.append(fileHeader(fileField: fileField, filename: filename, contentType: contentType, boundary: boundary))
+            try out.write(contentsOf: head)
+
+            let input = try FileHandle(forReadingFrom: payloadFile)
+            defer { try? input.close() }
+            while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
+                // Staging a large recording is synchronous disk work. Cooperate with cancellation
+                // between chunks so a cancelled upload does not keep copying hundreds of MB.
+                try Task<Never, Never>.checkCancellation()
+                try out.write(contentsOf: chunk)
+            }
+            try Task<Never, Never>.checkCancellation()
+            try out.write(contentsOf: suffix(boundary: boundary))
+            return bodyURL
+        } catch {
+            // `send` cannot install its defer until this helper returns. Clean up here on every
+            // construction/read/write/cancellation failure or partial staging files accumulate.
+            try? FileManager.default.removeItem(at: bodyURL)
+            throw error
+        }
     }
 
     /// `@concurrent` so the body staging (a full read+rewrite of a possibly multi-hundred-MB
@@ -76,8 +90,10 @@ nonisolated enum MultipartUpload {
         let response: URLResponse
         switch payload {
         case .data(let data):
+            try Task<Never, Never>.checkCancellation()
             let body = body(fields: fields, fileField: fileField, filename: filename,
                             contentType: contentType, fileData: data, boundary: boundary)
+            try Task<Never, Never>.checkCancellation()
             (respData, response) = try await URLSession.shared.upload(for: request, from: body)
         case .file(let payloadFile):
             let bodyFile = try writeBodyFile(fields: fields, fileField: fileField, filename: filename,

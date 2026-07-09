@@ -34,10 +34,11 @@ extension Uploader {
 
 /// PUT an object to any S3-compatible endpoint (AWS S3, Cloudflare R2, MinIO, Spaces, B2), signed
 /// with SigV4. Returns the object's public URL (custom domain / derived).
-struct S3Uploader: Uploader {
+nonisolated struct S3Uploader: Uploader {
     let config: S3Config
     let secretKey: String
 
+    @concurrent
     func upload(_ data: Data, key: String, contentType: String) async throws -> URL {
         let (request, url) = try signedPutRequest(
             key: key, contentType: contentType, payloadHash: SigV4.sha256Hex(data))
@@ -48,6 +49,7 @@ struct S3Uploader: Uploader {
 
     /// Stream the file from disk: the payload hash is computed in chunks and URLSession reads the
     /// body from the file, so memory stays flat regardless of file size.
+    @concurrent
     func uploadFile(_ fileURL: URL, key: String, contentType: String) async throws -> URL {
         let (request, url) = try signedPutRequest(
             key: key, contentType: contentType, payloadHash: SigV4.sha256HexOfFile(fileURL))
@@ -91,7 +93,7 @@ struct S3Uploader: Uploader {
 }
 
 /// Upload to imgbb (free image host). Requires the user's API key.
-struct ImgbbUploader: Uploader {
+nonisolated struct ImgbbUploader: Uploader {
     let apiKey: String
 
     /// Multipart body: prefix + the raw payload bytes + suffix. Peak memory is ~2× the payload
@@ -110,6 +112,7 @@ struct ImgbbUploader: Uploader {
         return body
     }
 
+    @concurrent
     func upload(_ data: Data, key: String, contentType: String) async throws -> URL {
         guard !apiKey.isEmpty, var comps = URLComponents(string: "https://api.imgbb.com/1/upload") else {
             throw CloudError.notConfigured

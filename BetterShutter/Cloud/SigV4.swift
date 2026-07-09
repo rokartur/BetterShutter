@@ -58,6 +58,9 @@ nonisolated enum SigV4 {
         var hasher = SHA256()
         while true {
             guard let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty else { break }
+            // Hashing a recording can take seconds. Let cancellation stop both this CPU work and
+            // the subsequent upload instead of finishing the entire file unconditionally.
+            try Task<Never, Never>.checkCancellation()
             hasher.update(data: chunk)
         }
         return hex(hasher.finalize())
