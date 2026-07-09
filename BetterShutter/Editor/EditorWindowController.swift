@@ -9,6 +9,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
 
     private let canvas: EditorCanvasView
     private let mode: CaptureMode
+    /// A repeated Save click must not retain and encode another full-resolution flattened image
+    /// while the previous file write is still running.
+    private var saveTask: Task<Void, Never>?
+    private var saveGeneration: UInt64 = 0
     private var toolControl: NSSegmentedControl?
     private var colorWell: NSColorWell?
     private let swatches = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -498,15 +502,34 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSTool
     }
 
     @objc private func saveTapped() {
+        guard saveTask == nil else { return }
         guard let cg = canvas.flattened() else { return }
         let captured = CapturedImage(cgImage: cg, scale: 1, displayID: nil)
         let mode = self.mode
-        Task.detached { _ = try? FileSaver.save(captured.cgImage, mode: mode) }
+        saveGeneration &+= 1
+        let generation = saveGeneration
+        // Retain the actual worker (not a waiter around an unstructured task), so window close
+        // propagates cancellation before an encode starts and FileSaver observes it between stages.
+        saveTask = Task { [weak self] in
+            if !Task.isCancelled { _ = try? await FileSaver.saveAsync(captured.cgImage, mode: mode) }
+            self?.finishSave(generation: generation)
+        }
     }
 
     @objc private func doneTapped() { close() }
 
-    func windowWillClose(_ notification: Notification) { onClose?() }
+    func windowWillClose(_ notification: Notification) {
+        saveGeneration &+= 1
+        saveTask?.cancel()
+        saveTask = nil
+        canvas.prepareForClose()
+        onClose?()
+    }
+
+    private func finishSave(generation: UInt64) {
+        guard saveGeneration == generation else { return }
+        saveTask = nil
+    }
 
     // MARK: NSToolbarDelegate
 

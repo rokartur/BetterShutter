@@ -9,6 +9,9 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
     private let fullBase: CGImage
     private let previewBase: CGImage
     private let mode: CaptureMode
+    /// Bound Save to one in-flight full-resolution render/encode per window.
+    private var saveTask: Task<Void, Never>?
+    private var saveGeneration: UInt64 = 0
     private var style = BeautifyStyle.makeDefault()
     private let preview = BeautifyView()
     var onClose: (() -> Void)?
@@ -369,15 +372,31 @@ final class BeautifyWindowController: NSWindowController, NSWindowDelegate, NSTo
     }
 
     @objc private func saveTapped() {
+        guard saveTask == nil else { return }
         guard let cg = BeautifyRenderer.render(base: fullBase, style: style) else { return }
         let captured = CapturedImage(cgImage: cg, scale: 1, displayID: nil)
         let mode = self.mode
-        Task.detached { _ = try? FileSaver.save(captured.cgImage, mode: mode) }
+        saveGeneration &+= 1
+        let generation = saveGeneration
+        saveTask = Task { [weak self] in
+            if !Task.isCancelled { _ = try? await FileSaver.saveAsync(captured.cgImage, mode: mode) }
+            self?.finishSave(generation: generation)
+        }
     }
 
     @objc private func doneTapped() { close() }
 
-    func windowWillClose(_ notification: Notification) { onClose?() }
+    func windowWillClose(_ notification: Notification) {
+        saveGeneration &+= 1
+        saveTask?.cancel()
+        saveTask = nil
+        onClose?()
+    }
+
+    private func finishSave(generation: UInt64) {
+        guard saveGeneration == generation else { return }
+        saveTask = nil
+    }
 
     // MARK: NSToolbarDelegate
 

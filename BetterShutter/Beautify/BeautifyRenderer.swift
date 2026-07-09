@@ -6,6 +6,11 @@ import CoreImage.CIFilterBuiltins
 /// CoreGraphics so the image draws upright and the same code serves preview + full-res export.
 @MainActor
 enum BeautifyRenderer {
+    /// Core Image contexts are intentionally expensive and retain reusable GPU/CPU resources. The
+    /// perspective preview can render on every slider event, so constructing one per frame causes
+    /// avoidable context churn and transient memory/CPU spikes.
+    private static let ciContext = CIContext()
+
     static func render(base: CGImage, style: BeautifyStyle) -> CGImage? {
         let w = CGFloat(base.width)
         let h = CGFloat(base.height)
@@ -129,7 +134,7 @@ enum BeautifyRenderer {
             return image
         }
         guard let out = filter.outputImage else { return image }
-        return CIContext().createCGImage(out, from: out.extent)
+        return ciContext.createCGImage(out, from: out.extent)
     }
 
     /// Mesh gradient: fill with the first color, then blend soft radial blobs of each color at

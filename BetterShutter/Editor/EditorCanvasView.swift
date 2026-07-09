@@ -50,6 +50,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     /// lazily the first time the highlighter is used; empty until then (highlight stays freehand).
     private var textLines: [CGRect] = []
     private var ocrStarted = false
+    /// Async Vision requests resume through actor reentrancy. These tokens keep results produced for
+    /// an older base bitmap (or an earlier repeated command) from mutating the current document.
+    private var baseRevision: UInt64 = 0
+    private var faceRequestRevision: UInt64 = 0
+    private var piiRequestRevision: UInt64 = 0
+    private var ocrRequestRevision: UInt64 = 0
+    private var faceTask: Task<Void, Never>?
+    private var piiTask: Task<Void, Never>?
+    private var ocrTask: Task<Void, Never>?
 
     /// Fired when a single-key shortcut changes the tool, so the toolbar selection can follow.
     var onToolPicked: ((ToolKind) -> Void)?
@@ -115,6 +124,28 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         baseImage = image
         baseBox = UndoBaseImage(image)
         touchRecent(baseBox)
+        invalidateImageAnalysis()
+    }
+
+    private func invalidateImageAnalysis() {
+        baseRevision &+= 1
+        faceRequestRevision &+= 1
+        piiRequestRevision &+= 1
+        ocrRequestRevision &+= 1
+        faceTask?.cancel()
+        piiTask?.cancel()
+        ocrTask?.cancel()
+        faceTask = nil
+        piiTask = nil
+        ocrTask = nil
+        textLines = []
+        ocrStarted = false
+    }
+
+    /// The Vision runner propagates Task cancellation to VNRequest. Closing an editor must stop
+    /// full-image OCR/face work immediately instead of letting it consume CPU after the window dies.
+    func prepareForClose() {
+        invalidateImageAnalysis()
     }
 
     /// Move `box` to the end of the live set and downgrade whatever falls off the front.
@@ -153,6 +184,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         baseBox = snap.base
         touchRecent(snap.base)
         imageSize = snap.imageSize
+        invalidateImageAnalysis()
         adjust = snap.adjust
         adjustedCache = nil
         invalidateElementRenderCaches()
@@ -164,6 +196,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         dragMode = .none
         zoomFactor = 1
         panOffset = .zero
+        if tool == .highlighter { ensureTextLines() }
         needsDisplay = true
     }
 
@@ -181,6 +214,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         if let crop = cropRect { cropRect = crop.applying(t) }
         selected = nil
         groupSelection = []
+        if tool == .highlighter { ensureTextLines() }
         commit(before, kind.actionName)
         needsDisplay = true
     }
@@ -191,6 +225,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         setBase(inverted)
         adjustedCache = nil
         invalidateElementRenderCaches()
+        if tool == .highlighter { ensureTextLines() }
         commit(before, "Invert Colors")
         needsDisplay = true
     }
@@ -282,12 +317,18 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     /// Detect faces and blur each one (one undo step) — privacy redaction for people in a shot.
     func autoRedactFaces() {
+        guard faceTask == nil else { return }
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
         let size = imageSize
         let currentStyle = style
-        Task { [weak self] in
+        let expectedBaseRevision = baseRevision
+        faceRequestRevision &+= 1
+        let expectedRequestRevision = faceRequestRevision
+        faceTask = Task { [weak self] in
             let faces = await FaceDetector.detect(image)
-            guard let self else { return }
+            guard let self, self.faceRequestRevision == expectedRequestRevision else { return }
+            self.faceTask = nil
+            guard !Task.isCancelled, self.baseRevision == expectedBaseRevision else { return }
             guard !faces.isEmpty else { HUD.show("No faces found"); return }
             let before = snapshot()
             for box in faces {
@@ -308,13 +349,19 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
     /// Find PII via OCR and cover each matching line with a black-out box (one undo step).
     func autoRedactPII() {
+        guard piiTask == nil else { return }
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
         let size = imageSize
         let currentStyle = style
-        Task { [weak self] in
+        let expectedBaseRevision = baseRevision
+        piiRequestRevision &+= 1
+        let expectedRequestRevision = piiRequestRevision
+        piiTask = Task { [weak self] in
             let observations = await TextRecognizer.observations(image)
             let matches = observations.filter { PIIMatcher.containsPII($0.text) }
-            guard let self else { return }
+            guard let self, self.piiRequestRevision == expectedRequestRevision else { return }
+            self.piiTask = nil
+            guard !Task.isCancelled, self.baseRevision == expectedBaseRevision else { return }
             guard !matches.isEmpty else { HUD.show("No PII found"); return }
             let before = snapshot()
             for match in matches {
@@ -342,6 +389,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         setBase(cg)
         adjustedCache = nil
         invalidateElementRenderCaches()
+        if tool == .highlighter { ensureTextLines() }
         commit(before, "Filter")
         needsDisplay = true
     }
@@ -351,11 +399,17 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     private func ensureTextLines() {
         guard !ocrStarted else { return }
         ocrStarted = true
+        guard ocrTask == nil else { return }
         let image = CapturedImage(cgImage: baseImage, scale: 1, displayID: nil)
         let size = imageSize
-        Task { [weak self] in
+        let expectedBaseRevision = baseRevision
+        ocrRequestRevision &+= 1
+        let expectedRequestRevision = ocrRequestRevision
+        ocrTask = Task { [weak self] in
             let observations = await TextRecognizer.observations(image)
-            guard let self else { return }
+            guard let self, self.ocrRequestRevision == expectedRequestRevision else { return }
+            self.ocrTask = nil
+            guard !Task.isCancelled, self.baseRevision == expectedBaseRevision else { return }
             self.textLines = observations.map { o in
                 CGRect(x: o.box.minX * size.width, y: o.box.minY * size.height,
                        width: o.box.width * size.width, height: o.box.height * size.height)
