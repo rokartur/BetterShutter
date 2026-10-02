@@ -51,6 +51,8 @@ final class PinController {
 final class PinWindow: NSPanel {
     private let image: CapturedImage
     private let onClosed: (PinWindow) -> Void
+    private var ghostExitPanel: NSPanel?
+    private var alphaBeforeGhost: CGFloat = 1
 
     init(image: CapturedImage, onClosed: @escaping (PinWindow) -> Void) {
         self.image = image
@@ -90,21 +92,58 @@ final class PinWindow: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
-    /// Ghost mode: fade the pin to a translucent reference and let mouse events pass through to
-    /// whatever is underneath, so you can work below it. Reversible only via "Close All Pins"
-    /// (a click-through window can no longer receive a click to toggle itself back).
+    /// Ghost mode: fade the pin and let clicks pass through to whatever is underneath. The click-through
+    /// window can't receive the eye click that turns it off, so that button lives in its own child panel.
     private func enterGhostMode() {
+        alphaBeforeGhost = alphaValue
         alphaValue = PinGeometry.clampOpacity(0.45)
         ignoresMouseEvents = true
-        HUD.show("Pin ghosted — click through it. Use “Close All Pins” to remove")
+
+        let side: CGFloat = 24, inset: CGFloat = 6
+        let panel = NSPanel(contentRect: NSRect(x: frame.maxX - side - inset, y: frame.maxY - side - inset,
+                                                width: side, height: side),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.contentView = pinOverlayButton("eye", "Turn Off Ghost Mode", target: self,
+                                             action: #selector(exitGhostMode))
+        addChildWindow(panel, ordered: .above)
+        ghostExitPanel = panel
+    }
+
+    @objc private func exitGhostMode() {
+        closeGhostExitPanel()
+        ignoresMouseEvents = false
+        alphaValue = alphaBeforeGhost
+    }
+
+    private func closeGhostExitPanel() {
+        guard let ghostExitPanel else { return }
+        removeChildWindow(ghostExitPanel)
+        ghostExitPanel.close()
+        self.ghostExitPanel = nil
     }
 
     func closePin() {
+        closeGhostExitPanel()
         onClosed(self)
         // `orderOut` only hides an NSWindow; it does not tear down its WindowServer/layer/player
         // resources. Pins are not reusable, so close them after the owner drops its strong ref.
         close()
     }
+}
+
+@MainActor
+private func pinOverlayButton(_ symbol: String, _ tip: String, target: AnyObject, action: Selector) -> NSButton {
+    let b = NSButton(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
+    b.bezelStyle = .circular
+    b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+    b.imagePosition = .imageOnly
+    b.toolTip = tip
+    b.target = target
+    b.action = action
+    return b
 }
 
 /// The image surface of a pinned window. Forwards interactions to the window via closures.
@@ -118,9 +157,9 @@ private final class PinImageView: NSView {
     var onGhost: (() -> Void)?
 
     // Hover controls, hidden until the pointer enters the pin.
-    private lazy var closeButton = makeOverlayButton("xmark", "Close", #selector(closeAction))
-    private lazy var ghostButton = makeOverlayButton("eye.slash", "Ghost (transparent, click-through)",
-                                                     #selector(ghostAction))
+    private lazy var closeButton = pinOverlayButton("xmark", "Close", target: self, action: #selector(closeAction))
+    private lazy var ghostButton = pinOverlayButton("eye.slash", "Ghost (transparent, click-through)",
+                                                    target: self, action: #selector(ghostAction))
 
     init(image: CapturedImage) {
         super.init(frame: .zero)
@@ -139,17 +178,6 @@ private final class PinImageView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    private func makeOverlayButton(_ symbol: String, _ tip: String, _ action: Selector) -> NSButton {
-        let b = NSButton(frame: NSRect(x: 0, y: 0, width: 24, height: 24))
-        b.bezelStyle = .circular
-        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
-        b.imagePosition = .imageOnly
-        b.toolTip = tip
-        b.target = self
-        b.action = action
-        return b
-    }
 
     /// Close top-left, ghost top-right — both 6pt inset from the corners.
     override func layout() {
