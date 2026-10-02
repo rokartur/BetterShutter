@@ -90,7 +90,8 @@ nonisolated enum FileSaver {
             do {
                 // The lock covers other FileSaver calls; withoutOverwriting also closes the
                 // check-then-write gap against an external process creating the candidate.
-                try data.write(to: url, options: [.atomic, .withoutOverwriting])
+                // Foundation traps when it is combined with .atomic.
+                try data.write(to: url, options: .withoutOverwriting)
                 return url
             } catch let error as CocoaError where error.code == .fileWriteFileExists {
                 url = uniqueURL(in: directory, filename: filename)
