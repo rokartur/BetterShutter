@@ -1322,15 +1322,16 @@ struct MultipartUploadTests {
                                         fileField: "fileupload", filename: "shot.png",
                                         contentType: "image/png", fileData: payload, boundary: boundary)
 
-        let prefix = Data((
-            "--\(boundary)\r\n" +
-            "Content-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n" +
-            "--\(boundary)\r\n" +
-            "Content-Disposition: form-data; name=\"time\"\r\n\r\n24h\r\n" +
-            "--\(boundary)\r\n" +
-            "Content-Disposition: form-data; name=\"fileupload\"; filename=\"shot.png\"\r\n" +
-            "Content-Type: image/png\r\n\r\n"
-        ).utf8)
+        let prefixParts: [String] = [
+            "--\(boundary)\r\n",
+            "Content-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n",
+            "--\(boundary)\r\n",
+            "Content-Disposition: form-data; name=\"time\"\r\n\r\n24h\r\n",
+            "--\(boundary)\r\n",
+            "Content-Disposition: form-data; name=\"fileupload\"; filename=\"shot.png\"\r\n",
+            "Content-Type: image/png\r\n\r\n",
+        ]
+        let prefix = Data(prefixParts.joined().utf8)
         let suffix = Data("\r\n--\(boundary)--\r\n".utf8)
 
         #expect(body.prefix(prefix.count) == prefix)
