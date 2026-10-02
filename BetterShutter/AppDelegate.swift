@@ -44,6 +44,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         recoverInterruptedRecording()
     }
 
+    /// Opening the app again (Finder, Spotlight) is the way back to Settings when the menu bar icon is hidden.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return false
+    }
+
+    /// Shown while recording even when hidden, so the timer and stop control stay reachable.
+    func updateStatusItemVisibility() {
+        statusItem?.isVisible = !Preferences.hideMenuBarIcon || RecordingController.shared.isRecording
+    }
+
     /// If a recording was in progress when the app last quit/crashed, its fragmented MP4 is still
     /// playable — surface it instead of silently losing the footage.
     private func recoverInterruptedRecording() {
@@ -66,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                       accessibilityDescription: "Recording")
 
     private func recordingStateChanged() {
+        updateStatusItemVisibility()
         if RecordingController.shared.isRecording {
             if recordingTimer == nil {
                 statusItem?.button?.image = Self.recordingStatusImage
@@ -168,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         item.menu = menu
         statusItem = item
+        updateStatusItemVisibility()
     }
 
     private var menuPopulated = false

@@ -59,6 +59,9 @@ func makeSettingsConfiguration() -> SettingsConfiguration {
             SettingsSearchItem(id: "general.launchAtLogin", tabID: "general", sectionAnchor: "general.behavior",
                                title: "Launch at login", tabTitle: "General", sectionTitle: "Behavior",
                                keywords: ["startup", "boot", "open at login"]),
+            SettingsSearchItem(id: "general.hideMenuBarIcon", tabID: "general", sectionAnchor: "general.behavior",
+                               title: "Hide menu bar icon", tabTitle: "General", sectionTitle: "Behavior",
+                               keywords: ["menu bar", "status", "icon", "hide"]),
             SettingsSearchItem(id: "general.autoUpdate", tabID: "general", sectionAnchor: "general.updates",
                                title: "Check for updates automatically", tabTitle: "General", sectionTitle: "Updates",
                                keywords: ["update", "upgrade", "auto"]),
@@ -213,6 +216,10 @@ final class GeneralSettingsTab: SettingsTabViewController {
         addRow(to: behavior, title: "Launch at login",
                subtitle: "Start automatically when you log in.",
                accessory: loginSwitch, searchItemID: "general.launchAtLogin")
+        let menuBarSwitch = makeToggle(Preferences.hideMenuBarIcon, target: self, action: #selector(toggleHideMenuBarIcon(_:)))
+        addRow(to: behavior, title: "Hide menu bar icon",
+               subtitle: "Open BetterShutter again to get back to Settings.",
+               accessory: menuBarSwitch, searchItemID: "general.hideMenuBarIcon")
 
         let updates = addSection(title: "Updates", anchor: "general.updates")
         let autoSwitch = makeToggle(updater.automaticInstallEnabled, target: self, action: #selector(toggleAutoUpdate(_:)))
@@ -233,6 +240,11 @@ final class GeneralSettingsTab: SettingsTabViewController {
         } catch {
             sender.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         }
+    }
+
+    @objc private func toggleHideMenuBarIcon(_ sender: NSSwitch) {
+        Preferences.hideMenuBarIcon = (sender.state == .on)
+        (NSApp.delegate as? AppDelegate)?.updateStatusItemVisibility()
     }
 
     @objc private func toggleAutoUpdate(_ sender: NSSwitch) {

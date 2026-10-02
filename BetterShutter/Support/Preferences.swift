@@ -240,6 +240,7 @@ nonisolated enum Preferences {
         static let historyRetention = "captureHistoryRetention"
         static let captureDelay = "captureDelaySeconds"
         static let hideDesktopIcons = "hideDesktopIcons"
+        static let hideMenuBarIcon = "hideMenuBarIcon"
         static let focusShortcutStart = "focusShortcutStart"
         static let focusShortcutStop = "focusShortcutStop"
     }
@@ -259,6 +260,11 @@ nonisolated enum Preferences {
     static var hideDesktopIcons: Bool {
         get { defaults.bool(forKey: Key.hideDesktopIcons) }
         set { defaults.set(newValue, forKey: Key.hideDesktopIcons) }
+    }
+
+    static var hideMenuBarIcon: Bool {
+        get { defaults.bool(forKey: Key.hideMenuBarIcon) }
+        set { defaults.set(newValue, forKey: Key.hideMenuBarIcon) }
     }
 
     /// Self-timer delay (seconds) before a capture fires; 0 = off. Lets the user arrange the screen
