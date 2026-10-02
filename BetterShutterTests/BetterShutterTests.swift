@@ -1593,8 +1593,8 @@ struct MeshGradientTests {
 @MainActor
 struct FloatPreviewCardSizeTests {
     @Test
-    func cardIsAlways16x9() {
-        // Every capture aspect maps to the same fixed 16:9 tile.
+    func cardIsAlways5x3() {
+        // Every capture aspect maps to the same fixed 5:3 tile.
         for px in [CGSize(width: 1920, height: 1080),   // 16:9
                    CGSize(width: 800, height: 2000),     // portrait
                    CGSize(width: 4000, height: 400),     // ultrawide
@@ -1602,7 +1602,7 @@ struct FloatPreviewCardSizeTests {
             let size = FloatPreviewView.cardSize(for: px)
             #expect(size.width == FloatPreviewView.cardWidth)
             #expect(size.height == FloatPreviewView.cardHeight)
-            #expect(abs(size.width / size.height - 16.0 / 9.0) < 0.001)
+            #expect(abs(size.width / size.height - 5.0 / 3.0) < 0.01)
         }
     }
 }

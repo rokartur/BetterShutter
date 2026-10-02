@@ -159,7 +159,7 @@ nonisolated enum ImageFileFormat: String, CaseIterable, Sendable {
 }
 
 /// Size of the Quick Access (float preview) cards. Only the width is stored here; the card keeps a
-/// fixed 16:9 shape, so height derives from width at the call site.
+/// fixed 5:3 shape, so height derives from width at the call site.
 nonisolated enum QuickAccessSize: String, CaseIterable, Sendable {
     case small
     case medium
@@ -169,7 +169,7 @@ nonisolated enum QuickAccessSize: String, CaseIterable, Sendable {
     var cardWidth: CGFloat {
         switch self {
         case .small: return 176
-        case .medium: return 224
+        case .medium: return 250
         case .large: return 288
         case .extraLarge: return 360
         }

@@ -8,19 +8,16 @@ import UniformTypeIdentifiers
 @MainActor
 final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
 
-    /// Every quick-access card is a fixed 16:9 tile so the bottom-right stack reads as a clean,
-    /// uniform column. The capture is aspect-fit inside (centered, with a thin dark frame for shots
-    /// that aren't 16:9).
-    /// Width follows the user's Quick Access size preference (Small…Extra Large); the tile stays a
-    /// fixed 16:9 so the bottom-right stack reads as a uniform column at any size.
+    /// Every quick-access card is a fixed 5:3 tile, CleanShot X's 250 x 150 at Medium.
+    /// Width follows the user's Quick Access size preference (Small…Extra Large); the tile stays 5:3.
     static var cardWidth: CGFloat { Preferences.quickAccessSize.cardWidth }
-    static var cardHeight: CGFloat { (cardWidth * 9 / 16).rounded() }
+    static var cardHeight: CGFloat { (cardWidth * 3 / 5).rounded() }
     static var cardSize: NSSize { NSSize(width: cardWidth, height: cardHeight) }
 
-    /// Fixed 16:9 regardless of the capture's own aspect (kept as a function for call-site clarity).
+    /// Fixed 5:3 regardless of the capture's own aspect (kept as a function for call-site clarity).
     static func cardSize(for pixelSize: CGSize) -> NSSize { cardSize }
 
-    private let corner: CGFloat = 14
+    private let corner: CGFloat = 12
 
     private let image: CapturedImage
     private let mode: CaptureMode
@@ -74,7 +71,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         layer?.cornerRadius = corner
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        // Fixed 16:9 tile: a backing (the letterbox frame for non-16:9 captures) plus a hairline
+        // Fixed 5:3 tile: a backing (the letterbox frame for non-5:3 captures) plus a hairline
         // border so the card separates from the desktop behind it. Both adapt to light/dark.
         layer?.borderWidth = 1
         setupHoverBlur()
@@ -183,7 +180,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     /// Hover chrome, CleanShot-style quick access: two prominent capsule buttons (Copy + Save/Reveal)
-    /// centered on the dimmed card, plus four corner icon buttons — pin (top-left), dismiss
+    /// centered on the dimmed card, plus four corner icon buttons — dismiss (top-left), pin
     /// (top-right), edit (bottom-left), and upload-or-share (bottom-right).
     private func setupControls() {
         let copy = makeTextButton("Copy", action: #selector(copyTapped))
@@ -194,7 +191,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         let center = NSStackView(views: [copy, secondary])
         centerStack = center
         center.orientation = .vertical
-        center.spacing = 8
+        center.spacing = 10
         center.alignment = .centerX
         center.translatesAutoresizingMaskIntoConstraints = false
         addSubview(center)
@@ -204,32 +201,33 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         ])
 
         // Pinning is a screenshot-only affordance; a video card skips that corner.
-        let pin = isVideo ? nil : cornerButton("pin", "Pin to Screen", #selector(pinTapped))
-        let close = cornerButton("xmark", "Dismiss (⌘W)", #selector(closeTapped))
+        let pin = isVideo ? nil : cornerButton("pin.fill", "Pin to Screen", #selector(pinTapped), tilt: -45)
+        let close = cornerButton(glyphSize: 8, "xmark", "Dismiss (⌘W)", #selector(closeTapped))
         let edit = isGIFVideo ? nil
-            : cornerButton("pencil.tip.crop.circle", isVideo ? "Edit Video (⌘E)" : "Edit (⌘E)", #selector(editTapped))
+            : cornerButton("pencil", isVideo ? "Edit Video (⌘E)" : "Edit (⌘E)", #selector(editTapped))
         let trailingBottom = CloudUploadService.isEnabled
-            ? cornerButton("icloud.and.arrow.up", "Upload & Copy Link", #selector(uploadTapped))
+            ? cornerButton("icloud.and.arrow.up.fill", "Upload & Copy Link", #selector(uploadTapped))
             : cornerButton("square.and.arrow.up", "Share", #selector(shareTapped))
 
         for b in [pin, close, edit, trailingBottom].compactMap({ $0 }) { addSubview(b) }
+        let inset: CGFloat = 6
         if let pin {
             NSLayoutConstraint.activate([
-                pin.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-                pin.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+                pin.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+                pin.topAnchor.constraint(equalTo: topAnchor, constant: inset),
             ])
         }
         if let edit {
             NSLayoutConstraint.activate([
-                edit.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-                edit.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+                edit.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+                edit.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
             ])
         }
         NSLayoutConstraint.activate([
-            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            close.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            trailingBottom.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            trailingBottom.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            close.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            close.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+            trailingBottom.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            trailingBottom.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
         ])
 
         hoverControls = ([center, pin, close, edit, trailingBottom] as [NSView?]).compactMap { $0 }
@@ -252,38 +250,36 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
         hoverControls.append(reveal)
     }
 
-    /// A 24pt circular icon button (corner chrome), CleanShot-style: flat over the dark hover blur,
-    /// white glyph, with a soft rounded highlight that fades in on hover / press. Uses a custom
-    /// `IconTile` (not NSButton) so the frame is exactly 24×24 — a true circle, never an egg.
-    private func cornerButton(_ symbol: String, _ tip: String, _ action: Selector) -> NSView {
-        let tile = IconTile(symbol: symbol, tip: tip)
+    /// A 22pt circular corner action. `IconTile` (not NSButton) so the frame is an exact square.
+    private func cornerButton(glyphSize: CGFloat = 10, _ symbol: String, _ tip: String, _ action: Selector, tilt: CGFloat = 0) -> NSView {
+        let tile = IconTile(symbol: symbol, tip: tip, glyphSize: glyphSize, tilt: tilt)
         tile.target = self
         tile.action = action
         return tile
     }
 
-    /// A pill with a bold label — the prominent primary/secondary actions. Flat white text over the
-    /// dark hover blur, with the same rounded hover/press highlight as the corner icons.
+    /// A 27pt pill that hugs its label with 10pt side padding.
     private func makeTextButton(_ title: String, action: Selector) -> NSView {
-        let button = QuickAccessButton(cornerRadius: 15)
+        let height: CGFloat = 27
+        let button = QuickAccessButton(cornerRadius: height / 2)
         button.target = self
         button.action = action
-        let font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        let font = NSFont.systemFont(ofSize: 13, weight: .medium)
         button.attributedTitle = NSAttributedString(string: title, attributes: [
             .font: font,
-            .foregroundColor: NSColor.white,
+            .foregroundColor: QuickAccessChip.glyph,
         ])
         button.setAccessibilityLabel(title)
         // Pill hugs its label (+ side padding) so it fits both short words and longer translations,
         // with a floor so a single-glyph title still reads as a tappable capsule.
         let textWidth = (title as NSString).size(withAttributes: [.font: font]).width
-        let width = max(72, (textWidth + 32).rounded(.up))
-        return sized(button, NSSize(width: width, height: 30))
+        let width = max(44, (textWidth + 20).rounded(.up))
+        return sized(button, NSSize(width: width, height: height))
     }
 
     /// Forces a button to an exact size by pinning it to all four edges of a fixed-size box. NSButton
     /// imposes a minimum content height that overrides a size constraint set on the button directly
-    /// (stretching the 24×24 corner icons into eggs); edge-pinning to a sized container beats it, so
+    /// (stretching the corner icons into eggs); edge-pinning to a sized container beats it, so
     /// the corner icons come out as true circles and the text actions as clean pills.
     private func sized(_ button: NSButton, _ size: NSSize) -> NSView {
         let box = NSView()
@@ -450,7 +446,7 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Fill the card width and center vertically; captures taller than 16:9 crop top/bottom
+        // Fill the card width and center vertically; captures taller than 5:3 crop top/bottom
         // (the layer's rounded mask clips the overflow). The image always spans the full width.
         let scale = image.pixelSize.width > 0 ? bounds.width / image.pixelSize.width : 1
         let h = image.pixelSize.height * scale
@@ -580,9 +576,18 @@ final class FloatPreviewView: NSView, NSDraggingSource, QLPreviewPanelDataSource
     }
 }
 
-/// A flat, borderless quick-access action button, styled like CleanShot's overlay toolbar: white
-/// glyph/label over the card's dark hover blur, with a soft rounded highlight that fades in on hover
-/// and deepens on press. No per-button glass — the color is fixed, so it never bleeds the wallpaper.
+/// Light-gray chip with a dark glyph, measured from CleanShot X 5.0.1's Quick Access hover state.
+@MainActor
+private enum QuickAccessChip {
+    static let fill = NSColor(white: 0.835, alpha: 1)
+    static let glyph = NSColor(white: 0.08, alpha: 1)
+
+    static func highlightOpacity(pressing: Bool, hovering: Bool) -> Float {
+        pressing ? 0.16 : (hovering ? 0.06 : 0)
+    }
+}
+
+/// Pill text action on the hovered card; darkens slightly on hover and press.
 @MainActor
 private final class QuickAccessButton: NSButton {
     private let highlight = CALayer()
@@ -596,18 +601,13 @@ private final class QuickAccessButton: NSButton {
         isBordered = false
         bezelStyle = .regularSquare
         imageScaling = .scaleNone
-        // Resting chip: a subtle translucent fill + hairline so the button reads as a distinct control
-        // on top of the dark hover blur, not a bare glyph floating on it.
         layer?.cornerRadius = cornerRadius
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
-        // Hover/press brightening, layered over the resting fill (behind the glyph/label).
+        layer?.backgroundColor = QuickAccessChip.fill.cgColor
         highlight.cornerRadius = cornerRadius
         highlight.cornerCurve = .continuous
-        highlight.backgroundColor = NSColor.white.cgColor
+        highlight.backgroundColor = NSColor.black.cgColor
         highlight.opacity = 0
         layer?.insertSublayer(highlight, at: 0)
     }
@@ -615,7 +615,7 @@ private final class QuickAccessButton: NSButton {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     // NSButton otherwise forces a minimum content height that overrides the explicit size constraints,
-    // stretching the 24×24 corner icons into vertical capsules. Contribute no intrinsic size so the
+    // stretching the corner icons into vertical capsules. Contribute no intrinsic size so the
     // width/height constraints alone define a true square (→ circle at radius = half the side).
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
 
@@ -645,7 +645,7 @@ private final class QuickAccessButton: NSButton {
 
     /// Fixed opacities — never appearance-dependent — so the affordance reads the same everywhere.
     private func refreshHighlight() {
-        let target: Float = pressing ? 0.24 : (hovering ? 0.14 : 0)
+        let target = QuickAccessChip.highlightOpacity(pressing: pressing, hovering: hovering)
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.11)
         highlight.opacity = target
@@ -655,7 +655,7 @@ private final class QuickAccessButton: NSButton {
 
 /// A circular icon action for the corner chrome, built on `NSControl` (not `NSButton`) so nothing
 /// imposes a minimum height — the size constraints alone define an exact square, giving a true circle.
-/// Same look/behavior as `QuickAccessButton`: resting chip + hover/press highlight, white glyph.
+/// Same chip styling as `QuickAccessButton`.
 @MainActor
 private final class IconTile: NSControl {
     private let highlight = CALayer()
@@ -664,24 +664,23 @@ private final class IconTile: NSControl {
     private var hovering = false { didSet { refresh() } }
     private var pressing = false { didSet { refresh() } }
 
-    init(symbol: String, tip: String, diameter: CGFloat = 24) {
+    init(symbol: String, tip: String, glyphSize: CGFloat, tilt: CGFloat, diameter: CGFloat = 22) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = diameter / 2
         layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        layer?.backgroundColor = QuickAccessChip.fill.cgColor
 
-        highlight.backgroundColor = NSColor.white.cgColor
+        highlight.backgroundColor = NSColor.black.cgColor
         highlight.opacity = 0
         layer?.addSublayer(highlight)
 
-        iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
-            .withSymbolConfiguration(GlassTokens.symbol(11))
-        iconView.contentTintColor = .white
+        let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+            .withSymbolConfiguration(GlassTokens.symbol(glyphSize, .bold))
+        iconView.image = tilt == 0 ? glyph : glyph.map { Self.rotated($0, by: tilt) }
+        iconView.contentTintColor = QuickAccessChip.glyph
         iconView.imageScaling = .scaleNone
         iconView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
@@ -698,6 +697,22 @@ private final class IconTile: NSControl {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Rotates a template glyph inside a square canvas; rotating the image view itself fights Auto Layout.
+    private static func rotated(_ image: NSImage, by degrees: CGFloat) -> NSImage {
+        let side = max(image.size.width, image.size.height)
+        let result = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            let transform = NSAffineTransform()
+            transform.translateX(by: rect.midX, yBy: rect.midY)
+            transform.rotate(byDegrees: degrees)
+            transform.concat()
+            image.draw(in: NSRect(x: -image.size.width / 2, y: -image.size.height / 2,
+                                  width: image.size.width, height: image.size.height))
+            return true
+        }
+        result.isTemplate = true
+        return result
+    }
 
     override func layout() {
         super.layout()
@@ -730,7 +745,7 @@ private final class IconTile: NSControl {
     }
 
     private func refresh() {
-        let target: Float = pressing ? 0.24 : (hovering ? 0.14 : 0)
+        let target = QuickAccessChip.highlightOpacity(pressing: pressing, hovering: hovering)
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.11)
         highlight.opacity = target
