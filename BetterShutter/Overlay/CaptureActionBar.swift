@@ -1,137 +1,162 @@
 import AppKit
 
-/// What the user chose to do with a confirmed region selection. Surfaced by the CleanShot-style
-/// action bar that floats next to the selection, and threaded back to `CaptureCoordinator`.
-enum OverlayAction: Sendable {
-    case capture    // run the configured after-capture action (copy / preview)
-    case annotate   // open the annotation editor
-    case copy       // copy to the clipboard only
-    case save       // save a file only
-    case record     // start recording just this region
+/// The capture mode picked from the All-in-One bar under a pending selection, threaded back to
+/// `CaptureCoordinator`. Order and labels follow CleanShot X 5.0.1.
+enum OverlayAction: Int, CaseIterable, Sendable {
+    case area, fullscreen, window, scrolling, timer, ocr, recording
 
     fileprivate var symbol: String {
         switch self {
-        case .capture: return "checkmark.circle.fill"
-        case .annotate: return "pencil.tip.crop.circle"
-        case .copy: return "doc.on.doc"
-        case .save: return "arrow.down.circle"
-        case .record: return "record.circle"
+        case .area: return "viewfinder"
+        case .fullscreen: return "display"
+        case .window: return "macwindow"
+        case .scrolling: return "arrow.down"
+        case .timer: return "timer"
+        case .ocr: return "textformat"
+        case .recording: return "video"
         }
     }
 
-    fileprivate var tooltip: String {
+    fileprivate var title: String {
         switch self {
-        case .capture: return "Capture (↩)"
-        case .annotate: return "Annotate"
-        case .copy: return "Copy"
-        case .save: return "Save"
-        case .record: return "Record region"
+        case .area: return "Area"
+        case .fullscreen: return "Fullscreen"
+        case .window: return "Window"
+        case .scrolling: return "Scrolling"
+        case .timer: return "Timer"
+        case .ocr: return "OCR"
+        case .recording: return "Recording"
         }
     }
+
+    /// OCR and Recording sit in their own groups, split by a hairline.
+    fileprivate var startsGroup: Bool { self == .ocr || self == .recording }
 }
 
-/// The floating, liquid-glass action bar shown beside a pending selection — the signature
-/// CleanShot-X element. Icon buttons for capture / annotate / copy / save / record plus a cancel,
-/// laid out left-to-right. Sizes itself deterministically so the overlay can position it by frame.
+/// CleanShot X's All-in-One bar: a mode strip (icon over label) and a size readout, as two dark
+/// rounded groups side by side. Sizes itself deterministically so the overlay can position it by frame.
 @MainActor
 final class CaptureActionBar: NSView {
-
     var onAction: ((OverlayAction) -> Void)?
-    var onCancel: (() -> Void)?
-    private var separatorView: NSView?
 
-    private static let button: CGFloat = 34
-    private static let gap: CGFloat = 3
-    private static let inset: CGFloat = 7
-    static let height: CGFloat = button + inset * 2
+    private let widthLabel = NSTextField(labelWithString: "0")
+    private let heightLabel = NSTextField(labelWithString: "0")
 
-    static func width(for actions: [OverlayAction]) -> CGFloat {
-        let count = actions.count + 1 // + cancel
-        return CGFloat(count) * button + CGFloat(max(0, count - 1)) * gap + inset * 2 + separatorSlot
-    }
-    private static let separatorSlot: CGFloat = 9
+    private static let height: CGFloat = 52
+    private static let modeWidth: CGFloat = 62.5
+    private static let modeInset: CGFloat = 5
+    private static let groupGap: CGFloat = 15
+    private static let fieldSize = NSSize(width: 44, height: 25)
+    private static let sizeGroupWidth: CGFloat = 132
 
     init(actions: [OverlayAction]) {
-        let size = NSSize(width: Self.width(for: actions), height: Self.height)
+        let modesWidth = CGFloat(actions.count) * Self.modeWidth + Self.modeInset * 2
+        let size = NSSize(width: modesWidth + Self.groupGap + Self.sizeGroupWidth, height: Self.height)
         super.init(frame: NSRect(origin: .zero, size: size))
 
-        let glass = GlassPanelView(cornerRadius: 13)
-        glass.frame = bounds
-        glass.autoresizingMask = [.width, .height]
-        addSubview(glass)
-
-        var x = Self.inset
+        let modes = Self.group(width: modesWidth)
+        addSubview(modes)
+        var x = Self.modeInset
         for action in actions {
-            let b = makeButton(symbol: action.symbol, tooltip: action.tooltip)
-            b.tag = Self.tag(for: action)
-            b.target = self
-            b.action = #selector(actionTapped(_:))
-            b.frame = NSRect(x: x, y: Self.inset, width: Self.button, height: Self.button)
-            glass.contentView.addSubview(b)
-            x += Self.button + Self.gap
+            if action.startsGroup {
+                modes.addSubview(Self.separator(x: x, height: Self.height))
+            }
+            let button = modeButton(action)
+            button.frame = NSRect(x: x, y: 0, width: Self.modeWidth, height: Self.height)
+            modes.addSubview(button)
+            x += Self.modeWidth
         }
 
-        // Faint separator before the cancel button.
-        x += Self.separatorSlot - Self.gap
-        let sep = NSView(frame: NSRect(x: x - Self.separatorSlot / 2, y: Self.inset + 5, width: 1, height: Self.button - 10))
-        sep.wantsLayer = true
-        sep.layer?.backgroundColor = GlassTokens.cg(GlassTokens.separator, for: self)
-        glass.contentView.addSubview(sep)
-        separatorView = sep
-
-        let cancel = makeButton(symbol: "xmark", tooltip: "Cancel (esc)")
-        cancel.target = self
-        cancel.action = #selector(cancelTapped)
-        cancel.contentTintColor = .secondaryLabelColor
-        cancel.frame = NSRect(x: x, y: Self.inset, width: Self.button, height: Self.button)
-        glass.contentView.addSubview(cancel)
+        let sizeGroup = Self.group(width: Self.sizeGroupWidth)
+        sizeGroup.frame.origin.x = modesWidth + Self.groupGap
+        addSubview(sizeGroup)
+        let times = NSTextField(labelWithString: "\u{00D7}")
+        times.font = .systemFont(ofSize: 13, weight: .semibold)
+        times.textColor = .white
+        let stack = NSStackView(views: [field(widthLabel), times, field(heightLabel)])
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        sizeGroup.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: sizeGroup.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: sizeGroup.centerYAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        separatorView?.layer?.backgroundColor = GlassTokens.cg(GlassTokens.separator, for: self)
+    /// Selection size in points, shown in the W × H readout.
+    func showSelectionSize(_ size: CGSize) {
+        widthLabel.stringValue = String(Int(size.width.rounded()))
+        heightLabel.stringValue = String(Int(size.height.rounded()))
     }
 
-    private func makeButton(symbol: String, tooltip: String) -> NSButton {
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)?
-            .withSymbolConfiguration(config)
-        let button = NSButton(image: image ?? NSImage(), target: nil, action: nil)
+    private static func group(width: CGFloat) -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor(white: 0.13, alpha: 0.96).cgColor
+        view.layer?.cornerRadius = 12
+        view.layer?.cornerCurve = .continuous
+        view.layer?.borderWidth = 1
+        view.layer?.borderColor = NSColor.white.withAlphaComponent(0.1).cgColor
+        return view
+    }
+
+    private static func separator(x: CGFloat, height: CGFloat) -> NSView {
+        let view = NSView(frame: NSRect(x: x, y: 12, width: 1, height: height - 24))
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.1).cgColor
+        return view
+    }
+
+    private func field(_ label: NSTextField) -> NSView {
+        label.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        label.textColor = .white
+        label.alignment = .center
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.07).cgColor
+        box.layer?.cornerRadius = 7
+        box.layer?.cornerCurve = .continuous
+        label.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(label)
+        NSLayoutConstraint.activate([
+            box.widthAnchor.constraint(equalToConstant: Self.fieldSize.width),
+            box.heightAnchor.constraint(equalToConstant: Self.fieldSize.height),
+            label.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            label.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+        return box
+    }
+
+    /// Icon over label, laid out by hand: NSButton's `.imageAbove` packs the two into an overlap.
+    private func modeButton(_ action: OverlayAction) -> NSView {
+        let icon = NSImageView(image: NSImage(systemSymbolName: action.symbol, accessibilityDescription: nil)!
+            .withSymbolConfiguration(GlassTokens.symbol(16, .medium))!)
+        icon.contentTintColor = .white
+        let label = NSTextField(labelWithString: action.title)
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textColor = NSColor(white: 0.75, alpha: 1)
+        let stack = NSStackView(views: [icon, label])
+        stack.orientation = .vertical
+        stack.spacing = 5
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let button = NSButton(title: "", target: self, action: #selector(modeTapped(_:)))
+        button.tag = action.rawValue
         button.isBordered = false
-        button.bezelStyle = .smallSquare
-        button.imagePosition = .imageOnly
-        button.contentTintColor = .labelColor
-        button.toolTip = tooltip
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 7
+        button.setAccessibilityLabel(action.title)
+        button.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+        ])
         return button
     }
 
-    // OverlayAction isn't @objc-representable, so map via integer tags.
-    private static func tag(for action: OverlayAction) -> Int {
-        switch action {
-        case .capture: return 0
-        case .annotate: return 1
-        case .copy: return 2
-        case .save: return 3
-        case .record: return 4
-        }
+    @objc private func modeTapped(_ sender: NSButton) {
+        guard let action = OverlayAction(rawValue: sender.tag) else { return }
+        onAction?(action)
     }
-    private static func action(for tag: Int) -> OverlayAction {
-        switch tag {
-        case 1: return .annotate
-        case 2: return .copy
-        case 3: return .save
-        case 4: return .record
-        default: return .capture
-        }
-    }
-
-    @objc private func actionTapped(_ sender: NSButton) {
-        onAction?(Self.action(for: sender.tag))
-    }
-
-    @objc private func cancelTapped() { onCancel?() }
 }

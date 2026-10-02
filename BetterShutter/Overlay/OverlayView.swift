@@ -31,6 +31,11 @@ final class OverlayView: NSView {
     /// When non-empty, a confirmed selection shows the action bar with these buttons. When empty
     /// (recording / OCR flows), confirming a selection just reports `.capture`.
     var toolbarActions: [OverlayAction] = []
+    /// Instruction pill centered on screen until the first click, CleanShot-style.
+    var hint: String? {
+        didSet { showHint() }
+    }
+    private var hintPill: NSView?
     /// Locks the selection to this aspect ratio (width / height). `nil` = free. Holding Shift while
     /// dragging always locks to 1:1 regardless, matching the native screenshot gesture.
     var lockedAspect: CGFloat?
@@ -68,14 +73,14 @@ final class OverlayView: NSView {
     private let dimLayers = (0..<4).map { _ in CALayer() }           // top, bottom, left, right
     private let windowHighlightLayer = CALayer()
     private let crosshairLayers = (0..<2).map { _ in CALayer() }     // vertical, horizontal
-    private let borderLayer = CALayer()
     private let gridLayers = (0..<4).map { _ in CALayer() }          // 2 vertical, 2 horizontal
-    private let handleLayers = Handle.allCases.map { _ in CALayer() }
+    private let handleLayers = Handle.allCases.map { _ in CAShapeLayer() }
     private var loupe: LoupeView?
 
     private let minSelectionSide: CGFloat = 4
     private let handleHitRadius: CGFloat = 11
-    private let handleSize: CGFloat = 9
+    /// CleanShot-style grips: L brackets on the corners, short bars on the edge midpoints.
+    private let handleArm: CGFloat = 16
 
     init(frozenImage: CGImage, pixelSize: CGSize, frame: NSRect) {
         self.frozenImage = frozenImage
@@ -109,20 +114,21 @@ final class OverlayView: NSView {
             l.backgroundColor = NSColor.white.withAlphaComponent(0.45).cgColor
             root.addSublayer(l)
         }
-        borderLayer.borderColor = NSColor.white.withAlphaComponent(0.95).cgColor
-        borderLayer.borderWidth = 1
-        borderLayer.isHidden = true
-        root.addSublayer(borderLayer)
         for l in gridLayers {
             l.backgroundColor = NSColor.white.withAlphaComponent(0.18).cgColor
             l.isHidden = true
             root.addSublayer(l)
         }
         for l in handleLayers {
-            l.backgroundColor = NSColor.white.cgColor
-            l.cornerRadius = 2
-            l.borderColor = NSColor.black.withAlphaComponent(0.35).cgColor
-            l.borderWidth = 0.5
+            l.fillColor = nil
+            l.strokeColor = NSColor.white.cgColor
+            l.lineWidth = 3
+            l.lineCap = .round
+            l.lineJoin = .round
+            l.shadowColor = NSColor.black.cgColor
+            l.shadowOpacity = 0.3
+            l.shadowRadius = 1
+            l.shadowOffset = .zero
             l.isHidden = true
             root.addSublayer(l)
         }
@@ -141,23 +147,14 @@ final class OverlayView: NSView {
         layoutDim(around: hole)
 
         if let r = hole {
-            // A CALayer border draws inside its frame; outset by half the line so it straddles the
-            // rect edge like the old centered NSBezierPath stroke.
-            borderLayer.isHidden = false
-            borderLayer.frame = r.insetBy(dx: -0.5, dy: -0.5)
             layoutGrid(in: r)
             let showHandles = hasCommittedSelection
             for (i, h) in Handle.allCases.enumerated() {
                 handleLayers[i].isHidden = !showHandles
                 guard showHandles else { continue }
-                let c = handlePoint(h, in: r)
-                handleLayers[i].frame = CGRect(
-                    x: c.x - handleSize / 2, y: c.y - handleSize / 2,
-                    width: handleSize, height: handleSize
-                )
+                handleLayers[i].path = gripPath(h, in: r)
             }
         } else {
-            borderLayer.isHidden = true
             gridLayers.forEach { $0.isHidden = true }
             handleLayers.forEach { $0.isHidden = true }
         }
@@ -282,6 +279,27 @@ final class OverlayView: NSView {
 
     // MARK: Handle geometry
 
+    /// Corners get an L whose arms run inward along both edges; edges get a bar along the edge.
+    private func gripPath(_ h: Handle, in r: CGRect) -> CGPath {
+        let c = handlePoint(h, in: r)
+        let dx: CGFloat = c.x < r.midX ? 1 : (c.x > r.midX ? -1 : 0)
+        let dy: CGFloat = c.y < r.midY ? 1 : (c.y > r.midY ? -1 : 0)
+        let arm = min(handleArm, r.width / 2, r.height / 2)
+        let path = CGMutablePath()
+        if dx != 0, dy != 0 {
+            path.move(to: CGPoint(x: c.x + dx * arm, y: c.y))
+            path.addLine(to: c)
+            path.addLine(to: CGPoint(x: c.x, y: c.y + dy * arm))
+        } else if dy == 0 {
+            path.move(to: CGPoint(x: c.x, y: c.y - arm / 2))
+            path.addLine(to: CGPoint(x: c.x, y: c.y + arm / 2))
+        } else {
+            path.move(to: CGPoint(x: c.x - arm / 2, y: c.y))
+            path.addLine(to: CGPoint(x: c.x + arm / 2, y: c.y))
+        }
+        return path
+    }
+
     private func handlePoint(_ h: Handle, in r: CGRect) -> CGPoint {
         switch h {
         case .tl: return CGPoint(x: r.minX, y: r.maxY)
@@ -365,6 +383,8 @@ final class OverlayView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        hintPill?.removeFromSuperview()
+        hintPill = nil
         mousePoint = convert(event.locationInWindow, from: nil)
         shiftHeld = event.modifierFlags.contains(.shift)
 
@@ -424,7 +444,7 @@ final class OverlayView: NSView {
         switch phase {
         case .moving:
             // A click (no real movement) inside the selection confirms the capture.
-            if !didMove { confirm(.capture) } else { enterPending() }
+            if !didMove { confirm(.area) } else { enterPending() }
         case .resizing:
             enterPending()
         case .dragging:
@@ -448,7 +468,7 @@ final class OverlayView: NSView {
                 return
             }
             selectionRect = r
-            if instantCapture { confirm(.capture) } else { enterPending() }
+            if instantCapture { confirm(.area) } else { enterPending() }
         default:
             break
         }
@@ -462,7 +482,7 @@ final class OverlayView: NSView {
         case 53: // esc
             onCancel?()
         case 36, 76: // return / keypad enter
-            if hasCommittedSelection { confirm(.capture) }
+            if hasCommittedSelection { confirm(.area) }
         case 49: // space
             guard !event.isARepeat else { return }
             spaceHeld = true
@@ -550,6 +570,33 @@ final class OverlayView: NSView {
         onRegionSelected?(selectionRect, action)
     }
 
+    private func showHint() {
+        hintPill?.removeFromSuperview()
+        hintPill = nil
+        guard let hint else { return }
+        let label = NSTextField(labelWithString: hint)
+        label.font = .systemFont(ofSize: 18)
+        label.textColor = NSColor(white: 0.1, alpha: 1)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let pill = NSView()
+        pill.wantsLayer = true
+        pill.layer?.backgroundColor = NSColor(white: 0.92, alpha: 0.96).cgColor
+        pill.layer?.cornerRadius = 29
+        pill.layer?.cornerCurve = .continuous
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(label)
+        addSubview(pill)
+        NSLayoutConstraint.activate([
+            pill.heightAnchor.constraint(equalToConstant: 58),
+            pill.centerXAnchor.constraint(equalTo: centerXAnchor),
+            pill.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 27),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -27),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+        ])
+        hintPill = pill
+    }
+
     // MARK: Action bar
 
     private func showActionBar() {
@@ -557,7 +604,6 @@ final class OverlayView: NSView {
         if actionBar == nil {
             let bar = CaptureActionBar(actions: toolbarActions)
             bar.onAction = { [weak self] action in self?.confirm(action) }
-            bar.onCancel = { [weak self] in self?.onCancel?() }
             addSubview(bar)
             actionBar = bar
         }
@@ -579,5 +625,6 @@ final class OverlayView: NSView {
         if y < bounds.minY + 6 { y = selectionRect.maxY + gap } // flip above
         y = min(max(bounds.minY + 6, y), bounds.maxY - h - 6)
         bar.frame = NSRect(x: x, y: y, width: w, height: h)
+        bar.showSelectionSize(selectionRect.size)
     }
 }

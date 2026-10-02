@@ -38,6 +38,7 @@ final class OverlayController {
         instantCapture: Bool = false,
         lockedAspect: CGFloat? = nil,
         restoreSelection: CGRect? = nil,
+        hint: String? = nil,
         onRegion: @escaping (CapturedImage, CGRect, CGDirectDisplayID, OverlayAction) -> Void,
         onWindow: @escaping (CGWindowID) -> Void,
         onCancel: @escaping () -> Void
@@ -82,6 +83,7 @@ final class OverlayController {
             view.autoresizingMask = [.width, .height]
             view.magnifierEnabled = magnifierEnabled
             view.toolbarActions = toolbarActions
+            view.hint = hint
             view.instantCapture = instantCapture
             view.lockedAspect = lockedAspect
             // Restore the prior selection on the pane whose screen holds it (global → view coords).

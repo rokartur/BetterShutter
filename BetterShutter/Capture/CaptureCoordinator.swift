@@ -290,6 +290,7 @@ final class CaptureCoordinator {
                     frozen: frozen,
                     windows: content.windows,
                     magnifierEnabled: false,
+                    hint: "Drag to record a part of the screen.",
                     onRegion: { [weak self] _, globalRect, displayID, _ in
                         self?.startRegionRecording(globalRect: globalRect, displayID: displayID)
                     },
@@ -375,7 +376,7 @@ final class CaptureCoordinator {
                     windows: content.windows,
                     magnifierEnabled: Preferences.magnifierEnabled,
                     windowSelection: true,
-                    toolbarActions: [.capture, .annotate, .copy, .save, .record],
+                    toolbarActions: OverlayAction.allCases,
                     restoreSelection: restore,
                     onRegion: { [weak self] image, globalRect, displayID, action in
                         self?.handleRegionAction(image, globalRect: globalRect, displayID: displayID, action: action)
@@ -398,45 +399,19 @@ final class CaptureCoordinator {
         // save) is consistent with the default capture flow, not just `.capture`.
         let image = outputImage(rawImage)
         switch action {
-        case .capture:
+        case .area:
             finish(image, mode: .region)
-        case .annotate:
-            CaptureHistory.shared.add(image, mode: .region)
-            edit(image, mode: .region)
-        case .copy:
-            let date = Date()
-            CaptureHistory.shared.remember(image, mode: .region, date: date)
-            enqueueOutput {
-                let png = await ImageEncoder.encodeAsync(image.cgImage, as: .png)
-                if let png { PasteboardWriter.copy(png: png) }
-                CaptureSound.play()
-                HUD.show(png != nil ? "Copied" : "Copy failed")
-                if let png {
-                    await Task.detached(priority: .utility) {
-                        CaptureHistoryStore.add(png: png, mode: .region, date: date)
-                    }.value
-                }
-            }
-        case .save:
-            let date = Date()
-            CaptureHistory.shared.remember(image, mode: .region, date: date)
-            enqueueOutput {
-                let format = Preferences.format
-                let png = await ImageEncoder.encodeAsync(image.cgImage, as: .png)
-                let url: URL?
-                if format == .png, let png {
-                    url = try? await FileSaver.writeAsync(png, format: .png, mode: .region)
-                } else {
-                    url = try? await FileSaver.saveAsync(image.cgImage, mode: .region)
-                }
-                HUD.show(url != nil ? "Saved" : "Save failed")
-                if let png {
-                    await Task.detached(priority: .utility) {
-                        CaptureHistoryStore.add(png: png, mode: .region, date: date)
-                    }.value
-                }
-            }
-        case .record:
+        case .fullscreen:
+            capture(.fullDisplay, afterDelay: false)
+        case .window:
+            captureScreenshot(afterDelay: false)
+        case .scrolling:
+            captureScrolling()
+        case .timer:
+            CaptureCountdown.shared.run(seconds: 3) { [weak self] in self?.captureLastRegion() }
+        case .ocr:
+            recognizeText(image)
+        case .recording:
             startRegionRecording(globalRect: globalRect, displayID: displayID)
         }
     }
