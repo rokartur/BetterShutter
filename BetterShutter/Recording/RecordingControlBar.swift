@@ -1,7 +1,7 @@
 import AppKit
 
-/// A small floating bar shown while recording: a pulsing red dot, elapsed time, a pause/resume
-/// button, and a stop button.
+/// The floating bar shown while recording, laid out like CleanShot X 5.0.1's: a red stop button with
+/// the elapsed time, then pause, restart and discard cells, and a drag handle, split by hairlines.
 @MainActor
 final class RecordingControlBar {
     private var window: NSPanel?
@@ -11,66 +11,77 @@ final class RecordingControlBar {
     private var pauseStart: Date?
     private var paused = false
     private let timeLabel = NSTextField(labelWithString: "0:00")
-    private let dot = NSImageView()
     private let pauseButton = NSButton()
 
     var onStop: (() -> Void)?
     var onTogglePause: (() -> Void)?
+    var onRestart: (() -> Void)?
+    var onDiscard: (() -> Void)?
 
     /// The control bar's window id, so the recorder can exclude it from the captured video.
     var windowID: CGWindowID? { window.map { CGWindowID($0.windowNumber) } }
 
+    private static let height: CGFloat = 44
+    private static let stopCellWidth: CGFloat = 76
+    private static let iconCellWidth: CGFloat = 43
+    private static let handleCellWidth: CGFloat = 26
+    private static let red = NSColor(srgbRed: 0.93, green: 0.36, blue: 0.33, alpha: 1)
+
     func show(canPause: Bool) {
-        let size = NSSize(width: canPause ? 220 : 168, height: 40)
+        let iconCells: CGFloat = canPause ? 3 : 2
+        let size = NSSize(width: Self.stopCellWidth + iconCells * Self.iconCellWidth + Self.handleCellWidth,
+                          height: Self.height)
         let panel = NSPanel.glassChrome(size: size, level: .statusBar)
+        panel.isMovableByWindowBackground = true
 
-        let glass = GlassPanelView(cornerRadius: 14)
-        glass.frame = NSRect(origin: .zero, size: size)
-        let container = glass.contentView
+        let background = NSView(frame: NSRect(origin: .zero, size: size))
+        background.wantsLayer = true
+        background.layer?.backgroundColor = NSColor(white: 0.13, alpha: 0.97).cgColor
+        background.layer?.cornerRadius = 12
+        background.layer?.cornerCurve = .continuous
+        background.layer?.borderWidth = 1
+        background.layer?.borderColor = NSColor.white.withAlphaComponent(0.1).cgColor
 
-        dot.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
-        dot.contentTintColor = .systemRed
-        dot.translatesAutoresizingMaskIntoConstraints = false
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        timeLabel.textColor = Self.red
+        let stop = iconButton("stop.circle", "Stop Recording", #selector(stopTapped), tint: Self.red)
+        let stopCell = NSStackView(views: [stop, timeLabel])
+        stopCell.spacing = 6
 
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        timeLabel.textColor = .white
-        timeLabel.stringValue = "0:00"
-
-        var views = [NSView]()
-        views.append(dot)
-        views.append(timeLabel)
+        var cells: [(NSView, CGFloat)] = [(stopCell, Self.stopCellWidth)]
         if canPause {
             paused = false
-            pauseButton.image = NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")
-            pauseButton.imagePosition = .imageOnly
-            pauseButton.bezelStyle = .accessoryBarAction
-            pauseButton.controlSize = .small
-            pauseButton.target = self
-            pauseButton.action = #selector(pauseTapped)
-            pauseButton.toolTip = "Pause"
-            views.append(pauseButton)
+            configurePauseButton()
+            cells.append((pauseButton, Self.iconCellWidth))
         }
-        let stop = NSButton(title: "Stop", target: self, action: #selector(stopTapped))
-        stop.bezelStyle = .accessoryBarAction
-        stop.controlSize = .small
-        views.append(stop)
+        cells.append((iconButton("arrow.counterclockwise", "Restart", #selector(restartTapped)), Self.iconCellWidth))
+        cells.append((iconButton("trash", "Delete Recording", #selector(discardTapped), size: 15), Self.iconCellWidth))
+        let handle = NSImageView(image: Self.grip)
+        handle.contentTintColor = NSColor.white.withAlphaComponent(0.3)
+        cells.append((handle, Self.handleCellWidth))
 
-        let stack = NSStackView(views: views)
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
-        NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: 18),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-        ])
-        panel.contentView = glass
+        var x: CGFloat = 0
+        for (index, (view, width)) in cells.enumerated() {
+            if index > 0 {
+                let separator = NSView(frame: NSRect(x: x, y: 0, width: 1, height: size.height))
+                separator.wantsLayer = true
+                separator.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
+                background.addSubview(separator)
+            }
+            view.translatesAutoresizingMaskIntoConstraints = false
+            background.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.centerXAnchor.constraint(equalTo: background.leadingAnchor, constant: x + width / 2),
+                view.centerYAnchor.constraint(equalTo: background.centerYAnchor),
+            ])
+            x += width
+        }
+        panel.contentView = background
 
         if let screen = NSScreen.main {
-            let x = screen.frame.midX - size.width / 2
-            let y = screen.visibleFrame.maxY - size.height - 12
-            panel.setFrameOrigin(CGPoint(x: x, y: y))
+            let origin = CGPoint(x: screen.frame.midX - size.width / 2,
+                                 y: screen.visibleFrame.maxY - size.height - 12)
+            panel.setFrameOrigin(origin)
         }
         panel.orderFront(nil)
         window = panel
@@ -89,7 +100,7 @@ final class RecordingControlBar {
         window = nil
     }
 
-    /// Reflect paused state: stop counting elapsed time and swap the button glyph / dot tint.
+    /// Reflect paused state: stop counting elapsed time and swap the pause glyph for play.
     func setPaused(_ value: Bool) {
         guard value != paused else { return }
         paused = value
@@ -99,14 +110,63 @@ final class RecordingControlBar {
             pausedAccum += Date().timeIntervalSince(start)
             pauseStart = nil
         }
-        pauseButton.image = NSImage(systemSymbolName: value ? "play.fill" : "pause.fill",
-                                    accessibilityDescription: value ? "Resume" : "Pause")
-        pauseButton.toolTip = value ? "Resume" : "Pause"
-        dot.contentTintColor = value ? .systemGray : .systemRed
+        configurePauseButton()
+    }
+
+    private func configurePauseButton() {
+        pauseButton.image = symbol(paused ? "play.circle" : "pause.circle", size: 17, weight: .regular)
+        pauseButton.toolTip = paused ? "Resume" : "Pause"
+        pauseButton.setAccessibilityLabel(pauseButton.toolTip)
+        pauseButton.isBordered = false
+        pauseButton.imagePosition = .imageOnly
+        pauseButton.contentTintColor = .white
+        pauseButton.target = self
+        pauseButton.action = #selector(pauseTapped)
+    }
+
+    /// Three short stacked dashes, CleanShot's drag grip.
+    private static let grip: NSImage = {
+        let image = NSImage(size: NSSize(width: 6, height: 10), flipped: false) { _ in
+            NSColor.black.setFill()
+            for y in [0.0, 4.25, 8.5] {
+                NSBezierPath(roundedRect: NSRect(x: 0, y: y, width: 6, height: 1.5), xRadius: 0.75, yRadius: 0.75).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }()
+
+    private func iconButton(_ name: String, _ tip: String, _ action: Selector,
+                            tint: NSColor = .white, size: CGFloat = 17) -> NSButton {
+        let button = NSButton(image: symbol(name, size: size, weight: .regular), target: self, action: action)
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.contentTintColor = tint
+        button.toolTip = tip
+        button.setAccessibilityLabel(tip)
+        return button
+    }
+
+    private func symbol(_ name: String, size: CGFloat, weight: NSFont.Weight) -> NSImage {
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)!
+        return image.withSymbolConfiguration(GlassTokens.symbol(size, weight))!
     }
 
     @objc private func stopTapped() { onStop?() }
     @objc private func pauseTapped() { onTogglePause?() }
+    @objc private func restartTapped() { onRestart?() }
+
+    @objc private func discardTapped() {
+        let alert = NSAlert()
+        alert.messageText = "Are you sure you want to delete this recording?"
+        alert.informativeText = "The file is moved to the Trash."
+        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        onDiscard?()
+    }
 
     @objc private func tick() { updateLabel() }
 

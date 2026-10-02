@@ -21,6 +21,7 @@ final class RecordingController {
     /// of B while A's writer finalizes, so every delayed callback must prove it still owns state.
     private var activeSessionID: UUID?
     private var activeOutputURL: URL?
+    private var activeSource: (displayID: CGDirectDisplayID, sourceRect: CGRect?, gif: Bool, windowID: CGWindowID?)?
     private let controlBar = RecordingControlBar()
     private(set) var isRecording = false
     private(set) var isPaused = false
@@ -43,6 +44,19 @@ final class RecordingController {
     private init() {
         controlBar.onStop = { [weak self] in self?.stop() }
         controlBar.onTogglePause = { [weak self] in self?.togglePause() }
+        controlBar.onRestart = { [weak self] in self?.restart() }
+        controlBar.onDiscard = { [weak self] in self?.stop(discard: true) }
+    }
+
+    /// Throws the current take away and starts a new one with the same source.
+    func restart() {
+        guard isRecording, let source = activeSource else { return }
+        stop(discard: true)
+        Task { [weak self] in
+            await self?.finalizationTask?.value
+            self?.beginRecording(displayID: source.displayID, sourceRect: source.sourceRect,
+                                 gif: source.gif, windowID: source.windowID)
+        }
     }
 
     func toggle() { (isRecording || microphonePermissionTask != nil) ? stop() : start() }
@@ -102,6 +116,7 @@ final class RecordingController {
         }
         guard !isRecording, microphonePermissionTask == nil,
               !CaptureCoordinator.shared.isCaptureInProgress else { return }
+        activeSource = (displayID, sourceRect, gif, windowID)
 
         let wantsMicrophone = Preferences.recordMicrophone && !gif
         if wantsMicrophone, microphonePermission == nil,
@@ -196,7 +211,8 @@ final class RecordingController {
         }
     }
 
-    func stop() {
+    /// `discard` moves the finished file to the Trash and skips every after-capture action.
+    func stop(discard: Bool = false) {
         if let microphonePermissionTask {
             // requestAccess itself will finish only when TCC answers. Cancellation prevents its
             // continuation from constructing a session; retaining the handle blocks duplicate
@@ -238,6 +254,14 @@ final class RecordingController {
                 Preferences.recordingInProgressPath = nil
             }
             guard let url else { return }
+            if discard {
+                do {
+                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                } catch {
+                    HUD.show("Could not delete recording: \(error.localizedDescription)")
+                }
+                return
+            }
             // Keep the one-session finalization gate until sidecar encoding and the potentially
             // large history copy finish. This prevents short repeated recordings from piling up
             // detached tasks blocked on the archive lock.
